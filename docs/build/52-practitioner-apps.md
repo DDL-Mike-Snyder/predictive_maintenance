@@ -1453,7 +1453,7 @@ Contractual, in [50 §10.2]'s sense: a later document adds and removes nothing.
 30. ~~**Do not reason past [31 §5.8]'s status.** It is an amendment ask.~~ **[AMENDMENT — superseded.]** [31 §5.8] is now settled (§4.1), the adjudication path is live, and §4.7's level-scoping notice and workload-envelope narrowing were removed along with the interim they belonged to — there is no longer a status to reason past. *(31 §2.2's warning; 31 §5.8; 50 §13 correction 10; §4.7)*
 31. **Do not retry a `429` in the host, and do not queue.** The bucket is shared across every viewer; a host retry multiplies the load it is bounding. *(30 §6.2, §6.5; §4.8)*
 32. **Do not add a catch-all proxy route.** An operation nobody reviewed must be unreachable through the app's credential. *(30 §8.2 DECISION G-3; §5.3)*
-33. **Do not render a sign-out control, an identity block, or an authority marking.** No gateway session exists here and the viewer's roles are unobtainable. *(§4.7)*
+33. ~~**Do not render a sign-out control, an identity block, or an authority marking.** No gateway session exists here and the viewer's roles are unobtainable.~~ **[AMENDMENT — the identity-block half is superseded, same status change as rule 30.]** `GET /api/v1/gateway/session` now returns a real identity block to this app (§4.7), so the viewer's name, organization, and authority chips render exactly as in `apps/web`. The sign-out half stands unchanged: no gateway session exists for this app to end, so no sign-out control renders. *(§4.7)*
 34. **Do not disable or dim a control on an authority guess.** Every refusal is the server's, with `reasons`. *(31 §8; 50 §9.4; §4.7, §6.7)*
 
 ### 11.4 The two sheets

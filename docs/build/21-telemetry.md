@@ -123,7 +123,7 @@ Per document 09 §3.1 and §7.1, with no variation:
 
 > **Why this matters.** Document 11 §4.2 records the defect: document 03 §5.4 originally keyed ordering and deduplication on `(producer, monotonic_seq)`, where `producer` is "slug plus version." An edge instance and the enterprise instance are two nodes each minting its own sequence, so `(telemetry, 41)` is ambiguous — two different events collide on the dedup key and **one is silently dropped**. Document 03 §5.4 now carries `producer_node` explicitly and states the three-part key. This service is the reason that field exists, because it is the primary sub-application with a genuine edge deployment profile. Nothing in this codebase keys on two parts.
 
-**`DECISION` — `producer_node` literal form follows document 03 §5.4, not document 11 §4.2's examples.** Document 03 §5.4 specifies `"enterprise" | "edge:<asset_id>"`. Document 11 §4.2, written before the correction landed, illustrates `telemetry@ashore-1` / `telemetry@ssn796`. Document 03 prevails (09 §1.8 precedence). The value is the literal string `enterprise`, or `edge:` concatenated with the asset's `asset_id` UUID, and it is also carried as `clock.hlc.node_id`. Recorded in §15 as a correction document 11 should absorb.
+**`DECISION` — `producer_node` literal form follows document 03 §5.4, not document 11 §4.2's examples.** Document 03 §5.4 specifies `"enterprise" | "edge:<asset_id>"`. Document 11 §4.2, written before the correction landed, illustrates `telemetry@ashore-1` / `telemetry@ssn796`. Document 03 prevails (09's front-matter "Precedence" row). The value is the literal string `enterprise`, or `edge:` concatenated with the asset's `asset_id` UUID, and it is also carried as `clock.hlc.node_id`. Recorded in §15 as a correction document 11 should absorb.
 
 ### 2.3 Data stores — one logical database, two schemas
 
@@ -150,7 +150,7 @@ Per document 04 §3, corrected for the edge profile:
 
 ### 2.5 The ICAS gap — declared, not filled
 
-Document 01 §5 describes this sub-application as performing *"Sensor and ICAS-style ingest"*; document 01 §6.1 lists ICAS in the glossary as *"Integrated Condition Assessment System — existing Navy shipboard condition monitoring"*; document 04 §3 states that *"Surface assets deliver near-continuous HM&E monitoring in the manner of ICAS."*
+Document 01 §5 describes this sub-application as performing *"Sensor and ICAS-style ingest"*; document 01 §0 lists ICAS in the glossary as *"Integrated Condition Assessment System — existing Navy shipboard condition monitoring"*; document 04 §3 states that *"Surface assets deliver near-continuous HM&E monitoring in the manner of ICAS."*
 
 **Document 07 §10 lists "ICAS channel taxonomy" under "Confirmed CAC-gated or unpublished."** There is no ICAS section anywhere in document 07. No channel names, tag conventions, record layouts, sampling rates, quality flags, or point-type vocabulary from ICAS or any other Navy condition-monitoring system were located in public-source research.
 
@@ -2504,7 +2504,7 @@ Each is a defect or a gap in the cited document, not a decision of this one, exc
 
 | # | Document | Issue | This document's handling |
 |---|---|---|---|
-| 1 | **11 §4.2** | Illustrates `producer_node` as `telemetry@ashore-1` / `telemetry@ssn796`. Document 03 §5.4 now specifies `"enterprise" \| "edge:<asset_id>"` | Follows document 03 (precedence, 09 §1.8). Document 11 should absorb the literal form. §2.2, §8.1 |
+| 1 | **11 §4.2** | Illustrates `producer_node` as `telemetry@ashore-1` / `telemetry@ssn796`. Document 03 §5.4 now specifies `"enterprise" \| "edge:<asset_id>"` | Follows document 03 (09's front-matter "Precedence" row). Document 11 should absorb the literal form. §2.2, §8.1 |
 | 2 | **10 §4.5** | ~~`EventScope` has no `MISSION` member and `SCOPE_SUBJECT_FIELD` no mission entry; its `dedup_key` is the two-part `(producer.slug, clock.monotonic_seq)`; the envelope has no `producer_node`.~~ **[RESOLVED, both halves.]** `producer_node` exists and `dedup_key`/`precedes` are three-part, matching `11-outbox-sync-library.md`'s `DedupKey`; `EventScope.MISSION` and its `SCOPE_SUBJECT_FIELD` entry exist too (OQ-4, also resolved) | Closed — no correction needed | **Resolved**, both the envelope and the three-part key |
 | 3 | **04 §3** | Lists `GET /health-indicators?...&as_of=` with no `as_known_at`, which is a leak beside a leak-free `/features` | **Extension.** `as_known_at` added and required. §5.8, ADR required |
 | 4 | **04 §3** | Lists `POST /ingest/telemetry`, `/ingest/usage`, `/ingest/indicators`, `/ingest/detections` — an RPC shape document 03 §4 does not sanction (`[C23, C24]`) | Resource-oriented forms: `POST /telemetry-batches`, `/usage-counter-observations`, `/health-indicator-values`, `/anomaly-candidates`. Document 03 §4 prevails per document 04 §1. §9.3 |
