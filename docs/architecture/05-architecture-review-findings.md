@@ -6,14 +6,14 @@
 | **Review date** | 4 August 2026 |
 | **Scope reviewed** | Documents 01–04 at the state following the rev-4 tool-surface amendment |
 | **Method** | Two independent adversarial review passes: one for internal consistency and verifiable defects, one for design flaws with concrete failure scenarios |
-| **Result** | 51 consistency findings (C1–C51), 42 design findings (D1–D42) — **[AMENDMENT]** this row originally read "37 design findings (D1–D37)"; D38–D42 were added during Wave 1–3 and Wave 5 build-framework authoring (§2.8, §2.9) and this row was never updated to match |
+| **Result** | 51 consistency findings (C1–C51), 42 *numbered* design findings (D1–D42) — **[AMENDMENT]** this row originally read "37 design findings (D1–D37)"; D38–D42 were added during Wave 1–3 and Wave 5 build-framework authoring (§2.8, §2.9) and this row was never updated to match. **[AMENDMENT]** D10 and D11 were retired (no row exists for either in §2.1–§2.9) without this count ever being corrected to match — **40 rows actually exist** in a D1–D42 numbering space, and "42 design findings" should be read as "42 as the highest number assigned", not as a row count |
 | **Classification** | Internal |
 
 ---
 
 ## 1. Purpose and how to use this register
 
-This register exists because the volume and severity of findings exceed what can be silently absorbed into revisions. Several findings invalidate decisions already approved at Phase 1 and Phase 2, and **[AMENDMENT — corrected from "eleven"]** fifteen require a program decision rather than an editorial fix, including four (D38, D39, D41, D42) added after this line was first written.
+This register exists because the volume and severity of findings exceed what can be silently absorbed into revisions. Several findings invalidate decisions already approved at Phase 1 and Phase 2, and **[AMENDMENT — corrected from "eleven", then miscorrected to "fifteen"]** thirteen require a program decision rather than an editorial fix (D1, D7, D8, D13, D17, D18, D19, D21, D37, D38, D39, D41, D42 — enumerating rather than restating a count, since this line has now drifted twice), including four (D38, D39, D41, D42) added after this line was first written. §4's six numbered decisions since resolved nine of these (D1, D7, D8, D13, D17, D18, D19, D21, D37 — several DECIDE findings share one decision, e.g. §4.1 resolves both D1 and D21, and §4.3's edge-resident candidate generation resolves both D8 and D18); D38, D39, D41, D42 remain open.
 
 Dispositions are:
 
@@ -209,7 +209,7 @@ Compressed. Full detail, including exact quotations and recommended fixes, is in
 
 ### 3.4 Verified sound
 
-The consistency review confirmed: all ordered lists sequentially numbered; all 59 tables cell-consistent; all section numbers sequential with no duplicates or skips; every event published in 04 present in the 03 catalog; every catalog event has at least one consumer; all five `Proposal` kinds have exactly one executing sub-application with a proposal endpoint; the seven agents are consistent across 01 §8.1, §11, and §16; and all package paths in 03 match the 01 §11 monorepo layout.
+The consistency review confirmed: all ordered lists sequentially numbered; all 59 tables cell-consistent; all section numbers sequential with no duplicates or skips; every event published in 04 present in the 03 catalog; every catalog event has at least one consumer; the seven agents are consistent across 01 §8.1, §11, and §16; and all package paths in 03 match the 01 §11 monorepo layout. **[AMENDMENT]** The `Proposal`-kind claim in this row is retracted rather than corrected in place: at the time this was verified, `03 §7.2`'s `kind` enum had five members, each owned by exactly one sub-application. Amendments 03-1/03-2 since added `security_officer` and two kinds, `purge`/`rewrap`, both owned by `audit` — a *platform* service, not a sub-application. The "exactly one executing sub-application" property was verified against an enum that no longer exists and does not hold for the two newest kinds under its original wording; restating it correctly is 32-audit.md §6.1's job, not this row's.
 
 ---
 
