@@ -481,6 +481,46 @@ class ReadModelLag:
 
 > **Why this matters.** D6: the optimizer "solves over a stale non-atomic mixture," then reserves per-NIIN — 37 of 40 reservations succeed, the 38th fails, orphans persist, and 37 spurious availability events degrade every other asset's planning. A computation with a correctness dependency on freshness that does not refuse to run when stale will produce confidently wrong plans forever, silently.
 
+### 3.7 The remediation filter — closing the purge-resurrection gap `[AMENDMENT]`
+
+Document 32 §6.5 names the failure this section exists to prevent: *"the rebuild path is `changed_since` reads, and a rebuild replays the producer's current state. A holder must apply the purge fact **after** every rebuild, so `remediation.*` is a standing filter on the rebuild path, not a one-time command. This is the most easily missed failure mode in the entire design: a correctly purged read model resurrects the content next Tuesday when someone rebuilds it."* Every consumer of document 03 §6's Audit & Provenance block — *"all nine domain sub-applications, `gateway`, `knowledge-retrieval`, `notification`, `sync`"* — was contractually a subscriber from the moment that block was added, but no consuming document specified how, so this library provides the one implementation rather than nine bespoke ones.
+
+```python
+class RemediationFilter:
+    """Subscribes to fathom.audit.remediation.v1 (03 §6). Consumed exactly
+    like any other inbox topic (§3.1) — record-and-apply, epoch fencing,
+    processed_at suppression — but instead of materializing a read-model
+    row, an applied remediation event writes one row per affected selector
+    to a small local table, `remediated_selectors(selector_hash, kind,
+    remediation_id, applied_at)`, keyed on the purge/rewrap/quarantine
+    coordinator's own selectors (03 §13, 32 §6.1) hashed the same way the
+    service hashes them for its own storage.
+    """
+
+    def apply(self, envelope) -> None:
+        """remediation.purge_executed / .purge_certified / .rewrap_executed /
+        .quarantine_ordered / .quarantine_lifted. A *_lifted event deletes
+        the corresponding quarantine row rather than adding one — quarantine,
+        unlike purge, is reversible (03 §13)."""
+
+    def is_remediated(self, selector) -> bool:
+        """Consulted at two mandatory points, both required, neither
+        optional:
+
+        1. **Live apply** (§3.4's consume loop) — before materializing any
+           row whose selector has an unexpired remediation, skip the write
+           and record it as suppressed, not silently dropped.
+        2. **ChangedSinceRebuilder** (§2.8) — before writing ANY row a
+           rebuild would otherwise materialize. This is the actual gap:
+           a rebuild replays the producer's current changed_since state,
+           which knows nothing about a remediation applied after the
+           source record was last touched. Skipping this check here is
+           exactly the failure mode 32 §6.5 names.
+        """
+```
+
+**A service already using this library's inbox and `ChangedSinceRebuilder` gets this by construction** — the filter hooks the same two call sites those mechanisms already have, so a service's own build document need only declare the subscription (04's per-service catalog lines) and need not re-derive the logic. A service that stores no long-lived copy of a remediable domain object (D13-classified content: `anomaly_tag`, `causal_finding`, `redesign_case`, and their evidence) still subscribes, so that `remediated_selectors` is populated should a future feature start caching one — the alternative, subscribing only once a cache is added, is the same "forgot to update it" failure this whole section exists to close.
+
 ---
 
 ## 4. The clock discipline module
@@ -1196,7 +1236,7 @@ The library ships the control-mapping evidence — the fault-injection suite of 
 ### 10.5 Audit and clock-attestation retention — AU-4(1), AU-6(3), AU-9(3), AU-12(1)
 
 - **`sync_quality` is retained permanently** (03 §5.4). It is exported to Audit before its outbox row becomes prunable (§2.6). "It converts 'our timestamps drifted' from an audit finding into a bounded, documented condition, and it is the only way to re-derive true ordering after the fact. Without it that information is gone."
-- **The inbox exports a dissemination record on every apply** — `(source_event_id, holder_slug, holder_node, holder_store, applied_at, materialized)` — to Audit's dissemination ledger (`32-audit.md` §4.6), alongside the `sync_quality` export above. **`ChangedSinceRebuilder` (§2.8) does the same for every rebuild it performs** `[amendment 11-1]`. This is the half of the ledger this library owns: Audit's coordinator can only know a store holds a copy if every path that materializes one — a live apply or a rebuild from `changed_since` — reports it. A rebuild that skips this export is exactly the gap §4.6 describes as "the rebuild path is the one that resurrects purged content" — a purge can shred the key everywhere the ledger knows about and still leave a live copy in a store that rebuilt without reporting.
+- **The inbox exports a dissemination record on every apply** — `(source_event_id, holder_slug, holder_node, holder_store, applied_at, materialized, key_class)` **[AMENDMENT — the field list was previously six, omitting `key_class`; `32-audit.md`'s `dissemination` table declares it `NOT NULL` with no default, so every apply violated the constraint until this field was added here]** — to Audit's dissemination ledger (`32-audit.md` §4.6), alongside the `sync_quality` export above. `key_class` is derived exactly as `32-audit.md` §5.3 derives it, from the record's own `ClassificationLabel` — never recomputed independently, so it cannot drift from the value the record itself is stored under. **`ChangedSinceRebuilder` (§2.8) does the same for every rebuild it performs** `[amendment 11-1]`. This is the half of the ledger this library owns: Audit's coordinator can only know a store holds a copy if every path that materializes one — a live apply or a rebuild from `changed_since` — reports it. A rebuild that skips this export is exactly the gap §4.6 describes as "the rebuild path is the one that resurrects purged content" — a purge can shred the key everywhere the ledger knows about and still leave a live copy in a store that rebuilt without reporting.
 - **1 ms granularity** on `recorded_at` and `ingest_time` (AU-12(1), the stated correlation parameter — 08 §3.5, and the Zero Trust Overlays' audit time-stamp granularity per 03 §5.4).
 - **AU-4(1)** transfer to alternate storage: the edge outbox is itself the alternate store during disconnection; the drain is the transfer.
 - **AU-6(3)** correlate ship and shore repositories: `(producer_node_id, monotonic_seq)` plus `correlation_id` is the correlation key. Wall time is not, and cannot be, that key.

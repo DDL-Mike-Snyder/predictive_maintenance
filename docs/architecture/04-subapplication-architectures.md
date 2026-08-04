@@ -19,6 +19,7 @@ Each sub-application is described against a fixed template: purpose, ownership b
 - **The "Substitution" column** abbreviates the `x-substitution` annotation: "Required" is `required`, "Internal" is `internal` (document 03 §4.1).
 - **Every operation additionally carries `x-side-effects`** (`none`, `proposal-only`, or `state-changing`), which is what determines agent eligibility. Compute-only `POST` operations such as scenario analysis and package planning are `none` and are agent-eligible.
 - **Naming.** Where an operation below appears singular or action-shaped, it falls under the singleton and sub-resource-action carve-outs in document 03 §4 and must be enumerated in the sub-application's specification.
+- **[AMENDMENT] Every sub-application below additionally consumes `remediation.purge_executed`, `.purge_certified`, `.rewrap_executed`, `.quarantine_ordered` / `.quarantine_lifted`** (`fathom.audit.remediation.v1`, document 03 §6's Audit & Provenance block, which already names *"all nine domain sub-applications"* as consumers). This was never stated per service below — a gap document 32 §6.5 itself calls *"the most easily missed failure mode in the entire design: a correctly purged read model resurrects the content next Tuesday when someone rebuilds it."* Consumption is a **standing filter**, not a one-time handler: applied both on live inbox apply and on every `ChangedSinceRebuilder` rebuild (document 11 §3.7), so a purge or quarantine survives a rebuild rather than being silently reintroduced by one. Each service's own catalog line below is amended to name it, once, rather than repeating this paragraph nine times.
 
 The contracts in document 03 are binding. Where this document describes an API operation or event, document 03 governs its form. Where the two conflict, document 03 prevails and this document is in error.
 
@@ -108,7 +109,7 @@ Two cycles are present and both are intentional: Scheduling and Supply negotiate
 | `POST /assets`, `PATCH /assets/{id}`, class and template administration | Internal |
 
 **Events published:** `asset.registered`, `asset.status_changed`, `configuration.baseline_changed`, `installed_item.installed`, `installed_item.removed`, `installed_item.identity_resolved`, `allowance.updated`.
-**Events consumed:** `work_order.opened`, `maintenance_action.recorded`, `work_package.approved`. Executed maintenance is what causes configuration change, so the Registry consumes rather than polls it.
+**Events consumed:** `work_order.opened`, `maintenance_action.recorded`, `work_package.approved`. Executed maintenance is what causes configuration change, so the Registry consumes rather than polls it. Plus `remediation.*` (§1's amendment; 11 §3.7).
 
 **Internal components:** configuration resolver (template plus deviations plus bitemporal query), baseline snapshot generator, allowance importer, hierarchy validator, read-model publisher.
 
@@ -178,7 +179,7 @@ Long-term candidate for federation with CDMD-OA. The substitution boundary is fa
 | Channel registry administration, indicator definition management | Internal |
 
 **Events published:** `telemetry.batch_ingested`, `health_indicator.computed`, `usage_counter.updated`, `usage_counter.reset`, `mission.completed`, `anomaly.detected`, `channel_mapping.version_published`.
-**Events consumed:** `asset.registered`, `installed_item.installed`, `installed_item.removed`, `installed_item.identity_resolved`, `configuration.baseline_changed`. Counters and indicators attach to installed items, so item lifecycle events are a correctness dependency: a replacement opens a new counter epoch rather than continuing the prior item's accumulation.
+**Events consumed:** `asset.registered`, `installed_item.installed`, `installed_item.removed`, `installed_item.identity_resolved`, `configuration.baseline_changed`. Counters and indicators attach to installed items, so item lifecycle events are a correctness dependency: a replacement opens a new counter epoch rather than continuing the prior item's accumulation. Plus `remediation.*` (§1's amendment; 11 §3.7).
 
 **Internal components:** ingest adapters per domain profile, channel mapper, quality assessor, indicator computation engine, counter accumulator, mission boundary detector, unsupervised detector ensemble, retention and rollup manager, point-in-time feature server.
 
@@ -250,7 +251,7 @@ Unlikely to be substituted, as it is tightly coupled to program-specific channel
 | Model binding administration, label set inspection, tier policy management | Internal |
 
 **Events published:** `prediction.updated`, `prediction.invalidated`, `criticality_tier.assigned`, `model_binding.activated`.
-**Events consumed:** `asset.registered`, `asset.status_changed`, `configuration.baseline_changed`, `installed_item.installed`, `installed_item.removed`, `installed_item.identity_resolved`, `telemetry.batch_ingested`, `health_indicator.computed`, `channel_mapping.version_published`, `usage_counter.updated`, `usage_counter.reset`, `maintenance_action.recorded`, `deferral.recorded`, `anomaly_tag.confirmed`, `causal_finding.published`, `failure_mode.attributed`, `causal_feature_set.updated`, `design_change.projected`.
+**Events consumed:** `asset.registered`, `asset.status_changed`, `configuration.baseline_changed`, `installed_item.installed`, `installed_item.removed`, `installed_item.identity_resolved`, `telemetry.batch_ingested`, `health_indicator.computed`, `channel_mapping.version_published`, `usage_counter.updated`, `usage_counter.reset`, `maintenance_action.recorded`, `deferral.recorded`, `anomaly_tag.confirmed`, `causal_finding.published`, `failure_mode.attributed`, `causal_feature_set.updated`, `design_change.projected`. Plus `remediation.*` (§1's amendment; 11 §3.7).
 
 Enumerated rather than wildcarded. Rev 1 subscribed to "all Registry events, all Telemetry events," which cannot be conformance-tested and silently auto-subscribes to any future event a producer adds.
 
@@ -314,7 +315,7 @@ Core program capability. Not a substitution candidate. The contract is nonethele
 | Methodology configuration | Internal |
 
 **Events published:** `readiness.recomputed`, `casrep_risk.raised`, `casrep_risk.cleared`.
-**Events consumed:** `asset.registered`, `asset.status_changed`, `configuration.baseline_changed`, `health_indicator.computed`, `anomaly.detected`, `prediction.updated`, `prediction.invalidated`, `criticality_tier.assigned`, `model_binding.activated`, `work_candidate.created`, `work_order.opened`, `deferral.recorded`, `work_package.proposed`, `work_package.approved`, `part_availability.changed`, `requisition.status_changed`, `allowance_shortfall.detected`, `mission_review.completed`, `causal_finding.published`, `redesign_candidate.created`, `redesign_case.published`.
+**Events consumed:** `asset.registered`, `asset.status_changed`, `configuration.baseline_changed`, `health_indicator.computed`, `anomaly.detected`, `prediction.updated`, `prediction.invalidated`, `criticality_tier.assigned`, `model_binding.activated`, `work_candidate.created`, `work_order.opened`, `deferral.recorded`, `work_package.proposed`, `work_package.approved`, `part_availability.changed`, `requisition.status_changed`, `allowance_shortfall.detected`, `mission_review.completed`, `causal_finding.published`, `redesign_candidate.created`, `redesign_case.published`. Plus `remediation.*` (§1's amendment; 11 §3.7).
 
 This is the largest consumed set in the system, which follows from Fleet Status being derived-data only. Rev 1 expressed it as prose categories, which made it impossible to determine whether a declared dependency in document 03 §6 was satisfied.
 
@@ -391,7 +392,7 @@ Not a substitution candidate, though it is the sub-application most likely to be
 | Optimizer configuration, PMS catalog administration | Internal |
 
 **Events published:** `work_candidate.created`, `work_order.opened`, `maintenance_action.recorded`, `deferral.recorded`, `work_package.proposed`, `work_package.approved`, plus proposal events.
-**Events consumed:** `prediction.updated`, `prediction.invalidated`, `criticality_tier.assigned`, `casrep_risk.raised`, `casrep_risk.cleared`, `part_availability.changed`, `requisition.status_changed`, `allowance_shortfall.detected`, `allowance.updated`, `reservation_set.confirmed`, `reservation_set.released`, `asset.status_changed`, `configuration.baseline_changed`, `usage_counter.updated`, `usage_counter.reset`, `causal_finding.published`.
+**Events consumed:** `prediction.updated`, `prediction.invalidated`, `criticality_tier.assigned`, `casrep_risk.raised`, `casrep_risk.cleared`, `part_availability.changed`, `requisition.status_changed`, `allowance_shortfall.detected`, `allowance.updated`, `reservation_set.confirmed`, `reservation_set.released`, `asset.status_changed`, `configuration.baseline_changed`, `usage_counter.updated`, `usage_counter.reset`, `causal_finding.published`. Plus `remediation.*` (§1's amendment; 11 §3.7).
 
 **Internal components:** candidate generator per driver, candidate merger, scheduling optimizer, constraint evaluator, explanation generator, work order state machine, action capture with findings coding, deferral manager, proposal handler.
 
@@ -467,7 +468,7 @@ Medium-term candidate for federation with 3-M and OMMS-NG, which are authoritati
 Six extensions to this surface — the `condition_code`/`purpose_code` filter and breakdown, `POST /availability/query`, the two `reservation-sets` reads, and `POST /demand-forecast-runs` — were added against gaps `26-supply.md` §13 found while building against this table: a query surface missing for an attribute the aggregate already carried, no rebuild path for the one aggregate D6 exists to fix, and a mandated write-back with no write operation to receive it.
 
 **Events published:** `part_availability.changed`, `requisition.status_changed`, `allowance_shortfall.detected`, `reservation_set.confirmed`, `reservation_set.released`, plus proposal events.
-**Events consumed:** `work_candidate.created`, `work_order.opened`, `work_package.proposed`, `work_package.approved`, `maintenance_action.recorded`, `prediction.updated`, `prediction.invalidated`, `casrep_risk.raised`, `installed_item.installed`, `installed_item.removed`, `installed_item.identity_resolved`, `allowance.updated`, `configuration.baseline_changed`.
+**Events consumed:** `work_candidate.created`, `work_order.opened`, `work_package.proposed`, `work_package.approved`, `maintenance_action.recorded`, `prediction.updated`, `prediction.invalidated`, `casrep_risk.raised`, `installed_item.installed`, `installed_item.removed`, `installed_item.identity_resolved`, `allowance.updated`, `configuration.baseline_changed`. Plus `remediation.*` (§1's amendment; 11 §3.7).
 
 **Internal components:** stock ledger, allowance evaluator, requisition state machine, reservation manager, in-transit tracker, demand forecaster, shortfall detector, proposal handler.
 
@@ -541,7 +542,7 @@ The primary substitution candidate and the reference case for the protocol in do
 | Taxonomy administration, reviewer qualification management | Internal |
 
 **Events published:** `mission_review.opened`, `anomaly_tag.confirmed`, `anomaly_tag.rejected`, `mission_review.completed`, plus proposal events.
-**Events consumed:** `mission.completed`, `anomaly.detected`, `telemetry.batch_ingested`, `channel_mapping.version_published`, `configuration.baseline_changed`, `maintenance_action.recorded`, `agent_run.completed` **[AMENDMENT]** (`fathom.auth.agent_run.v1`, filtered to `agent_id='pma-prescreener'` — closes the pre-screen quiesce window without a direct call to the agent, `41-pma-prescreener.md` §2.3).
+**Events consumed:** `mission.completed`, `anomaly.detected`, `telemetry.batch_ingested`, `channel_mapping.version_published`, `configuration.baseline_changed`, `maintenance_action.recorded`, `agent_run.completed` **[AMENDMENT]** (`fathom.auth.agent_run.v1`, filtered to `agent_id='pma-prescreener'` — closes the pre-screen quiesce window without a direct call to the agent, `41-pma-prescreener.md` §2.3). Plus `remediation.*` (§1's amendment; 11 §3.7).
 
 `maintenance_action.recorded` is consumed so that a review can present what was subsequently found and repaired alongside the candidate window — the single most useful context a reviewer can have, and the basis for retrospective tag quality assessment.
 
@@ -610,7 +611,7 @@ Core program capability, not a substitution candidate. The tag stream is the pro
 | Discovery run management, taxonomy administration | Internal |
 
 **Events published:** `causal_finding.published`, `failure_mode.attributed`, `causal_feature_set.updated`.
-**Events consumed:** `anomaly_tag.confirmed`, `anomaly_tag.rejected`, `mission.completed`, `maintenance_action.recorded`, `telemetry.batch_ingested`, `installed_item.removed`, `installed_item.identity_resolved`, `configuration.baseline_changed`, `prediction.updated`.
+**Events consumed:** `anomaly_tag.confirmed`, `anomaly_tag.rejected`, `mission.completed`, `maintenance_action.recorded`, `telemetry.batch_ingested`, `installed_item.removed`, `installed_item.identity_resolved`, `configuration.baseline_changed`, `prediction.updated`. Plus `remediation.*` (§1's amendment; 11 §3.7).
 
 `prediction.updated` is consumed for one purpose only: to record which population received model-assigned intervention, so that comparative population analysis can condition on treatment assignment. It is never used as evidence for a causal finding.
 
@@ -685,7 +686,7 @@ Core program capability. Not a substitution candidate.
 | Test data ingest, dependency graph administration, cost model configuration | Internal |
 
 **Events published:** `redesign_candidate.created`, `redesign_case.published`, `design_change.projected`, plus proposal events.
-**Events consumed:** `causal_finding.published`, `failure_mode.attributed`, `maintenance_action.recorded`, `installed_item.removed`, `installed_item.identity_resolved`, `prediction.updated`, `prediction.invalidated`, `part_availability.changed`.
+**Events consumed:** `causal_finding.published`, `failure_mode.attributed`, `maintenance_action.recorded`, `installed_item.removed`, `installed_item.identity_resolved`, `prediction.updated`, `prediction.invalidated`, `part_availability.changed`. Plus `remediation.*` (§1's amendment; 11 §3.7).
 
 **Internal components:** dossier assembler, candidate identifier, dependency graph service, impact analyzer, parametric cost estimator, detailed cost roll-up engine, case builder, proposal handler.
 

@@ -1439,9 +1439,9 @@ Three payload notes:
 - **`definition-time` is likewise catalog-mandated** on `causal_feature_set.updated` (*"feature definitions and versions available to tier-3 models, definition-time"*), and it is what lets PdM detect D22 leakage in its own training assembly.
 - **Nothing large is inlined** (D27). Census details, evidence bundles, discovery artifacts, and hull lists are references into the API or object store. A feature-set update carries definitions, never observations.
 
-### 9.2 Consumed — exactly the eight in the catalog, plus Reference Data's
+### 9.2 Consumed — exactly the eight in the catalog, plus Reference Data's, plus Audit's remediation set
 
-No wildcards; every type is named explicitly (C38). Each feeds a read model rebuilt from `changed_since` reads, never from the bus (D5).
+No wildcards; every type is named explicitly (C38). Each feeds a read model rebuilt from `changed_since` reads, never from the bus (D5). **[AMENDMENT — closes 04 §1's amendment, 11 §3.7]** Also consumed, purely as 11 §3.7's `RemediationFilter` standing rebuild-time filter and never as a read-model effect of its own: `remediation.purge_executed`, `.purge_certified`, `.rewrap_executed`, `.quarantine_ordered`, `.quarantine_lifted` (`fathom.audit.remediation.v1`) — load-bearing here specifically, since `tags` and `causal_hypotheses` hold exactly the D13-classified evidence a purge or quarantine targets.
 
 | Event | Producer | What FI does with it | Read model |
 |---|---|---|---|

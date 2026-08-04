@@ -1024,10 +1024,17 @@ Enumerated exactly as [03 §6](../architecture/03-integration-contracts.md) list
 | 19 | `failure-intel` | `causal_finding.published` | `fathom.failure-intel.causal_finding.v1` |
 | 20 | `design-advisory` | `redesign_candidate.created` | `fathom.design-advisory.redesign_candidate.v1` |
 | 21 | `design-advisory` | `redesign_case.published` | `fathom.design-advisory.redesign_case.v1` |
+| 22 | `audit` **[AMENDMENT — closes 04 §1's amendment, 11 §3.7]** | `remediation.purge_executed` | `fathom.audit.remediation.v1` |
+| 23 | `audit` | `remediation.purge_certified` | `fathom.audit.remediation.v1` |
+| 24 | `audit` | `remediation.rewrap_executed` | `fathom.audit.remediation.v1` |
+| 25 | `audit` | `remediation.quarantine_ordered` | `fathom.audit.remediation.v1` |
+| 26 | `audit` | `remediation.quarantine_lifted` | `fathom.audit.remediation.v1` |
+
+Rows 22–26 are consumed through 11 §3.7's `RemediationFilter`, applied both at live apply and on every `ChangedSinceRebuilder` rebuild — never materializing a projector effect of their own, only suppressing one. §9.3's projector table below is otherwise unaffected.
 
 **Explicitly not consumed**, recorded because each is a plausible mistaken addition and two of them are load-bearing absences: `installed_item.installed`, `installed_item.removed`, `allowance.updated`, `telemetry.batch_ingested`, `usage_counter.updated`, `usage_counter.reset`, `mission.completed`, **`maintenance_action.recorded`** (§6.5, §7.2 — OD-6), `reservation_set.confirmed`, `reservation_set.released`, `mission_review.opened`, `anomaly_tag.confirmed`, `anomaly_tag.rejected`, `failure_mode.attributed`, `causal_feature_set.updated`, `design_change.projected`.
 
-`services/fleet-status/src/fathom_fleet_status/events/catalog.py` declares `CONSUMES: frozenset[str]` with exactly these 21 and `PUBLISHES: frozenset[str]` with exactly the 3 of §9.1. `tools/check_event_catalog.py` and `tools/check_service_events.py` reconcile it against [03 §6](../architecture/03-integration-contracts.md) and against `helm/values.yaml` in CI job 6 `[09 §6]`. A 22nd subscription cannot be added without the reconciliation failing, which is what closes C37 structurally rather than editorially.
+`services/fleet-status/src/fathom_fleet_status/events/catalog.py` declares `CONSUMES: frozenset[str]` with exactly these 26 and `PUBLISHES: frozenset[str]` with exactly the 3 of §9.1. `tools/check_event_catalog.py` and `tools/check_service_events.py` reconcile it against [03 §6](../architecture/03-integration-contracts.md) and against `helm/values.yaml` in CI job 6 `[09 §6]`. A 27th subscription cannot be added without the reconciliation failing, which is what closes C37 structurally rather than editorially.
 
 ### 9.3 The projector — event to read-model effect
 
