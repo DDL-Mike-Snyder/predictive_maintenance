@@ -1497,7 +1497,12 @@ CONSUMES: frozenset[str] = frozenset({
     "fathom.telemetry.mission.completed",
     "fathom.telemetry.anomaly.detected",
     "fathom.telemetry.telemetry_batch.ingested",
-    "fathom.registry.configuration.baseline_changed",
+    "fathom.registry.configuration_baseline.changed",  # [AMENDMENT — corrected.] Was the
+    # doc-20 §3.2 catalog LABEL, not the wire event_type — 20 §3.2 is explicit that "the
+    # catalog label is a cross-reference only and never appears on a wire." EVENT_HANDLERS
+    # keyed on the old string never matched, so epoch fencing and candidate-admission
+    # gating never fired against a baseline change — a silent D2-class failure with no
+    # error. 27-fleet-status.md, 24-scheduling.md, and 09 all use the correct wire name.
     "fathom.maintenance.maintenance_action.recorded",
 })
 # NOT subscribed, deliberately: fathom.reference-data.taxonomy.* — those topics have no
