@@ -489,9 +489,9 @@ Four rules from §3.3 govern every type in this module:
 2. EIC is never a join key.  NAVSEAINST 4790.8 Appendix A defines it as a
    7-character code whose leading positions identify system, subsystem, and
    equipment category — a CLASS CODE OF VARIABLE SPECIFICITY, not an instance
-   identifier.  See §4.4 of build document 10 for how this is enforced, and
-   OQ-1 in §11 for the one place document 03 is internally inconsistent about
-   where `eic` is carried.
+   identifier.  See §4.4 of build document 10 for how this is enforced.  `eic`
+   is declared on `SystemRef` and `InstalledItemRef` below, closing OQ-1 (§3.3
+   now states the field rather than leaving it implicit in prose only).
 3. A payload identifying a physical item identifies it as `installed_item_id`.
    A payload identifying a location identifies it as `position_id`.  The
    distinction is load-bearing: remaining useful life, usage accumulation, and
@@ -532,8 +532,8 @@ HUMAN_REFERENCE_ONLY: frozenset[str] = frozenset(
 )
 """Document 03 §3.3 rule 1: carried "for human reference and for federation with
 external systems, and are never used as join keys internally, because external
-systems reissue and reformat them."  `eic` is included per rule 2, whether or
-not OQ-1 resolves to declaring the field."""
+systems reissue and reformat them."  `eic` is included per rule 2, now declared
+on `SystemRef` and `InstalledItemRef` (OQ-1 resolved)."""
 
 
 class AssetDomain(StrEnum):
@@ -756,7 +756,7 @@ class PartRef(FathomModel):
 
 Note what is **not** here, deliberately:
 
-- No `eic` field on any type. Document 03 §3.3's rule 2 prose says EIC *"is carried on `SystemRef` and `InstalledItemRef` for federation and human reference only"* — but neither schema block in §3.3 declares the field. Adding it would be inventing a field; omitting it contradicts the prose. **Omitted, and flagged as OQ-1** (§11). The lint rule `FTH001` (§4.4) is written to catch `eic` as a join key regardless of which way OQ-1 resolves, so the enforcement does not depend on the resolution.
+- **`eic` is declared on `SystemRef` and `InstalledItemRef`, not on `PartRef`.** OQ-1's original gap — document 03 §3.3's rule 2 prose named the two carrier types without either schema block declaring the field — is closed; both blocks now declare `eic: NonEmptyStr | None`. Its absence from `PartRef` is not a gap: EIC identifies equipment, not a part type, and the field simply does not apply here. The lint rule `FTH001` (§4.4) still catches `eic` as a join key wherever it appears.
 - No `asset_id` on `SystemRef`, and no `asset_id` on `PositionRef`. Document 03 §3.3 does not denormalize the parent chain beyond `PositionRef.system_id`. Flagged as OQ-2.
 
 ### 4.4 Enforcing the domain vocabulary — document 03 §3.2
@@ -4976,7 +4976,7 @@ Per the rule that nothing may be invented, each item below is a gap this package
 
 | ID | Question | Reading adopted here |
 |---|---|---|
-| **OQ-1** | §3.3's prose says EIC *"is carried on `SystemRef` and `InstalledItemRef` for federation and human reference only"*, but neither schema block declares an `eic` field. | **Field omitted.** `FTH001` catches `eic` as a join key regardless of resolution, so enforcement does not depend on it. Needs an editorial fix: either add `eic` to both blocks or amend the prose. |
+| **OQ-1** | **RESOLVED.** §3.3's prose said EIC *"is carried on `SystemRef` and `InstalledItemRef` for federation and human reference only"*, but neither schema block declared an `eic` field. | Both blocks now declare `eic: NonEmptyStr | None`, in document 03 §3.3 and here. `FTH001` continues to catch `eic` as a join key. |
 | **OQ-2** | §3.3 denormalizes the parent chain only as far as `PositionRef.system_id`. Does `SystemRef` carry `asset_id`? Does `PositionRef`? Fleet Status scopes readiness to a system and needs the asset. | **No parent fields added.** Consumers resolve the chain through the Registry's `changed_since` reads. |
 | **OQ-3** | §5.4 presents `EventEnvelope` as one block and then introduces `clock {}` separately. Is `clock` a top-level envelope member? | **Yes** — *"Every event therefore carries"* is unambiguous about the obligation, only about placement. Merge the blocks in document 03. |
 | **OQ-4** | §5.4 requires *"exactly one scope identifier … matching `scope`"*, but (a) `EventScope.FLEET` has no corresponding `subject` field, and (b) `subject.mission_id` exists while no `scope` value selects it. | **`fleet` ⇒ empty subject; `mission_id` unusable as a sole subject.** Needs either a `mission` scope value or removal of `mission_id` from `subject`. Non-trivial: `mission_review.opened` and `mission_review.completed` are mission-scoped facts. |

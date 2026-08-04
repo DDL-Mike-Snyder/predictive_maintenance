@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Draft rev 1. Phase 3 build framework for one sub-application |
+| **Status** | Draft rev 2 — reconciled against `22-pdm.md`, `26-supply.md`, and `09 §4.4.2` now that all three have landed. Phase 3 build framework for one sub-application |
 | **Slug** | `maintenance` — canonical, per [03 §3.1](../architecture/03-integration-contracts.md). Display abbreviation "Scheduling". Directory `services/maintenance/`, package `fathom_maintenance` |
 | **Scope** | Aggregates, API surface, the scheduling optimizer and its reservation protocol, findings capture as a labeling problem, JCN generation, edge-authoritative maintenance action recording, deferral handling, events, testing, deployment, and the Definition of Done for this sub-application |
 | **Derived from** | [03 — Integration Contracts](../architecture/03-integration-contracts.md) §3, §4, §5, §6 (Scheduling rows), §7.1, §7.2, §7.2.1, §9, §11, §14, §15 · [04 — Sub-Application Architectures](../architecture/04-subapplication-architectures.md) §6, §7 · [05 — Review Findings](../architecture/05-architecture-review-findings.md) **D6, D8, D20, D34**, and D1, D7, D9, D16, D19, D21, D29, D34 · [06 — Demonstration Decisions](../architecture/06-demo-decisions-and-assumptions.md) §2, §3, §4, §7, §9.2 · [07 — Navy Data Systems](../architecture/07-navy-data-systems.md) §5 · [09 — Monorepo and Conventions](09-monorepo-and-conventions.md) · [10 — Shared Packages](10-shared-packages.md) §4.7 · [11 — Outbox and Sync Library](11-outbox-sync-library.md) §5, §7, §8, §9 · [12 — Reference Data and Taxonomy](12-reference-data-taxonomy.md) §2.6, §2.9, §4, §9 · [13 — Synthetic Data Generator](13-synthetic-data-generator.md) §9.10, §11.5, §15 |
@@ -77,7 +77,10 @@ Every review finding this document is responsible for, and where it is discharge
 | **C10** | `position_id` is not `installed_item_id` | §3.2, §3.4 |
 | **C19** | Agents are never direct topic consumers | §9.4 |
 | **C20** | Conflict policy declared per aggregate, complete-or-fail | §3.11 |
+| **D24** | Substitution obligations: `lead_time` and `condition_code` must exist on Supply's surface or the hard constraint is unsatisfiable | §3.8, §4.1 refusal 4, §10.5 |
 | **OQ-13** ([10 §11](10-shared-packages.md)) | `authority_class` vocabulary was undefined, blocking D16's authority check | §3.9 — **resolved** by [03 §7.2.1](../architecture/03-integration-contracts.md) for `work_candidate` and `interval_change` |
+
+**What changed in rev 2.** Three sibling build documents landed after rev 1 and closed its three open assumptions. The material change is §4.5: rev 1's reservation protocol assumed a release-by-client-key operation that Supply does not provide, which would have failed in the compensation path — under fault, where D6 lives. §4.5.5 replaces it with three mechanisms that need no change to Supply. §4.2 deletes Scheduling's locally-invented risk conversion in favour of PdM's, and §5.4.1 corrects a `triggering_driver` vocabulary that would have silently biased every IPCW weight PdM computes. §§14–18 complete the document.
 
 ---
 
@@ -1301,7 +1304,7 @@ One consequence worth stating because it constrains PdM's stratification and not
 | Narrative–code inconsistency | Accepted | no capture-time check. The narrative is untrusted free text (03 §9) and is never parsed to validate a coded field |
 | **Duplicate 2-Kilos** (same job, two JSNs) | Both accepted | dedup is on `action_record_id`, never on `jcn`. `warning: probable_duplicate_action` where another record exists for the same `(installed_item_id, action_taken_code, overlapping failure interval)`. Naive counting inflates failure rates, so `GET /maintenance-history` exposes the warning and never silently collapses the pair |
 | **Corrective/preventive misclassification** | Accepted | the cross-validation warnings of §5.2. The most damaging error, and the only defence is that the field is required, unpre-filled, and paired with `maintenance_class_basis` |
-| Missing `triggering_driver` | Accepted | resolves to `unknown` (§5.4). Never fabricated |
+| Missing `triggering_driver` | Accepted | resolves to **NULL**, rendered "unknown" (§5.4.1). Never fabricated |
 
 ### 5.8 Navy reliability arithmetic Scheduling makes computable
 
@@ -1851,7 +1854,7 @@ Loads `data/synthetic/scenarios/edge/edge-ssn-6wk-*.yaml` ([13 §15](13-syntheti
 | `test_casrep_risk_maps_to_prediction_driver` | A `casrep_risk.raised`-derived candidate has `driver = prediction`, never `casualty` (§3.2.1) |
 | `test_merge_driver_is_timing_determinant` | A prediction pulling a PMS task forward yields `driver = prediction`; a prediction inside the tolerance yields `pms`; `source_prediction_id` is retained in both (§3.2.2 rules 4–5) |
 | `test_treatment_record_rejects_client_values` | Any of the three fields on the request → `422` (§5.4 rule 0) |
-| `test_treatment_record_never_guesses` | Zero or ≥2 open candidates for the item → `unknown`, and no `triggering_prediction_id` |
+| `test_treatment_record_never_guesses` | Zero or ≥2 open candidates for the item → `triggering_driver` **NULL**, and no `triggering_prediction_id` |
 | `test_deferral_class_validations` | `risk_disagreement` without `prediction_ref` → `422`; `capacity` with a `disagreement` block → `422`; missing class → `422` (§3.5) |
 | `test_convergence_is_monotone` | A failed NIIN line never re-appears unchanged in generation `g+1`; `part_availability.changed` triggers no replan; `REPLAN_EXHAUSTED` is reached and explained `[D20]` |
 | `test_interval_change_blast_radius` | A proposal declaring `item` scope on a class-wide MRC is derived as `class` and requires `fleet_authority` + dual control (§3.9) `[D16]` |
@@ -1861,7 +1864,7 @@ Loads `data/synthetic/scenarios/edge/edge-ssn-6wk-*.yaml` ([13 §15](13-syntheti
 Drives the eight [13 §9.10](13-synthetic-data-generator.md) corruptions through `POST /maintenance-action-records` and asserts the §5.7 table row by row. The two properties that make it meaningful:
 
 - **Every corrupted record is accepted (`201`).** A capture API that rejects realistic deckplate input causes the recording to stop, which is D8 by attrition. Any `4xx` other than the three deliberate ones (missing `maintenance_class`, malformed interval, client-supplied treatment field) fails the test.
-- **Every corruption is either represented structurally or flagged.** Asserted per row: `candidate_modes[]` is never flattened to a single mode; duplicates dedup on `action_record_id` and not on `jcn`; `parts_record_absent` is explicit; interval-censored timing survives date rounding; missing `triggering_driver` becomes `unknown`; wrong-item attribution produces a warning naming the sibling position **without moving the record**.
+- **Every corruption is either represented structurally or flagged.** Asserted per row: `candidate_modes[]` is never flattened to a single mode; duplicates dedup on `action_record_id` and not on `jcn`; `parts_record_absent` is explicit; interval-censored timing survives date rounding; missing `triggering_driver` becomes NULL; wrong-item attribution produces a warning naming the sibling position **without moving the record**.
 
 A third assertion guards the ceiling honestly: the wrong-findings-code corruption produces **no** warning, and the test asserts that, because the alternative is a false claim that capture-time validation can detect it. [06 §2](../architecture/06-demo-decisions-and-assumptions.md) A5 rates this LOW confidence and names actionable precision as the metric that degrades; pretending otherwise in a test would hide it.
 
@@ -2103,10 +2106,254 @@ Beyond [09 §5.6](09-monorepo-and-conventions.md)'s baseline, the following are 
 | `fathom_maintenance_reservation_calls_total{operation}` | Proves the no-loop property in production, not only in test |
 | `fathom_staleness_refusals_total{reason}` | Required by [09 §8.3](09-monorepo-and-conventions.md); the five §4.1 reasons are distinguished |
 | `fathom_maintenance_action_records_total{producer_node, capture_completeness}` | The label stream's actual volume, split by hull-versus-shore. A hull whose count is zero across a patrol is D8 recurring operationally |
-| `fathom_maintenance_treatment_record_unknown_ratio` | The fraction of records with `triggering_driver = unknown`. PdM's propensity model handles missingness; a *rising* ratio means capture linkage is degrading |
+| `fathom_maintenance_treatment_record_unknown_ratio` | The fraction of records with a **NULL** `triggering_driver` (§5.4.1). PdM's propensity model handles missingness; a *rising* ratio means capture linkage is degrading |
 | `fathom_maintenance_deferrals_total{deferral_reason_class}` | Class mix. If `risk_disagreement` approaches 100%, someone has found it the path of least resistance and D34 has returned through the UI |
 | `fathom_maintenance_jcn_deferred_total` | §6.4 block exhaustion |
 | `fathom_sync_divergence_seconds{aggregate}` and `..._breached` | Library-provided ([11 §9.1](11-outbox-sync-library.md)); surfaced per aggregate |
 | `fathom_maintenance_optimizer_solve_seconds`, `..._infeasible_total` | Solver health; an infeasible run must be explained, never retried silently |
 
 Log `event` values are stable snake_case strings: `reservation_intent_minted`, `reservation_indeterminate`, `reservation_compensated`, `saga_reaped`, `staleness_refusal`, `action_record_captured`, `treatment_record_unknown`, `edge_write_rejected`, `jcn_assignment_deferred`, `merge_applied`, `replan_exhausted`.
+
+---
+
+## 14. Explicit DO-NOT list
+
+Per [09 §1.3](09-monorepo-and-conventions.md)'s template. Every item is a specific, plausible implementation choice that would reintroduce a named finding. These are not style preferences; each one has a review finding or a cited contract behind it.
+
+**The reservation protocol — D6**
+
+1. **Do not loop per NIIN.** One `POST /reservation-sets` carrying every line, always. *(D6 verbatim: "reserves per-NIIN… 37 of 40 succeed, the 38th fails." §4.5.4 R4; lint-enforced.)*
+2. **Do not send the reservation before committing the intent row.** *(§4.5.4 R1. A crash in that gap is the classic orphan.)*
+3. **Do not treat `reservation_intent_id` as a release handle.** Supply releases by *its* `reservation_set_id` only. *(§4.5.4 R2; [26 §3.9](26-supply.md). This is rev 1's error — do not restore it.)*
+4. **Do not defer persisting `reservation_set_id`.** It is committed in its own transaction the instant the `201` is read. *(§4.5.1; fault point F12.)*
+5. **Do not set `fence: "none"` to make a rejected reservation succeed.** A fence rejection means the optimizer solved against a stock position that no longer exists, and the correct response is a replan with refreshed availability. *(§4.1.1. The single most tempting way to undo D6's fix after it is in place.)*
+6. **Do not retry a fence rejection with the same `expected_stock_epoch`.** It will fail forever. *(§4.1.1, §4.6 rule 2.)*
+7. **Do not treat a `201` as confirmation.** `RESERVED` requires the `201` **and** a corroborating `reservation_set.confirmed`. *(§4.5.4 R5.)*
+8. **Do not publish `work_package.approved` from any state but `APPROVED`, reachable only from `RESERVED`.** *([03 §6](../architecture/03-integration-contracts.md): "published only after reservation confirmation" `[D6]`; §4.5.4 R7.)*
+9. **Do not resurrect an expired reservation set.** Re-verifying every line is a new set by definition. *([26 §7.4](26-supply.md); §4.5.6.)*
+10. **Do not introduce a distributed transaction, orchestrator, or distributed lock manager across the Supply boundary.** *([26 §3.12](26-supply.md): "any proposal to add one must first explain what property the TTL lease fails to provide.")*
+11. **Do not do arithmetic on `supply_expires_at`.** Every timer reads `monotonic_deadline`. *(`[D29]`; §3.8, lint-enforced.)*
+12. **Do not make `part_availability.changed` a replan trigger.** *(§4.6 rule 3 — this is D20's oscillation.)*
+13. **Do not re-propose an unchanged failed NIIN line in the next generation.** *(§4.6 rule 2 — this is the non-convergence, and it is the natural implementation.)*
+
+**Edge-authoritative recording — D8**
+
+14. **Do not require a `WorkOrder` to record a `MaintenanceActionRecord`.** `work_order_id` is nullable by design and a null is a complete record. *(D8; §1.4, §3.4.1.)*
+15. **Do not let the edge fabricate an authorization.** `POST /work-orders` afloat is a queued request; `PATCH` to `authorized` is `423`. *([03 §11](../architecture/03-integration-contracts.md); §3.3.)*
+16. **Do not modify, reject, or reorder an edge record ashore.** Corrections are new rows with `supersedes_action_record_id`. *([11 §7.3](11-outbox-sync-library.md); §7.4 — the table is INSERT-only and the trigger enforces it.)*
+17. **Do not auto-link an edge record to a shore work order by heuristic.** *(§3.4.1; [13 §15.2](13-synthetic-data-generator.md) generates exactly this conflict, and an auto-link is how that test passes for the wrong reason.)*
+18. **Do not bind write authority to connectivity.** No `is_connected()` input to any merge decision. *([03 §11](../architecture/03-integration-contracts.md) on the DDS liveliness defect; §7.4.)*
+19. **Do not bound the number of unreconciled action records.** `max_unreconciled_records` is deliberately `None`; refusing the 501st repair record is D8 as a quota. *(§7.5.)*
+20. **Do not refuse a record because the JSN block is exhausted.** Accept with a null JCN. *(§6.4 — "D8 wearing a compliance badge.")*
+21. **Do not let a telemetry divergence breach gate maintenance recording.** *([11 §9.1](11-outbox-sync-library.md) rule 3.)*
+22. **Do not mark the edge drain `replay: true` or `X-Backfill`.** A six-week-old action is a first emission of a real fact and must fire its side effects. *([11 §9.3](11-outbox-sync-library.md); §7.2.)*
+23. **Do not key deduplication on `jcn`.** `action_record_id` only — duplicate 2-Kilos with different JSNs are real input. *(§3, §5.7; [13 §9.10](13-synthetic-data-generator.md).)*
+
+**The label stream and the treatment record — D1, D21, D34**
+
+24. **Do not accept `triggering_driver`, `triggering_prediction_id`, or `policy_version` from a client.** Server-derived, `422` on input. *(§5.4 rule 0.)*
+25. **Do not guess a candidate linkage.** Zero or ≥2 open candidates → NULL. **A fabricated link is worse than a missing one**, because missingness is modellable and fabrication is internally consistent and undetectable. *(§5.4; do not add a nearest-match heuristic.)*
+26. **Do not emit `pms` or `unknown` as `triggering_driver` values.** The five values are PdM's; absence encodes unknown. *(§5.4.1.)*
+27. **Do not collapse `opportunistic` and `opportunistic_pms`.** *([22 §4.2](22-pdm.md): "the most likely implementation error in this table.")*
+28. **Do not put a non-treatment prediction id into `triggering_prediction_id`.** Use `prediction_in_evidence_id`. *(§5.4.2.)*
+29. **Do not derive `maintenance_class` server-side, pre-select it in a UI, or infer it from `action_taken_code`.** *(§5.2; [13 §9.10](13-synthetic-data-generator.md) calls its misclassification "the single most damaging label error.")*
+30. **Do not default `deferral_reason_class`.** Either default is a silent, directional, unrecoverable bias. *(`[D34]`; §3.5.)*
+31. **Do not let a non-`risk_disagreement` deferral carry a `disagreement` block.** *(§3.5 — this is D34 in one line of code.)*
+32. **Do not reject realistic deckplate input.** The eight corruptions are accepted and flagged, never refused; a rejecting capture API stops the recording. *(§5.7 — D8 by attrition.)*
+33. **Do not parse the narrative to validate a coded field.** Untrusted free text, never an instruction. *([03 §9](../architecture/03-integration-contracts.md).)*
+34. **Do not pre-filter the event stream to Status 2/3.** Capture all, expose the filter. *(§5.3 — `MAINT_EFFECT` is computed over all actions.)*
+35. **Do not store a resolved failure mode.** Scheduling stores 3-M codes as filed; resolution is the consumer's at read time. *([12 §4](12-reference-data-taxonomy.md); §5.6 — a cached resolution turns a many-to-many mapping into a false one-to-one.)*
+36. **Do not omit `findings.taxonomy_version`.** *([03 §14](../architecture/03-integration-contracts.md): "silently corrupt and undetectably so.")*
+37. **Do not infer a missing parts record from an empty list.** `parts_record_absent` is explicit. *(§5.7; `MAINT_EFFECT` must report uncomputable, never zero.)*
+
+**The optimizer and the conversion — D7, D19**
+
+38. **Do not re-implement the decision-theoretic conversion.** Import `fathom_schemas.decision`. *(§4.2.1; [22 §7.1](22-pdm.md).)*
+39. **Do not rank on anything but `expected_consequence`.** *([22 §7.5](22-pdm.md) rule 1: "A `FailurePrediction` reaching an optimizer objective function without passing through this conversion is the D7 defect.")*
+40. **Do not treat a null `p_failure` as zero**, and do not catch `UncalibratedAndUnrated` and substitute a number. *([03 §7.1](../architecture/03-integration-contracts.md); §4.2.2 rule 1.)*
+41. **Do not omit `operating_fraction`.** It overstates the horizon by ~50% in the optimizer's favour. *([22 §7.3](22-pdm.md); §4.2.1.)*
+42. **Do not synthesize `timing_p10` where the basis is a class rate.** *(`[D19]`; [22 §7.3](22-pdm.md).)*
+43. **Do not branch on `tier`.** *([03 §7.1](../architecture/03-integration-contracts.md); lint-enforced under `optimizer/`.)*
+44. **Do not call PdM synchronously on the solve path.** *(03 principle 2; §4.2.1.)*
+45. **Do not read the database during model construction.** The builder takes a materialized instance and holds no handle. *(§4.1 — a constructor-level guarantee, not a discipline.)*
+46. **Do not degrade instead of refusing when a staleness bound is exceeded.** *([03 §5.2](../architecture/03-integration-contracts.md) names the optimizer specifically `[D6]`.)*
+47. **Do not down-weight holdout items instead of excluding them at admission.** A ranking-stage branch leaks: the item has still been treated. *([13 §10.3](13-synthetic-data-generator.md); §4.3.)*
+48. **Do not ship a candidate without a disposition.** Totality is asserted inside the persisting transaction. *(§4.4 — "most candidates carry a reason" is the failure.)*
+49. **Do not run the solver multi-threaded.** CP-SAT is reproducible only single-threaded, and reproducibility is a DoD item. *(§4.3, §15.8.)*
+50. **Do not merge candidates on `position_id`.** Merge is keyed on `installed_item_id`. *(`[C10, D9]`; §3.2.2 rule 1.)*
+51. **Do not classify a merge product's driver as `pms` because a PMS task existed.** The driver is whichever changed the timing. *(§3.2.2 rule 4 — the intuitive alternative reintroduces D1 undetectably.)*
+52. **Do not code a `casrep_risk.raised` candidate as `driver = casualty`.** It is a prediction. *(§3.2.1.)*
+53. **Do not let the optimizer suppress a preventive task.** Changing an interval requires an `interval_change` proposal with `fleet_authority` and dual control. *([03 §7.2.1](../architecture/03-integration-contracts.md); §3.2.2 rule 7.)*
+54. **Do not accept a proposer-declared `blast_radius`.** Derive it from what the payload mutates. *(`[D16]`; §3.9 — an MRC change is class-scoped even when raised from one hull's screen.)*
+
+**General**
+
+55. **Do not make an agent a direct topic consumer.** *(`[C19]`; §9.4.)*
+56. **Do not make `plan` reserve anything.** A declared-`none` agent-eligible operation must not hold fleet stock. *(`[C1/D11]`; §9.2.)*
+57. **Do not wildcard event subscriptions.** *(`[C38]`; §10.4.)*
+58. **Do not use the partition key as the compaction key.** *(`[D5]`; §10.2 — compacting the label stream on `asset_id` deletes a hull's history via a broker setting.)*
+59. **Do not build a divergent edge image.** One image, one chart, two values files. *(§12 — a divergent edge image is how the edge path stops being exercised, and that is how D8 happened.)*
+60. **Do not cite "append-only" as a reason a spillage cannot be remediated.** *(`[D15]`; §3.11.)*
+
+---
+
+## 15. Definition of Done
+
+Each item is objectively verifiable. A sub-application is not done because its endpoints return `200`.
+
+### 15.1 The reservation protocol — D6
+
+1. `POST /reservation-sets` is called **at most once per attempt**, carrying every line, with `fence: "strict"` and an `expected_stock_epoch` on every line drawn from the run's `input_watermark`. Proven by call-count and body assertions in §11.3 invariants 3 and 9, and by `fathom_maintenance_reservation_calls_total` in production.
+2. The fourteen saga states of §4.5.3 exist as a persisted enum with an explicit transition table, and `RESERVATION_INDETERMINATE` and `AWAITING_TTL_EXPIRY` are both reachable and both drain.
+3. `test_no_orphaned_reservations_under_partial_failure` passes across all fifteen fault points × two hidden outcomes, plus the Hypothesis variant.
+4. **No `work_package.approved` appears in the event tap without an earlier matching `reservation_set.confirmed`** — asserted as an ordering predicate, not a state check.
+5. The R3 partial unique index exists in `pg_indexes`, and the R4 no-loop lint rule is in CI.
+6. The reaper converges every saga unaided with no client retry (§11.3 invariant 8), and `fathom_maintenance_reservation_orphan_suspected_total` is flat at zero across a full demonstration run.
+7. Orphan lifetime is bounded in the unrecoverable case: F13 terminates on TTL expiry with zero held reservations and zero operator action.
+8. `extend` is exercised, its `extend_count ≤ 8` cap is observed, and a capped package notifies the planner *before* expiring.
+
+### 15.2 Edge-authoritative recording — D8
+
+9. A network-partitioned edge instance accepts `POST /maintenance-action-records` with `work_order_id = null` and **all four Tier A fields** — determination, findings coding, failure timing, treatment record — with no shore round trip.
+10. The same instance returns `202` for `POST /work-orders` and `423` for `PATCH … authorized`. No authorization is ever minted afloat.
+11. `assert_edge_write_surface()` fails the pod when a state-changing route is added without an allowlist change.
+12. `test_edge_recording_six_week_disconnect` passes all fourteen assertions against the [13 §15](13-synthetic-data-generator.md) golden file, unregenerated.
+13. `maintenance_action_record` is INSERT-only in the deployed schema: `UPDATE`/`DELETE` revoked from the application role **and** a trigger that raises. Verified against the live database, not the migration source.
+14. The divergence budget (90 d) exceeds the scenario (42 d), asserted in `helm unittest`.
+15. On reconnect, an edge record and a concurrently-authorized shore work order for the same equipment both persist, neither overwritten, with no inferred link.
+16. `fathom_maintenance_action_records_total{producer_node}` shows a non-zero `edge:<asset_id>` count for the patrol.
+
+### 15.3 The label stream
+
+17. All four [06 §9.2](../architecture/06-demo-decisions-and-assumptions.md) Tier A fields are non-null on every record where they are derivable, and `capture_completeness` is set on every record.
+18. `triggering_driver` is one of PdM's five values or absent; `pms` and `unknown` never appear on the wire; PdM's consumer-driven conformance test passes.
+19. `opportunistic` and `opportunistic_pms` are both emitted by the demonstration corpus and are never collapsed.
+20. Zero policy-frozen items carry `triggering_driver ∈ {prediction, opportunistic}` or a non-null `triggering_prediction_id` — gate G-7, asserted on Scheduling's own emissions.
+21. `test_findings_capture_under_label_corruption` passes: all eight corruptions accepted, each represented or flagged per §5.7, and the wrong-findings-code case produces **no** warning.
+22. `failure_indicator` is derived and carries `failure_indicator_rule_version`; no client can set it.
+23. `findings.taxonomy_version` is non-null on 100% of records.
+24. `fathom_maintenance_treatment_record_unknown_ratio` is reported, and its trend is reviewed rather than merely emitted.
+
+### 15.4 Deferrals — D34
+
+25. `deferral_reason_class` is `NOT NULL` with no database default and no API default; unset is `422`.
+26. A `disagreement` block on a `capacity`, `tempo`, or `parts_unavailable` deferral is `422`, and the test asserts **both** directions.
+27. `deferral.recorded` publishes all four classes; Scheduling filters none.
+28. `fathom_maintenance_deferrals_total{deferral_reason_class}` shows a plausible mix — a `risk_disagreement` share approaching 100% is treated as a defect, not as a finding about the models.
+
+### 15.5 The optimizer
+
+29. `optimizer/consequence.py` contains **no** conversion arithmetic; `test_conversion_is_not_reimplemented` passes.
+30. Every `CandidateDisposition` carries `conversion_version` and `inputs_digest`, and `count(dispositions) == count(candidates_in_scope)` for every run.
+31. Every excluded candidate carries a `binding_constraint` from the CP-SAT core and a counterfactual.
+32. All five staleness refusals return distinct problem types and increment their labelled counter.
+33. `GET /work-packages/{id}/explanation` meets `p95 < 4 s` at [06 §7](../architecture/06-demo-decisions-and-assumptions.md) scale.
+34. Every operator-visible ranking renders `weights_are_illustrative` and the risk posture.
+35. `test_convergence_is_monotone` passes; `REPLAN_EXHAUSTED` is reachable and fully explained.
+
+### 15.6 Navy fidelity
+
+36. Every JCN is exactly 13 characters, `UIC(5) + WorkCenter(4, left-justified space-padded) + JSN(4)`, with the FATHOM originator alpha in JSN position 1, matching the generator's corpus.
+37. A JSN block exhausted afloat yields an accepted record with `jcn = null`, assigned ashore in `monotonic_seq` order.
+38. `status_code` is captured on every record and exposed as a filter, not applied as one.
+39. `action_started_at`, `action_completed_at`, and the `failure_detected_at` interval are all present, making MDT and Ao computable by their consumers; `parts_consumed[].requisition_doc_no` supports the awaiting-parts decomposition.
+40. The EIC is matched by prefix, never by equality, and is never a join key.
+
+### 15.7 Events, API, and deployment
+
+41. `tools/check_event_catalog.py` exits 0: `catalog.py` ≡ `values.yaml` ≡ [03 §6](../architecture/03-integration-contracts.md), in both profiles.
+42. Every envelope carries the full `clock` block and a correct `producer_node`; the edge `PUBLISHES` set is exactly one topic, asserted in CI.
+43. `changed_since` exists for every aggregate a declared consumer projects `[D5]`.
+44. `x-agent-eligible` appears only on `x-side-effects: none` or `proposal-only` operations; no agent can reach `/work-packages`, `/reserve`, `/approve`, or the capture endpoint.
+45. Fault injection shows **no state change without its event** for every state-changing operation.
+46. The rendered NetworkPolicy's egress peer set equals `values.networkPolicy.egress` exactly, `gateway` included and `supply` excluded.
+47. The same image digest runs at enterprise and edge.
+
+### 15.8 Reproducibility and provenance
+
+48. Same `input_watermark` + seed + solver version + `conversion_version` → **byte-identical** solution and dispositions. `num_search_workers = 1` in the deployed chart.
+49. Every `optimizer_run` persists its watermark, including `stock_epoch`, and no historical run is recomputed when `conversion_version` changes.
+50. Every placeholder in this document is labelled illustrative wherever an operator sees its output, and the §16 list is current.
+
+---
+
+## 16. Reconciliation, placeholders, and open questions
+
+### 16.1 Reconciliation items — status
+
+Rev 1 raised RC-1 through RC-3 against siblings authored in parallel. All three are closed; two new ones and one carried item remain.
+
+| Item | Counterparty | Status |
+|---|---|---|
+| **RC-1** — ownership of the decision-theoretic conversion | [22 §7](22-pdm.md) | **CLOSED.** PdM owns it; ships as `fathom_schemas.decision`. Scheduling's local implementation deleted, including rev 1's shrinkage term. §4.2.1, §4.2.4 |
+| **RC-2** — `DELETE` by client intent key | [26 §3.9](26-supply.md) | **CLOSED AGAINST rev 1's assumption.** No `client_reference` field exists; release is by Supply's `reservation_set_id`. Recovery is by idempotent re-issue, the change feed, then TTL — no Supply change required. §3.8, §4.5.5 |
+| **RC-3** — `policy_version` nullability on non-prediction drivers | [22 §2.3](22-pdm.md) | **CLOSED IN rev 1's FAVOUR.** PdM requires it as a stratification covariate. §5.4.4. The `triggering_driver` *vocabulary*, however, was wrong in rev 1 and is corrected in §5.4.1 |
+| **RC-4** — `prediction_in_evidence_id` | [03 §6](../architecture/03-integration-contracts.md) | **OPEN.** Proposed catalog addition (§17). Interim: join through `triggering_candidate_id`. Never overload `triggering_prediction_id` |
+| **RC-5** — `policy_version` namespace prefixes (`cgp:` / `ipv:`) | [22 §4.3](22-pdm.md) | **OPEN.** PdM strata must not pool the two namespaces by string equality (§5.4.4) |
+| **RC-6** — through-gateway pattern scope | [09 §4.4.2](09-monorepo-and-conventions.md) | **OPEN, low risk.** The pattern says "asynchronous, non-compute-path"; Scheduling's reservation is synchronous and off the *solve* path. Position taken, confirmation requested (§12.1) |
+
+### 16.2 Open questions
+
+| # | Question | Interim position |
+|---|---|---|
+| **OQ-1** | No event announces an *occurred* casualty; the catalog has only predictive `casrep_risk.*` | `casualty` driver is API-originated only (§3.2.1). Raised for a catalog decision |
+| **OQ-2** | No `work_package.retracted` event, so a consumer holding a `proposed` package never learns it was abandoned | Successor carries `supersedes_work_package_id`; consumers treat a superseded proposal as retracted. Weaker than an explicit event (§4.5.7) |
+| **OQ-3** | `Idempotency-Key` retention for edge-reachable operations | Must exceed the 90-day divergence budget (§4.5.7). Set by document 11 |
+| **OQ-4** | The production JSN originator alpha requires central TYCOM/NAVSEA assignment | `F`, reserved for demonstration, in the data card. One Helm value to change (§6.2) |
+| **OQ-5** | Platform-service topics (Reference Data taxonomy) are absent from [03 §6](../architecture/03-integration-contracts.md)'s catalog, so the three taxonomy events cannot carry consumer-driven conformance tests | Consumed and handled; conformance deferred (§10.4). Logged as OD-7 by [12 §3.4](12-reference-data-taxonomy.md) |
+| **OQ-6** | ~~Scheduling → Supply network path~~ | **CLOSED** by [09 §4.4.2](09-monorepo-and-conventions.md)'s through-gateway pattern (§12.1) |
+| **OQ-13** | ~~`authority_class` vocabulary undefined~~ | **CLOSED** by [03 §7.2.1](../architecture/03-integration-contracts.md) (§3.9) |
+
+### 16.3 Placeholders requiring SME validation
+
+Every one of these runs, and every one is labelled illustrative wherever an operator sees its effect ([06 §3](../architecture/06-demo-decisions-and-assumptions.md) assumption A8).
+
+| Placeholder | Value | Where |
+|---|---|---|
+| Consequence weights | 10.0 / 3.0 / 1.0 | §4.2.3 — A8 rates defensibility **LOW**; a Phase 3 workshop item |
+| Risk posture by band | `AVERSE` / `NEUTRAL` / `NEUTRAL` | §4.2.3; [22 §7.4](22-pdm.md) P-17 — a program decision, not an analytic one |
+| Staleness bounds | nine values, 900–604800 s | §4.1 |
+| Objective weights `λ_cost`, `λ_capacity`, `λ_churn` | — | §4.3 |
+| The whole constraint model and solver choice | CP-SAT, C1–C7 | §4.3 — [04 §6](../architecture/04-subapplication-architectures.md) leaves formulation to Phase 3 |
+| `timing_tolerance_days` | 14 | §3.2.2 |
+| `interval_change` bounded delta | ±25% | §3.9 |
+| `max_replan_generations`, min replan interval | 3, 15 min | §4.6 |
+| `reservationTtlSeconds`, `extendLeadSeconds`, `maxReserveAttempts` | 48 h, 1 h, 3 | §12.1 |
+| JSN block size | 512 | §6.3 |
+
+**Fleet-scale solving is answered "not attempted," not "solved."** At [06 §7](../architecture/06-demo-decisions-and-assumptions.md)'s scale (12 assets, ~8,400 items, 6 availabilities) the single-threaded deterministic solve is comfortable. Production (~300 hulls) requires decomposition per availability and is explicitly out of scope for this build (§4.3).
+
+---
+
+## 17. Corrections required to upstream documents
+
+Raised here rather than fixed silently, per the Precedence row.
+
+| Document | Correction | Why |
+|---|---|---|
+| [04 §6](../architecture/04-subapplication-architectures.md) | **Remove the `MaintenanceAction` aggregate.** Document 04 lists both `MaintenanceAction` ("executed work: findings, parts consumed, and the corrective-versus-preventive determination") *inside the work-order aggregate* and `MaintenanceActionRecord`. There is exactly one aggregate and it is `MaintenanceActionRecord` | `MaintenanceAction` in the work-order aggregate **is** the defect D8 describes — "it lives in the work-order aggregate, which the edge may not commit." Building both would rebuild the defect beside its own fix (§1.4) |
+| [04 §6](../architecture/04-subapplication-architectures.md) | **Correct the deferral-feedback statement.** Rev 1 of 04 §6 says a deferral with accepted risk "is a human judgment that the prediction overstated urgency, and it is informative to… calibration monitoring" | D34 corrects this: only `risk_disagreement` is prediction-quality evidence. Document 03 §6 already implements the correction via `deferral_reason_class`; document 04's prose still asserts the uncorrected version (§8) |
+| [03 §6](../architecture/03-integration-contracts.md) | **Add `prediction_in_evidence_id`** to `maintenance_action.recorded`'s payload | Warning lead-time coverage is [06 §2](../architecture/06-demo-decisions-and-assumptions.md)'s primary effectiveness metric and is measured over corrective actions preceded by a raised flag. Without a field for a *non-treatment* prediction, the only ways to record it are to overload `triggering_prediction_id` (which corrupts PdM's censoring classification, §5.4.2) or to lose it. **RC-4** |
+| [03 §6](../architecture/03-integration-contracts.md) | **Enumerate `triggering_driver`'s five values normatively** | The field is named but never enumerated. Its vocabulary currently exists only in [22 §2.3](22-pdm.md) and [13 §8.4](13-synthetic-data-generator.md). Rev 1 of *this* document independently invented a sixth value and mis-spelled a seventh — evidence that the omission is load-bearing, not cosmetic (§5.4.1) |
+| [03 §6](../architecture/03-integration-contracts.md) | **Add a `work_package.retracted` event**, or state that supersession is the retraction mechanism | **OQ-2**: `supply` and `fleet-status` act on `work_package.proposed` and have no way to learn it was abandoned if they never receive the successor (§4.5.7) |
+| [03 §6](../architecture/03-integration-contracts.md) | **Add a producer for an *occurred* casualty**, or record that none exists by design | **OQ-1**: the catalog has only predictive `casrep_risk.*`, so no sub-application can subscribe to a casualty (§3.2.1) |
+| [09 §4.4.2](09-monorepo-and-conventions.md) | **Widen the through-gateway pattern's stated scope** from "asynchronous, non-compute-path" to "asynchronous, or synchronous but off the compute path" | Scheduling's reservation command is the fourth instance and is synchronous. It satisfies 03 principle 2 (nothing synchronous on the *solve* path) but not the pattern's literal wording. **RC-6** (§12.1) |
+| [22 §4.3](22-pdm.md) | **Confirm the `policy_version` namespace prefixes** `cgp:` / `ipv:` | Two distinct policy namespaces reach PdM in one column; stratifying on raw string equality would pool them. **RC-5** (§5.4.4) |
+| [26 §3.3](26-supply.md) | *No change requested.* | Recorded deliberately: rev 1 asked Supply for release-by-client-key and called it "a hard requirement." It is not required — §4.5.5's three mechanisms close the gap with no Supply change. The request is withdrawn |
+
+---
+
+## 18. Quick reference for an implementing agent
+
+**If you read nothing else.**
+
+1. **Two aggregates, not one.** `MaintenanceActionRecord` (what was done — edge-authoritative, INSERT-only, client-minted id, `work_order_id` nullable) and `WorkOrder` (what was authorized — server-authoritative). Joined by a nullable FK. Never re-couple them. *(§1.4)*
+2. **The reservation is a lease, not a transaction.** Commit the intent row → `POST /reservation-sets` (one call, all lines, `fence: "strict"`, `expected_stock_epoch` from the watermark) → **persist Supply's `reservation_set_id` immediately** → wait for `reservation_set.confirmed` → planner approves → *then* publish `work_package.approved`. Compensate by `DELETE` on Supply's id; if you never learned it, re-issue with the same `Idempotency-Key` to learn it; if Supply is gone, the TTL expires the hold. *(§4.5)*
+3. **You do not implement the risk conversion.** Import `fathom_schemas.decision.expected_consequence` and supply `consequence`, `operating_fraction`, and `risk_posture`. Rank on `expected_consequence` and nothing else. *(§4.2)*
+4. **Three fields decide whether PdM's statistics are valid**, and you are their only author: `triggering_driver` (five values, absence means unknown), `triggering_prediction_id` (non-null only for `prediction` and `opportunistic`), `policy_version` (non-null for PMS drivers too, namespaced). **Never guess a linkage.** *(§5.4)*
+5. **Accept bad data; record the doubt.** Wrong codes, wrong items, duplicates, missing parts records, misclassifications — all `201`, all flagged. A capture API that rejects deckplate reality stops the label stream, which is D8 by attrition. *(§5.7)*
+6. **`deferral_reason_class` is required with no default**, and only `risk_disagreement` is evidence about a prediction. *(§3.5, §8)*
+7. **The edge writes exactly one aggregate.** Everything else is a read-through cache or a queued request, and the startup assertion fails the pod if that changes. *(§7.1)*
+8. **When in doubt about a contract surface, document 03 wins; about layout and conventions, document 09; about Supply's API, document 26's committed OpenAPI — not the examples in this document.**
+
+**The two tests that matter most:** `test_no_orphaned_reservations_under_partial_failure` (§11.3) and `test_edge_recording_six_week_disconnect` (§11.4). If either is skipped, xfailed, or has its golden file regenerated, the finding it discharges is back.

@@ -314,9 +314,12 @@ Producer-owned. A consumer listed here has a declared dependency, binding under 
 | `configuration.baseline_changed` | `baseline_id`, `baseline_epoch`, changed installed-item set, effective date | `pdm`, `pma`, `knowledge-retrieval`, `failure-intel`, `fleet-status`, `maintenance`, `supply`, `telemetry` |
 | `installed_item.installed` | InstalledItemRef, position, install date, source work order, usage-at-install | `pdm`, `telemetry`, `supply` |
 | `installed_item.removed` | InstalledItemRef, removal date, disposition, failure indicator | `pdm`, `failure-intel`, `supply`, `design-advisory`, `telemetry` |
+| `installed_item.identity_resolved` | `provisional_id`, `canonical_id`, `resolution` (`confirmed`\|`superseded`), evidence, `baseline_epoch` | `pdm`, `telemetry`, `supply`, `failure-intel`, `design-advisory` |
 | `allowance.updated` | COSAL/APL/AEL revision for an asset | `supply`, `maintenance` |
 
 `configuration.baseline_changed` is the most consequential event in the system. It invalidates every prediction attached to affected installed items, carries the new epoch, and is a correctness signal rather than an informational one.
+
+`installed_item.identity_resolved` closes **OQ-5**, raised by Telemetry's build-framework agent: document 11 §8.4 already specifies this event (it resolves a provisional edge-minted `InstalledItem` identity to its permanent one, or supersedes it, and the library's `IdentityAliasResolver` is built on it) and names its consumer set, but the row was missing here. Same topic as `installed_item.installed`/`.removed` (`fathom.registry.installed_item.v1`), so a consumer of either of those already receives it and need only extend its handler.
 
 ### Condition & Telemetry (`telemetry`)
 
@@ -328,6 +331,9 @@ Producer-owned. A consumer listed here has a declared dependency, binding under 
 | `usage_counter.reset` | installed item, counter type, reason, meter replacement reference | `pdm`, `maintenance` |
 | `mission.completed` | mission_id, asset, type, period, data completeness | `pma`, `failure-intel` |
 | `anomaly.detected` | installed item, window, detector version, score, channels implicated, origin (`enterprise` \| `edge`) | `pma`, `fleet-status` |
+| `channel_mapping.version_published` | channel/binding/mapping id, new version, `channel_registry_version`, effective date | `pdm`, `pma` |
+
+`channel_mapping.version_published` closes **OQ-2**, raised by the same agent: document 04 §3 requires a channel-mapping change to be "a versioned event," but §6's catalog had none, forcing Telemetry to fall back to `changed_since` reads plus a bumped `channel_registry_version` on `health_indicator.computed`. That fallback remains correct and is not superseded — it is how a mapping change reaches a consumer that doesn't subscribe to this new event — but the event itself was the missing, cheaper path for `pdm` and `pma`, which already react to registry-version bumps.
 
 Batch-level rather than sample-level, deliberately. Per-sample events would constitute an event storm carrying no additional information.
 

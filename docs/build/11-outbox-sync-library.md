@@ -110,7 +110,7 @@ CREATE TABLE outbox (
   aggregate_id         text        NOT NULL,
 
   -- Envelope fields (03 §5.4)
-  scope                text        NOT NULL,              -- asset|system|installed_item|niin|class|fleet
+  scope                text        NOT NULL,              -- asset|system|installed_item|niin|class|mission|tycom|fleet
   subject              jsonb       NOT NULL,              -- exactly one scope identifier
   baseline_epoch       bigint      NULL,                  -- [D3, D4]
   classification       jsonb       NOT NULL,              -- ClassificationLabel, 03 §7.3
@@ -181,6 +181,8 @@ class OutboxWriter(Protocol):
         replay: bool = False,
     ) -> EventId: ...
 ```
+
+**`partition_key` is not a parameter — it is derived, never supplied.** Registry's build-framework agent flagged its absence against §2.2's `NOT NULL` column as a contradiction; it is not one, but the derivation belongs here rather than left implicit. `emit()` computes it from `scope`/`subject` per document 03 §5.1's partition rule before the row is written: `asset_id` when `scope=asset`, and otherwise the event's own scope identifier (`niin`, `class_id`, `mission_id`, `tycom_id`; `subject` is empty for `scope=fleet`, whose partition key is the literal string `"fleet"`, a singleton partition). A caller cannot pass a different partition key than the one `scope`/`subject` implies — that is the property that makes "per-asset ordering within a topic" (03 §5.1) hold without every call site re-deriving it correctly.
 
 Three invariants, enforced mechanically:
 

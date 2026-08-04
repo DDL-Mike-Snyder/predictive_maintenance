@@ -66,7 +66,7 @@ Two cycles are present and both are intentional: Scheduling and Supply negotiate
 
 ### Ownership boundary
 
-**Owns:** class definitions, assets, the ESWBS system hierarchy, equipment and installed-item records, position definitions, part catalog entries, configuration baselines, allowance documents (COSAL, APL, AEL), and the class-to-hull deviation record.
+**Owns:** class definitions, assets, ESWBS-aligned system nodes, position definitions, installed-item records, part catalog entries, configuration baselines, allowance documents (COSAL, APL, AEL), and the class-to-hull deviation record.
 
 **Does not own:** telemetry, usage counter *values* (Condition & Telemetry), maintenance history (Scheduling), inventory positions (Supply), or predictions.
 
@@ -107,7 +107,7 @@ Two cycles are present and both are intentional: Scheduling and Supply negotiate
 | `POST /proposals` (edge-submitted `configuration_change`, per document 03 §9's edge policy), `POST /proposals/{id}/claim`, adjudication | Required |
 | `POST /assets`, `PATCH /assets/{id}`, class and template administration | Internal |
 
-**Events published:** `asset.registered`, `asset.status_changed`, `configuration.baseline_changed`, `installed_item.installed`, `installed_item.removed`, `allowance.updated`.
+**Events published:** `asset.registered`, `asset.status_changed`, `configuration.baseline_changed`, `installed_item.installed`, `installed_item.removed`, `installed_item.identity_resolved`, `allowance.updated`.
 **Events consumed:** `work_order.opened`, `maintenance_action.recorded`, `work_package.approved`. Executed maintenance is what causes configuration change, so the Registry consumes rather than polls it.
 
 **Internal components:** configuration resolver (template plus deviations plus bitemporal query), baseline snapshot generator, allowance importer, hierarchy validator, read-model publisher.
@@ -177,8 +177,8 @@ Long-term candidate for federation with CDMD-OA. The substitution boundary is fa
 | `GET /anomalies?mission_id=` | Required |
 | Channel registry administration, indicator definition management | Internal |
 
-**Events published:** `telemetry.batch_ingested`, `health_indicator.computed`, `usage_counter.updated`, `usage_counter.reset`, `mission.completed`, `anomaly.detected`.
-**Events consumed:** `asset.registered`, `installed_item.installed`, `installed_item.removed`, `configuration.baseline_changed`. Counters and indicators attach to installed items, so item lifecycle events are a correctness dependency: a replacement opens a new counter epoch rather than continuing the prior item's accumulation.
+**Events published:** `telemetry.batch_ingested`, `health_indicator.computed`, `usage_counter.updated`, `usage_counter.reset`, `mission.completed`, `anomaly.detected`, `channel_mapping.version_published`.
+**Events consumed:** `asset.registered`, `installed_item.installed`, `installed_item.removed`, `installed_item.identity_resolved`, `configuration.baseline_changed`. Counters and indicators attach to installed items, so item lifecycle events are a correctness dependency: a replacement opens a new counter epoch rather than continuing the prior item's accumulation.
 
 **Internal components:** ingest adapters per domain profile, channel mapper, quality assessor, indicator computation engine, counter accumulator, mission boundary detector, unsupervised detector ensemble, retention and rollup manager, point-in-time feature server.
 
@@ -250,7 +250,7 @@ Unlikely to be substituted, as it is tightly coupled to program-specific channel
 | Model binding administration, label set inspection, tier policy management | Internal |
 
 **Events published:** `prediction.updated`, `prediction.invalidated`, `criticality_tier.assigned`, `model_binding.activated`.
-**Events consumed:** `asset.registered`, `asset.status_changed`, `configuration.baseline_changed`, `installed_item.installed`, `installed_item.removed`, `telemetry.batch_ingested`, `health_indicator.computed`, `usage_counter.updated`, `usage_counter.reset`, `maintenance_action.recorded`, `deferral.recorded`, `anomaly_tag.confirmed`, `causal_finding.published`, `failure_mode.attributed`, `causal_feature_set.updated`, `design_change.projected`.
+**Events consumed:** `asset.registered`, `asset.status_changed`, `configuration.baseline_changed`, `installed_item.installed`, `installed_item.removed`, `installed_item.identity_resolved`, `telemetry.batch_ingested`, `health_indicator.computed`, `channel_mapping.version_published`, `usage_counter.updated`, `usage_counter.reset`, `maintenance_action.recorded`, `deferral.recorded`, `anomaly_tag.confirmed`, `causal_finding.published`, `failure_mode.attributed`, `causal_feature_set.updated`, `design_change.projected`.
 
 Enumerated rather than wildcarded. Rev 1 subscribed to "all Registry events, all Telemetry events," which cannot be conformance-tested and silently auto-subscribes to any future event a producer adds.
 
@@ -450,20 +450,24 @@ Medium-term candidate for federation with 3-M and OMMS-NG, which are authoritati
 
 | Operation | Substitution |
 |---|---|
-| `GET /availability?niin=&location=&asset_id=` | Required |
+| `GET /availability?niin=&location=&asset_id=&condition_code=&purpose_code=` (mandatory per-condition-code `by_condition[]` breakdown in the response) | Required |
+| `POST /availability/query` (bulk multi-NIIN availability; `x-side-effects: none`, `x-agent-eligible: true`) | Required |
 | `GET /allowance-position?asset_id=&niin=` | Required |
 | `GET /requisitions?asset_id=&niin=&status=` | Required |
 | `GET /requisitions/{id}` | Required |
-| `POST /reservation-sets` (transactional multi-NIIN, TTL), `DELETE /reservation-sets/{id}` | Required |
+| `POST /reservation-sets` (transactional multi-NIIN, TTL), `GET /reservation-sets/{id}`, `GET /reservation-sets?changed_since=`, `DELETE /reservation-sets/{id}` | Required |
 | `GET /lead-times?niin=&location=` | Required |
 | `GET /interchangeable-groups?niin=` | Required |
 | `GET /shortfalls?asset_id=` | Required |
 | `GET /demand-forecast?niin=&horizon_days=` | Required |
+| `POST /demand-forecast-runs` (bulk, idempotent, fenced; the write-back path the plane-placement decision below requires) | Required |
 | `POST /proposals` (agent-originated requisitions and expedites) | Required |
 | Stock adjustment, document creation, catalog synchronization | Internal |
 
+Six extensions to this surface — the `condition_code`/`purpose_code` filter and breakdown, `POST /availability/query`, the two `reservation-sets` reads, and `POST /demand-forecast-runs` — were added against gaps `26-supply.md` §13 found while building against this table: a query surface missing for an attribute the aggregate already carried, no rebuild path for the one aggregate D6 exists to fix, and a mandated write-back with no write operation to receive it.
+
 **Events published:** `part_availability.changed`, `requisition.status_changed`, `allowance_shortfall.detected`, `reservation_set.confirmed`, `reservation_set.released`, plus proposal events.
-**Events consumed:** `work_candidate.created`, `work_order.opened`, `work_package.proposed`, `work_package.approved`, `maintenance_action.recorded`, `prediction.updated`, `prediction.invalidated`, `casrep_risk.raised`, `installed_item.installed`, `installed_item.removed`, `allowance.updated`, `configuration.baseline_changed`.
+**Events consumed:** `work_candidate.created`, `work_order.opened`, `work_package.proposed`, `work_package.approved`, `maintenance_action.recorded`, `prediction.updated`, `prediction.invalidated`, `casrep_risk.raised`, `installed_item.installed`, `installed_item.removed`, `installed_item.identity_resolved`, `allowance.updated`, `configuration.baseline_changed`.
 
 **Internal components:** stock ledger, allowance evaluator, requisition state machine, reservation manager, in-transit tracker, demand forecaster, shortfall detector, proposal handler.
 
@@ -473,7 +477,7 @@ Medium-term candidate for federation with 3-M and OMMS-NG, which are authoritati
 
 ### Substitution posture
 
-The primary substitution candidate and the reference case for the protocol in document 03 §8. The demonstration should exercise the shadow-mode step of the migration sequence against a mock partner adapter, which validates the substitution machinery at low cost and materially strengthens the platform narrative.
+The primary substitution candidate and the reference case for the protocol in document 03 §10. The demonstration should exercise the shadow-mode step of the migration sequence against a mock partner adapter, which validates the substitution machinery at low cost and materially strengthens the platform narrative.
 
 ### Phase 3 questions
 
@@ -537,7 +541,7 @@ The primary substitution candidate and the reference case for the protocol in do
 | Taxonomy administration, reviewer qualification management | Internal |
 
 **Events published:** `mission_review.opened`, `anomaly_tag.confirmed`, `anomaly_tag.rejected`, `mission_review.completed`, plus proposal events.
-**Events consumed:** `mission.completed`, `anomaly.detected`, `telemetry.batch_ingested`, `configuration.baseline_changed`, `maintenance_action.recorded`.
+**Events consumed:** `mission.completed`, `anomaly.detected`, `telemetry.batch_ingested`, `channel_mapping.version_published`, `configuration.baseline_changed`, `maintenance_action.recorded`.
 
 `maintenance_action.recorded` is consumed so that a review can present what was subsequently found and repaired alongside the candidate window — the single most useful context a reviewer can have, and the basis for retrospective tag quality assessment.
 
@@ -606,7 +610,7 @@ Core program capability, not a substitution candidate. The tag stream is the pro
 | Discovery run management, taxonomy administration | Internal |
 
 **Events published:** `causal_finding.published`, `failure_mode.attributed`, `causal_feature_set.updated`.
-**Events consumed:** `anomaly_tag.confirmed`, `anomaly_tag.rejected`, `mission.completed`, `maintenance_action.recorded`, `telemetry.batch_ingested`, `installed_item.removed`, `configuration.baseline_changed`, `prediction.updated`.
+**Events consumed:** `anomaly_tag.confirmed`, `anomaly_tag.rejected`, `mission.completed`, `maintenance_action.recorded`, `telemetry.batch_ingested`, `installed_item.removed`, `installed_item.identity_resolved`, `configuration.baseline_changed`, `prediction.updated`.
 
 `prediction.updated` is consumed for one purpose only: to record which population received model-assigned intervention, so that comparative population analysis can condition on treatment assignment. It is never used as evidence for a causal finding.
 
@@ -680,7 +684,7 @@ Core program capability. Not a substitution candidate.
 | Test data ingest, dependency graph administration, cost model configuration | Internal |
 
 **Events published:** `redesign_candidate.created`, `redesign_case.published`, `design_change.projected`, plus proposal events.
-**Events consumed:** `causal_finding.published`, `failure_mode.attributed`, `maintenance_action.recorded`, `installed_item.removed`, `prediction.updated`, `prediction.invalidated`, `part_availability.changed`.
+**Events consumed:** `causal_finding.published`, `failure_mode.attributed`, `maintenance_action.recorded`, `installed_item.removed`, `installed_item.identity_resolved`, `prediction.updated`, `prediction.invalidated`, `part_availability.changed`.
 
 **Internal components:** dossier assembler, candidate identifier, dependency graph service, impact analyzer, parametric cost estimator, detailed cost roll-up engine, case builder, proposal handler.
 
@@ -779,7 +783,7 @@ Four cross-cutting items should be designed before or alongside item 1, because 
 
 1. The nine sub-application ownership boundaries and aggregate models as specified.
 2. The integration contracts in document 03, which bind all Phase 3 design — in particular the prohibition on synchronous cross-sub-application calls on compute paths, and the universal outbox obligation.
-3. The substitution protocol and the commitment to ship executable conformance suites per sub-application (document 03 §8).
+3. The substitution protocol and the commitment to ship executable conformance suites per sub-application (document 03 §10).
 4. The edge reconciliation policies per aggregate (document 03 §9).
 5. The framing decisions that constrain downstream design: predictions attach to installed items rather than positions (§2); scheduling output is framed against deployment and availability rather than dates (§6); Post-Mission Analysis is bounded review rather than open authoring (§7); Failure Intelligence publishes adjudicated hypotheses rather than automated conclusions (§9); Design Advisory produces decision packages rather than decisions (§10).
 6. The tool manifest model in document 03 §10 — the two-level eligibility-and-selection split, manifests as versioned owned artifacts, independent manifest and API versioning with agents pinning both, and manifest conformance as part of each sub-application's conformance suite.
