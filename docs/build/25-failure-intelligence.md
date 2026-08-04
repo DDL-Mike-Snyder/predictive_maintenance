@@ -679,13 +679,17 @@ The wire model is the schema with the JSONB documents typed. `snake_case` fields
   "gate_verdict": "proceed_corrected",
   "treatment_census_ref": "/api/v1/failure-intel/hypotheses/…/treatment-census",
   "adjudication": { "state": "published", "adjudicated_by": "…", "authority_class":
-                    "design_authority", "dual_control": true },
+                    "design_authority", "dual_control": true,
+                    "claimed_by": null, "claimed_until": null,
+                    "second_signature_outstanding": false },
   "admissible_as_causal_feature": true,
   "admissible_as_primary_redesign_driver": false
 }
 ```
 
 `statement` is generated (§4.5). `admissible_as_causal_feature` and `admissible_as_primary_redesign_driver` are computed from the band by the table in §4.3 and served explicitly, so that PdM and Design Advisory do not each re-derive the policy from the band and drift apart.
+
+**[AMENDMENT]** `claimed_by`/`claimed_until`/`second_signature_outstanding` were added to the `adjudication` object above — the DDL (§2.9) and the `claimed=`/`awaiting_second_signature=` query filters (§8.1) already existed, but the response never surfaced the claim state itself, so a second adjudicator could filter to "hypotheses I've claimed" yet never see who claimed a given row or when the claim expires. Mirrors `30-gateway.md` §4.5's identical fields on the proposal queue.
 
 ---
 
@@ -1390,7 +1394,7 @@ Base path `/api/v1/failure-intel/…` per [03 §4](../architecture/03-integratio
 | **`POST /populations/preflight`** | **The gate, callable without running an analysis.** Body: a `PopulationSpec` and `method_id`. Returns the census and the verdict. Computational, no state change — the `x-side-effects: none` POST pattern C1/D11 exists for | `required` | `none` | yes |
 | `POST /hypotheses/prior-examination-check` | §7.3. Fingerprint plus every prior examination. Computational | `required` | `none` | yes |
 | `POST /hypotheses/{id}/claim` | Adjudication lease. `If-Match` required ([03 §7.2](../architecture/03-integration-contracts.md)) | `required` | `state-changing` | no |
-| `POST /hypotheses/{id}/adjudicate` | 04 §9's surface. Approve, reject, downgrade, defer. `If-Match` on the claimed ETag; re-validation per §5.2 | `required` | `state-changing` | no |
+| `POST /hypotheses/{id}/adjudicate` | 04 §9's surface. `decision` **[AMENDMENT — was documented as four values; the CHECK constraint (§2.9) has always had six]**: approve, reject, downgrade, defer, retire, withdraw. `If-Match` on the claimed ETag; re-validation per §5.2 | `required` | `state-changing` | no |
 | `GET /attributions?installed_item_id=&mission_id=&niin=&mode_lineage_id=&changed_since=&cursor=` | 04 §9's surface. Both sides of the arbitration and the full candidate set | `required` | `none` | yes |
 | `GET /attributions/{id}` | One attribution, with `agreement_class` and both filings as filed | `required` | `none` | yes |
 | `POST /attributions/{id}/arbitrate` | Record or revise the arbitration. A revision creates a new row with a supersession link (I5) | `required` | `state-changing` | no |
