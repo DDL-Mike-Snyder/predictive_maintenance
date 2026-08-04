@@ -847,7 +847,7 @@ class InstalledItem(Base, RecordSeqMixin, ETagMixin, ClassifiedMixin):
         # `parts.niin` is NULL for those rows, and this column is NOT NULL, so
         # the FK itself already excludes them (see the docstring above).
         CheckConstraint(
-            "niin ~ '^([0-9]{9}|[A-Z]{2}[A-Z0-9]{7})$' OR niin ~ '^[0-9A-Z]{4}LL[0-9A-Z]{3}$'",
+            "niin ~ '^([0-9]{9}|[A-Z]{2}[A-Z0-9]{7})$' OR niin ~ '^LL[0-9A-Z]{7}$'",
             name="niin_shape",
         ),
         CheckConstraint(
@@ -1363,25 +1363,33 @@ class Part(Base, RecordSeqMixin, ETagMixin, ClassifiedMixin):
     enforces it: `serialization_scope = 'item'` requires `InstalledItem.iuid`."""
 
     __table_args__ = (
-        # [AMENDMENT — corrected.] The prior CHECK, `niin ~ '^[0-9]{9}$'`, both
-        # (a) rejected Block A of the canonical `Niin` type (10-shared-packages.md
-        # §4.1: `^(\d{9}|[A-Z]{2}[A-Z0-9]{7})$`) — the exact shape the synthetic
-        # generator (13 §6.2) mints for roughly half its catalogue — and
-        # (b) was unsatisfiable by construction for three of `identifier_form`'s
-        # five values: `permanent_nicn`/`temporary_nicn` carry `LL` at positions
-        # 5-6 (07 §4.8), and `cage_part_number` items have no NIIN at all. `licn`
-        # is local-use-only per 07 §4.8 and is not further distinguished here.
+        # [AMENDMENT — corrected twice.] The original CHECK, `niin ~ '^[0-9]{9}$'`,
+        # both (a) rejected Block A of the canonical `Niin` type
+        # (10-shared-packages.md §4.1: `^(\d{9}|[A-Z]{2}[A-Z0-9]{7})$`) — the exact
+        # shape the synthetic generator (13 §6.2) mints for roughly half its
+        # catalogue — and (b) was unsatisfiable by construction for three of
+        # `identifier_form`'s five values. The first replacement fixed (a) but
+        # mis-transcribed (b): 07 §4.8 places `LL` at positions 5-6 of the
+        # 13-character **NSN** (FSC(4) + NCB(2) + item number(7)); the NIIN this
+        # column stores is the NSN's own last 9 characters (NCB + item number),
+        # so NSN positions 5-6 land at **NIIN positions 1-2**, not 5-6 of the
+        # NIIN itself. The wrong-position pattern rejected the canonical shape
+        # (`LLC004821`, minted by 13 §6.2 and used in every worked example in
+        # 26-supply.md) and accepted a shape the canonical `Niin` type rejects —
+        # the same defect class the first fix targeted, reintroduced by a
+        # transcription error rather than closed. `licn` is local-use-only per
+        # 07 §4.8 and is not further distinguished here.
         CheckConstraint(
             "identifier_form = 'cage_part_number' AND niin IS NULL"
             " OR identifier_form = 'nsn' AND niin ~ '^([0-9]{9}|[A-Z]{2}[A-Z0-9]{7})$'"
             " OR identifier_form IN ('permanent_nicn','temporary_nicn','licn')"
-            "    AND niin ~ '^[0-9A-Z]{4}LL[0-9A-Z]{3}$'",
+            "    AND niin ~ '^LL[0-9A-Z]{7}$'",
             name="niin_shape_matches_identifier_form",
             # The NICN/LICN branch enforces only the one positional rule 07 §4.8
-            # states precisely (LL at positions 5-6, 9 characters total) — it does
-            # not distinguish permanent from temporary NICN (position 7: `C` versus
-            # any other letter) or LICN from NICN, because 07 §4.8 gives no
-            # complete positional grammar for those and a CHECK enforcing an
+            # states precisely (LL at NIIN positions 1-2, 9 characters total) — it
+            # does not distinguish permanent from temporary NICN (NIIN position 3:
+            # `C` versus any other letter) or LICN from NICN, because 07 §4.8 gives
+            # no complete positional grammar for those and a CHECK enforcing an
             # invented one would be worse than one that enforces what is actually
             # specified. A residual gap, recorded rather than guessed at.
         ),
@@ -1840,6 +1848,7 @@ Document 04 §2's eight rows, expanded to every operation the contract actually 
 | 7 | `GET /classes/{class_id}` | required | none | ✓ | `class` | [04 §2] |
 | 8 | `GET /classes/{class_id}/template` | required | none | ✓ | `class_template` | [04 §2] · singleton carve-out |
 | 9 | `GET /parts/{niin}` | required | none | ✓ | `part` | [04 §2] |
+| 9a | `GET /parts/by-id/{part_id}` **[AMENDMENT]** | required | none | ✓ | `part` | [04 §2] — a `cage_part_number` part has no `niin` (§4.9, 10 §4.9's `PartRef`); this is its only addressable read |
 | 10 | `GET /parts` (`?apl=&equipment_family=&changed_since=`) | required | none | ✓ | `part` | [04 §2] |
 | 11 | `GET /assets/{asset_id}/allowances` | required | none | ✓ | `allowance_document` | [04 §2] |
 | 12 | `POST /assets/{asset_id}/configuration-changes` | required | state-changing | ✗ | `configuration_baseline` | [04 §2] |
@@ -1862,7 +1871,7 @@ Document 04 §2's eight rows, expanded to every operation the contract actually 
 | 29 | `POST /assets` | internal | state-changing | ✗ | `asset` | [04 §2] |
 | 30 | `PATCH /assets/{asset_id}` | internal | state-changing | ✗ | `asset` | [04 §2] |
 | 31 | `POST /classes`, `PUT /classes/{class_id}/template` | internal | state-changing | ✗ | `class`, `class_template` | [04 §2] |
-| 32 | `POST /parts`, `PATCH /parts/{niin}` | internal | state-changing | ✗ | `part` | [04 §2 Owns] |
+| 32 | `POST /parts`, `PATCH /parts/{niin}`, `PATCH /parts/by-id/{part_id}` **[AMENDMENT — the by-id form added alongside row 9a, same reason]** | internal | state-changing | ✗ | `part` | [04 §2 Owns] |
 | 33 | `POST /hierarchy-schemes` | internal | state-changing | ✗ | `hierarchy_scheme` | [07 §3.4] |
 
 **No operation in this service is `proposal-only`.** Registry receives proposals (rows 24–26) but does not *create* them on an agent's behalf; row 12 with `mode: proposed` creates one as a side effect of a state-changing submission, and it is annotated `state-changing` because it also writes an `AssetDeviation` candidate. Agent eligibility is therefore confined to the read surface, which is correct for a service whose entire agent value is configuration lookup.

@@ -296,19 +296,34 @@ CREATE TABLE reference_data.equipment_family (
 );
 
 CREATE TABLE reference_data.part_family_assignment (
-    niin              char(9) NOT NULL,        -- the part join key, 03 §3.3
+    -- [AMENDMENT] niin widened to NULLable, part_id added: a cage_part_number
+    -- part (10 §4.9 PartRef, 20 §4.9 Part) has no NIIN at all, and
+    -- equipment_family is a REQUIRED attribute of every part (03 §3.3),
+    -- cage_part_number included. The prior NOT NULL niin made that
+    -- requirement unsatisfiable for exactly the part shape 20 §4.9's
+    -- surrogate part_id key exists to represent.
+    niin              char(9),                 -- the part join key, 03 §3.3; NULL iff part_id is set
+    part_id           uuid,                    -- 20 §4.9's surrogate key; NULL iff niin is set
     family_id         text NOT NULL,
     taxonomy_version  text NOT NULL REFERENCES reference_data.taxonomy_version(version),
     basis             text NOT NULL,           -- how the assignment was determined
-    PRIMARY KEY (niin, taxonomy_version),
+    CONSTRAINT part_family_assignment_exactly_one_key
+        CHECK ((niin IS NULL) != (part_id IS NULL)),
+    -- Two partial unique indexes stand in for PRIMARY KEY (niin | part_id, taxonomy_version):
+    -- a single PK cannot express "exactly one of two nullable columns", so this is the
+    -- explicit CHECK above plus these two indexes rather than an invented composite key.
     FOREIGN KEY (family_id, taxonomy_version)
         REFERENCES reference_data.equipment_family(family_id, version)
 );
+CREATE UNIQUE INDEX part_family_assignment_niin_version
+    ON reference_data.part_family_assignment (niin, taxonomy_version) WHERE niin IS NOT NULL;
+CREATE UNIQUE INDEX part_family_assignment_partid_version
+    ON reference_data.part_family_assignment (part_id, taxonomy_version) WHERE part_id IS NOT NULL;
 ```
 
 `equipment_family` shares the taxonomy's version register rather than carrying an independent version line. A model binding pinned to `taxonomy_version` then pins its reference class too, which is what PdM's tier bindings require (03 §14: *"PdM owns which registry version serves which tier and family"*).
 
-`part_family_assignment` makes the NIIN→family binding a served reference dataset with a primary key of exactly one family per NIIN per version — that is what "required attribute of every part" means operationally, and the conformance test in §8.2 asserts total coverage of the demo NIIN set. **Whether Reference Data owns the assignment or only the family definition is Open Decision OD-5 (§11).** Document 03 says only *"defined and served by Reference Data"*; this build reads the assignment as reference data because the alternative is Supply and Registry each deciding, which is finding C8 in a different costume.
+`part_family_assignment` makes the NIIN→family binding — and, **[AMENDMENT]** since the table's widening above, the `part_id`→family binding for a `cage_part_number` part — a served reference dataset with a partial-unique-index guarantee of exactly one family per part per version — that is what "required attribute of every part" means operationally, and the conformance test in §8.2 asserts total coverage of the demo part set (NIIN-bearing and `part_id`-only both), not just the NIIN subset. **Whether Reference Data owns the assignment or only the family definition is Open Decision OD-5 (§11).** Document 03 says only *"defined and served by Reference Data"*; this build reads the assignment as reference data because the alternative is Supply and Registry each deciding, which is finding C8 in a different costume.
 
 ### 2.8 `crosswalk_pma_signature` — the PMA projection
 
@@ -726,7 +741,7 @@ The cost of (b) alone is that no conformance or interoperability claim against I
 
 **No external standard supplies an equipment-family enumeration.** Document 03 §3.3 defines the concept and its ownership; nothing in documents 01, 03, or 08 enumerates values. The seed is therefore **program-defined content**, and is marked as such — it is not standard content and must never be presented as such.
 
-Phase 3 derives the family list from the demonstration NIIN set in the Asset & Configuration Registry, under the constraint that a family must be a valid partition for model binding and calibration (03 §14: PdM binds tier and family). Naming convention: lowercase kebab-case slugs. No specific families are asserted in this document, because inventing them here would be exactly the fabrication this document prohibits elsewhere. The §8.2 conformance test asserts total NIIN coverage once the list exists — which is what makes *"required attribute of every part"* enforceable rather than aspirational.
+Phase 3 derives the family list from the demonstration part set in the Asset & Configuration Registry — NIIN-bearing and `part_id`-only (`cage_part_number`) parts both, per §5.x's widened `part_family_assignment` — under the constraint that a family must be a valid partition for model binding and calibration (03 §14: PdM binds tier and family). Naming convention: lowercase kebab-case slugs. No specific families are asserted in this document, because inventing them here would be exactly the fabrication this document prohibits elsewhere. The §8.2 conformance test asserts total coverage of that part set once the list exists — which is what makes *"required attribute of every part"* enforceable rather than aspirational, `cage_part_number` parts included rather than structurally excluded.
 
 ### 5.6 Crosswalk seed
 

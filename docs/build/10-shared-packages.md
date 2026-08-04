@@ -510,7 +510,7 @@ import re
 from enum import StrEnum
 from uuid import UUID
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 from ._base import Eswbs, FathomModel, Niin, NonEmptyStr, Nsn, Uic, UtcDateTime
 
@@ -725,14 +725,40 @@ class PartRef(FathomModel):
 
     A part TYPE in the catalog.  "component" and "item" are losing variants
     (§3.2).  A NIIN alone is a part type, not an installed item (§3.3 rule 4).
+
+    **[AMENDMENT]** `niin` was required with no alternative, but
+    `20-registry.md` §4.9 makes `Part.niin` NULLable and adds a surrogate
+    `part_id` primary key specifically so a `cage_part_number` part (07 §4.8:
+    "has no NIIN at all") is representable in the database — a fix this wire
+    schema never received, so the exact row the surrogate key exists to store
+    could not be serialized at all. Widened to a NIIN-or-`part_id` union, the
+    same exactly-one-of shape `ConfigurationBaselineChanged` uses for
+    `changed_items`/`changed_items_ref` (20 §6.2).
     """
 
-    niin: Niin = Field(
+    niin: Niin | None = Field(
+        default=None,
         description=(
-            "National Item Identification Number; THE join key.  Document 03 "
-            "§3.3."
-        )
+            "National Item Identification Number; THE join key when present. "
+            "Document 03 §3.3. `None` only for `identifier_form = "
+            "'cage_part_number'`, in which case `part_id` identifies the row."
+        ),
     )
+    part_id: UUID | None = Field(
+        default=None,
+        description=(
+            "The surrogate key (20 §4.9), set if and only if `niin` is "
+            "`None`. Never a join key for a NIIN-bearing part — `niin` "
+            "remains THE join key wherever it exists (§3.3 rule 1)."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _exactly_one_of_niin_or_part_id(self) -> "PartRef":
+        if (self.niin is None) == (self.part_id is None):
+            raise ValueError("exactly one of `niin` / `part_id` must be set")
+        return self
+
     nsn: Nsn | None = Field(
         default=None,
         description=(
