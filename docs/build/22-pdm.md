@@ -129,15 +129,18 @@ CREATE TABLE pdm.criticality_assessment (
     transition_reason    text,
     rescore_scoring_run_id uuid REFERENCES pdm.scoring_run(scoring_run_id),
     attributable_level_shift jsonb,          -- §8.4 dual-binding shadow score difference
+    published_at         timestamptz,       -- [AMENDMENT] NULL until §8.3 step 5; see migration_requires_rescore
     effective_at         timestamptz NOT NULL,
     superseded_at        timestamptz,
     classification       jsonb   NOT NULL,   -- 03 §7.3, with inherited_from
     CONSTRAINT tier_is_capped
         CHECK (assigned_tier = LEAST(proposed_tier, data_availability_ceiling)),
     CONSTRAINT migration_requires_rescore                  -- §8.3, [D36]
-        CHECK (previous_tier IS NULL OR rescore_scoring_run_id IS NOT NULL)
+        CHECK (published_at IS NULL OR previous_tier IS NULL OR rescore_scoring_run_id IS NOT NULL)
 );
 ```
+
+**[AMENDMENT — real defect, found in adversarial review.]** `migration_requires_rescore` originally had no `published_at IS NULL` escape, which meant it applied to every row at every point in its life — including §8.3 step 1's own required intermediate state, *"[t]he assessment row is written. NOTHING IS PUBLISHED YET,"* which sets `previous_tier` (it is a migration) with `rescore_scoring_run_id` still null (the re-score has not started). That row could never be inserted: the constraint made step 1 of its own workflow impossible, not merely step 5. `published_at` is set only in §8.3 step 5's single transaction, alongside `rescore_scoring_run_id` and the outbox emission — the constraint now binds exactly what it was always meant to: a migration may sit unpublished with no re-score (steps 1-4), but may never be marked published without one.
 
 `tier_is_capped` and `migration_requires_rescore` are the two invariants of §3 and §8 expressed where they cannot be bypassed. A tier assignment that exceeds what the available data supports, or a tier *migration* published without a completed re-score, is rejected by the database and not by a code review.
 
@@ -1070,14 +1073,14 @@ This is the ordering that makes a tier migration observable as one coherent chan
    same as_of, same features, scored under the OLD binding as well.
 
 5. In ONE transaction: the replacement predictions are committed, the assessment's
-   rescore_scoring_run_id and attributable_level_shift are set, and BOTH
+   rescore_scoring_run_id, attributable_level_shift, and published_at are set, and BOTH
    `criticality_tier.assigned` and `prediction.updated` are emitted to the outbox.
 
 6. The relay publishes. A consumer cannot observe the tier change before the re-scored
    predictions are readable, because they committed together.
 ```
 
-The `migration_requires_rescore` CHECK constraint of §2.1 makes step 5 impossible to skip: an assessment with a non-null `previous_tier` and a null `rescore_scoring_run_id` cannot be stored, so `criticality_tier.assigned` cannot be emitted for a migration whose re-score has not completed. A first-ever assignment (`previous_tier IS NULL`) needs no re-score and is exempt by the same constraint.
+The `migration_requires_rescore` CHECK constraint of §2.1 makes step 5 impossible to skip **without also disallowing steps 1-4's own unpublished intermediate state**: a migration may be stored with `previous_tier` set and `rescore_scoring_run_id` still null, same as step 1 requires, but may not be marked `published_at` without `rescore_scoring_run_id` also set — so `criticality_tier.assigned` cannot be emitted for a migration whose re-score has not completed. A first-ever assignment (`previous_tier IS NULL`) needs no re-score and is exempt by the same constraint, at every point in its life.
 
 ### 8.4 The transition annotation, and the dual-binding shadow score
 
