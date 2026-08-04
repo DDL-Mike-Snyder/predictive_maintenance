@@ -364,10 +364,15 @@ CREATE TABLE pdm.prediction (
 );
 
 -- §4.5: the holdout isolation mechanism. Two roles, two policies, one table.
+-- [AMENDMENT] Both policies now carry an explicit WITH CHECK, distinct from
+-- USING -- see §4.5's full treatment for why a FOR ALL policy with no WITH
+-- CHECK made every INSERT of a research_only row a policy violation.
 ALTER TABLE pdm.prediction ENABLE ROW LEVEL SECURITY;
 ALTER TABLE pdm.prediction FORCE ROW LEVEL SECURITY;
 CREATE POLICY actionable_only ON pdm.prediction
-    FOR ALL TO fathom_pdm_serving  USING (serving_class = 'actionable');
+    FOR ALL TO fathom_pdm_serving
+    USING (serving_class = 'actionable')
+    WITH CHECK (serving_class IN ('actionable', 'research_only'));
 CREATE POLICY research_only  ON pdm.prediction
     FOR SELECT TO fathom_pdm_research USING (serving_class = 'research_only');
 ```
@@ -706,7 +711,15 @@ Five mechanisms, in order of how hard each is to circumvent:
 CREATE ROLE fathom_pdm_serving;
 GRANT SELECT, INSERT, UPDATE ON pdm.prediction TO fathom_pdm_serving;
 CREATE POLICY actionable_only ON pdm.prediction FOR ALL TO fathom_pdm_serving
-    USING (serving_class = 'actionable');
+    USING (serving_class = 'actionable')
+    WITH CHECK (serving_class IN ('actionable', 'research_only'));
+    -- [AMENDMENT] A FOR ALL policy with no explicit WITH CHECK defaults the check
+    -- to the USING expression -- which made this the only role able to INSERT at
+    -- all (§4.5's own scoring-run ingest path) unable to insert a research_only
+    -- row, breaking the §4.5 fail-closed write §8.3 requires. USING still
+    -- isolates READS (a research row is invisible on this connection); WITH
+    -- CHECK is deliberately wider, because this role is the sole writer for
+    -- both strata and isolation is a read property, not a write one.
 
 -- Research path: a distinct role, distinct connection pool, SELECT only.
 CREATE ROLE fathom_pdm_research;

@@ -821,6 +821,38 @@ confounding_risk_fraction = (model_assigned_count + unknown_count) / action_coun
 
 `gate.fi_max_trimmed_fraction` and `gate.fi_max_balance_smd` are **configured with no default**, and the service refuses to run a propensity-handling method until the program sets them. This follows [13 §16.4](13-synthetic-data-generator.md)'s discipline exactly: the *form* of the test is derivable and is prescribed here; the *practical margin* is a program judgment and is not invented. Recorded as **OD-2** (§13).
 
+**[AMENDMENT — real defect, found in adversarial review: P1-P3 and P4-P5 are checkable at two different points, and this document previously described all six as if `_adjudicate` (§2.9) evaluated them together.]** P1-P3 are functions of the **census** — `worst_prediction_resolve_rate`, `policy_version_count`, and declared-covariate presence are all resolvable before any model is fit, which is exactly why `load_population` can refuse before a method ever runs. P4 and P5 are functions of the **fitted propensity model itself** — estimated propensities and post-weighting balance do not exist until the method has fit one, which by construction happens *inside* the method, after `load_population` has already returned a `GatedPopulation`. `_adjudicate`'s signature (`decl, census, spec`) has no parameter that could carry either.
+
+The gate is therefore **two calls, not one**, and every `propensity_modeled`/`propensity_and_ipcw` method must make both:
+
+```python
+# src/fathom_failure_intel/methods/_gate.py
+#
+# Called by load_population (§2.9), before any method runs — checks P1-P3.
+def adjudicate_pre_fit(decl: MethodDeclaration, census: Census, spec: PopulationSpec) -> GateVerdict: ...
+
+# Called by the METHOD ITSELF, immediately after fitting propensities and
+# BEFORE persisting any hypothesis row or feature — checks P4-P5. Same
+# exception type and same consequence as a pre-fit refusal: no
+# `causal_hypothesis` row, `discovery_run.status='refused'`, `409` on
+# `POST /discovery-runs`, naming P4 or P5. A method that fits a propensity
+# model and skips this call is the defect §10.2 test B (below) exists to catch.
+def adjudicate_post_fit(
+    decl: MethodDeclaration,
+    estimated_propensities: PropensityEstimates,
+    balance: BalanceDiagnostics,
+    gate_config: GateConfig,
+) -> GateVerdict:
+    trimmed_fraction = estimated_propensities.trim_to_common_support()   # P4
+    if trimmed_fraction > gate_config.fi_max_trimmed_fraction:
+        raise TreatmentAssignmentGateError("P4: trimmed fraction exceeds bound", precondition="P4")
+    if balance.worst_absolute_smd > gate_config.fi_max_balance_smd:      # P5
+        raise TreatmentAssignmentGateError("P5: balance not achieved", precondition="P5")
+    return GateVerdict.PROCEED_CORRECTED
+```
+
+`adjudicate_post_fit` raising is caught at the same `POST /discovery-runs` boundary as a pre-fit refusal (§2.9's `TreatmentAssignmentGateError` handler), so the `409`/`treatment-assignment-gate` contract §10.2 test B already asserts *"for each of P1, P3, P4, P5 independently"* holds for P4 and P5 exactly as it already does for P1-P3 — nothing about the wire contract changes, only where the check runs. The DB guard `CHECK (gate_verdict <> 'refused' OR adjudication_state <> 'published')` (§2.9's schema) is unaffected either way, since a post-fit refusal aborts before any row is written, the same as a pre-fit one.
+
 ### 3.4 Method M1 — constraint-based structure learning over a domain-constrained graph
 
 | | |
