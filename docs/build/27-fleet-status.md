@@ -107,10 +107,16 @@ Scoped per [04 §5](../architecture/04-subapplication-architectures.md): *"Scope
 ```
 readiness_assessment
   assessment_id                 uuid pk
-  scope                         enum: asset | system | fleet | fleet_grouping    -- see OD-2
+  scope                         enum: asset | system | fleet | tycom   -- [AMENDMENT — closes OD-2]
   subject_asset_id              uuid null
   subject_system_id             uuid null
-  subject_grouping_id           text null      -- TYCOM or other fleet grouping; OD-2
+  subject_tycom_id              text null      -- 10-shared-packages.md §4.5's EventScope.TYCOM / tycom_id,
+                                                 -- added specifically for this row. [AMENDMENT] Previously
+                                                 -- `fleet_grouping`/`subject_grouping_id`, a scope this
+                                                 -- document invented because 03 §5.4's vocabulary had no
+                                                 -- middle echelon — 10 §4.5 added TYCOM in response, and
+                                                 -- this document never adopted it, leaving two competing,
+                                                 -- mutually unaware conventions live at once
   methodology_version           text not null  -- FK; immutable (V5)
   aggregation_exponent          numeric not null   -- p of §3.2, recorded per assessment
   contributor_set_revision      int not null   -- increments when the contributor SET changes,
@@ -467,7 +473,7 @@ This is invariant **V6** applied to clearance, and §4.4 is the same invariant a
 | Installed item | Predictions, anomalies, indicators, deferrals, shortfalls for that item | `criticality_tier.assigned` contributing factors, per NIIN and equipment context `[04 §4]` |
 | System | Its installed items, as `kind = child_scope` contributors | System mission-criticality from `rm_configuration_tree` |
 | Asset | Its systems, as `child_scope` contributors | Asset-level mission-criticality; OFRP phase may modulate the transform, never the weight of another contributor |
-| Fleet / fleet grouping | Its assets, as `child_scope` contributors | Grouping weight — hull tasking. `[OPEN]` per **OD-2** |
+| Fleet / TYCOM | Its assets, as `child_scope` contributors | Grouping weight — hull tasking. Scope mechanism resolved (`tycom`/`tycom_id`, **OD-2**); the weighting figure itself remains `[OPEN]` |
 
 Each level applies §3.2 unchanged with $d_{\text{child}} = D(V_{\text{child}})$. Two propagation rules:
 
@@ -1105,7 +1111,7 @@ Base path `/api/v1/fleet-status/` `[03 §4, 09 §7.1]`. Mechanisms — paginatio
 
 | Operation | Purpose | `x-substitution` | `x-side-effects` | `x-agent-eligible` |
 |---|---|---|---|---|
-| `GET /readiness?scope=&asset_id=&system_id=&grouping_id=&view=&as_of=&changed_since=&limit=&cursor=` | Advisory readiness assessments. `scope` ∈ `asset` \| `system` \| `fleet` \| `fleet_grouping`; `view` ∈ `default` \| `high-side`, default `default` | `required` | `none` | yes |
+| `GET /readiness?scope=&asset_id=&system_id=&tycom_id=&view=&as_of=&changed_since=&limit=&cursor=` | Advisory readiness assessments. `scope` ∈ `asset` \| `system` \| `fleet` \| `tycom` [**AMENDMENT** — was `fleet_grouping`/`grouping_id`, closing OD-2]; `view` ∈ `default` \| `high-side`, default `default` | `required` | `none` | yes |
 | `GET /readiness/{assessment_id}` | One assessment with score components and both disclosure blocks. `ETag` per §5.5 | `required` | `none` | yes |
 | `GET /readiness/{assessment_id}/explanation?max_depth=&kind=&limit=&cursor=` | The explanation graph decomposition (§5.3) | `required` | `none` | yes |
 | `GET /risk-flags?severity=&horizon_days=&asset_id=&installed_item_id=&state=&reference_class=&changed_since=&limit=&cursor=` | Risk flags. `changed_since` because `maintenance` and `supply` project them `[03 §15 obligation 5]` | `required` | `none` | yes |
@@ -1346,7 +1352,7 @@ Recorded here rather than resolved with an invented number. Each is a genuine pr
 | ID | Decision | Blocks | Current handling | Owner |
 |---|---|---|---|---|
 | **OD-1** | Whether `restricted_contributor_count` may be disclosed at **narrow** scopes. At system scope, a count of 1 plus the named system is very nearly the *"description... or system"* [06 §5](../architecture/06-demo-decisions-and-assumptions.md) rule 1 prohibits | The release posture of `contributor_disclosure` below asset scope | [06 §5](../architecture/06-demo-decisions-and-assumptions.md) implemented as written — boolean **and** count at every scope. A `count_suppressed` variant is designed but not enabled. [06 §5](../architecture/06-demo-decisions-and-assumptions.md)'s own assumption table anticipates this: *"If exclusion is judged to leak through the count itself, suppress the boolean..."* | Accreditation / security architecture |
-| **OD-2** | `scope=tycom` appears in [04 §5](../architecture/04-subapplication-architectures.md)'s API surface but **is not in [03 §5.4](../architecture/03-integration-contracts.md)'s scope vocabulary** (`asset \| system \| installed_item \| niin \| class \| mission \| fleet`), and `scope=fleet` is defined to carry **no** subject identifier — so a TYCOM-scoped rollup has nowhere to put its identifier | Fleet-grouping rollups; the partition key for grouping-scoped `readiness.recomputed` | `scope=fleet_grouping` with `subject_grouping_id`, plus the fixed `"fleet"` partition key for true fleet scope (§9.1). Requires either adding a grouping scope to [03 §5.4](../architecture/03-integration-contracts.md) or an explicit ruling that groupings are an API-only projection with no event scope | Architecture (document 03) |
+| **OD-2** | ~~`scope=tycom` appears in [04 §5]'s API surface but **is not in [03 §5.4]'s scope vocabulary**... so a TYCOM-scoped rollup has nowhere to put its identifier~~ **[CLOSED — amendment, 10-shared-packages.md §4.5.]** `10-shared-packages.md` added `EventScope.TYCOM` (`"tycom"`) and `tycom_id` to the canonical envelope specifically in response to this row. §2.2 above adopts it: `scope` is `asset \| system \| fleet \| tycom`, with `subject_tycom_id` the row's own column. **[AMENDMENT]** This document itself had not adopted the fix its own request produced until now — §2.2, the `GET /readiness` operation, and the partition key for TYCOM-scoped `readiness.recomputed` all now use `tycom`/`tycom_id`, not the `fleet_grouping`/`subject_grouping_id` this row previously proposed and this document had drifted onto independently | Closed | Resolved in `10-shared-packages.md` §4.5; adopted here |
 | **OD-3** | The hysteresis threshold and dwell values of §6.2, and *"whether they vary by class or OFRP phase"* | Operator acceptance. Thresholds that are wrong in either direction destroy trust — too low floods, too high misses | Defaults proposed as **tunable placeholders** with `band_ratio = 0.30`, in `methodology_version`, changeable as one row. [04 §5](../architecture/04-subapplication-architectures.md)'s Phase 3 question, verbatim | Program SMEs + `fleet_authority` |
 | **OD-4** | `packages/canonical-schemas` must make `FailurePrediction.p_failure` nullable and tighten `_calibration_gate` (§4.6). **OQ-10 of [10 §11](10-shared-packages.md) is resolved in favour of nullability by the corrected [03 §7.1](../architecture/03-integration-contracts.md)**; the schema change has not landed | Every consumer of `FailurePrediction`, not only this one. [10 §12](10-shared-packages.md) lists OQ-10 as a Phase 3 blocker | This service treats a non-null `p_failure` below the gate as a producer contract violation and records the contributor `unassessed` (§4.6) rather than using the ungated probability | Owner of [10](10-shared-packages.md) / `packages/canonical-schemas` |
 | **OD-5** | `ClassificationLabel.union` **raises** on an un-orderable `distribution_statement` combination (OQ-16 of [10 §11](10-shared-packages.md)). Fleet Status unions labels on **every** assessment, so it will hit this before any other service | Any CUI-bearing deployment. Not the unclassified demonstration | Not caught, not defaulted. The assessment computation fails with `freshness: refused` and a counter increments (§5.4) | Architecture (document 03 §7.3) + [10](10-shared-packages.md) |
