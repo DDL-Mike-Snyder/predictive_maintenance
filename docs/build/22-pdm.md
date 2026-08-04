@@ -1255,6 +1255,7 @@ Topics `fathom.pdm.<aggregate>.v1`, partition key `asset_id` for asset-scoped ev
 | `configuration.baseline_changed` | **[AMENDMENT]** Resolves `changed_items` vs `changed_items_ref` first (20 §6.2 — exactly one is set; an initial baseline or bulk allowance import is always the ref form). **Invalidation + epoch advance, in one transaction with the inbox record** (§8.1, `[D2]`). Also projects `policy_frozen` (§4.5.1) |
 | `installed_item.installed` | Lifetime segment `entry_time`, `usage_at_install`, `policy_frozen` |
 | `installed_item.removed` | Segment `exit_time`, disposition, failure indicator; invalidation |
+| `installed_item.identity_resolved` **[AMENDMENT — this service is a declared 03 §6 consumer (04 §4) but never implemented the handler]** | `resolution: superseded` — re-key open segments, predictions, and criticality assessments from `provisional_id` to `canonical_id`; `confirmed` — no-op |
 | `telemetry.batch_ingested` | Feature availability and completeness; the tier-2 data-availability ceiling |
 | `health_indicator.computed` | Features, with **definition version and definition-time** — the bitemporal bound (`[D22]`) |
 | `usage_counter.updated` | Usage covariates and the tier-1 ceiling condition; `counter_epoch` tracked |

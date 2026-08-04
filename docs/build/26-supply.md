@@ -1393,13 +1393,14 @@ Cursor-paginated, no total count, and **the event bus is never a rebuild source*
 
 Exactly document 04 §7's list, every type named explicitly — **no wildcard subscriptions** (C38):
 
-`work_candidate.created` · `work_order.opened` · `work_package.proposed` · `work_package.approved` · `maintenance_action.recorded` · `prediction.updated` · `prediction.invalidated` · `casrep_risk.raised` · `installed_item.installed` · `installed_item.removed` · `allowance.updated` · `configuration.baseline_changed`
+`work_candidate.created` · `work_order.opened` · `work_package.proposed` · `work_package.approved` · `maintenance_action.recorded` · `prediction.updated` · `prediction.invalidated` · `casrep_risk.raised` · `installed_item.installed` · `installed_item.removed` · `installed_item.identity_resolved` **[AMENDMENT — this service is a declared 03 §6 consumer (04 §7) but the list previously omitted it]** · `allowance.updated` · `configuration.baseline_changed`
 
 | Event | What Supply does with it |
 |---|---|
 | `configuration.baseline_changed` | **The most consequential event in the system** (03 §6). **[AMENDMENT]** Resolves `changed_items` vs `changed_items_ref` first (20 §6.2 — exactly one is set; a bulk allowance import is always the ref form, never inline). Re-evaluates APL authorization and allowance position for affected items; bumps the local `baseline_epoch`; invalidates forecasts computed under the superseded epoch. Inbox semantics are D2-critical here |
 | `allowance.updated` | Replaces `allowance_qty`, `derivation_code`, `sparing_model`, `cosal_revision` **as received**. Recomputes `allowance_state`; emits `allowance_shortfall.detected` where the revision creates one, with driver `allowance_revision` |
 | `installed_item.installed` / `.removed` | Updates the installed population feeding `POP`. **`removed` with a failure indicator and a repairable SMR opens a `CarcassObligation`** |
+| `installed_item.identity_resolved` | `resolution: superseded` — re-key the installed population and any open `CarcassObligation` from `provisional_id` to `canonical_id`; `confirmed` — no-op |
 | `maintenance_action.recorded` | Parts consumed → stock issue, reservation-set `consumed` transition, and the **BRF** input. This is where the documented loop closes: 3-M usage → BRF → allowance |
 | `prediction.updated` / `.invalidated` | Forecast inputs. `invalidated` withdraws the affected forecast rather than leaving a stale one; the withdrawal is visible in the next `GET /demand-forecast` |
 | `casrep_risk.raised` | Raises forecast urgency. **Does not create a requisition** — the counterfactual in 07 §6 item 10 is that absent prediction this *becomes* a CASREP; a risk flag is not a casualty and does not earn priority 01–03 |
