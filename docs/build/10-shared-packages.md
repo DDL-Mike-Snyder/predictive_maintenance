@@ -2314,14 +2314,29 @@ class Proposal(FathomModel):
     )
     rationale: NonEmptyStr = Field(description="Document 03 §7.2.")
     confidence: float = Field(ge=0.0, le=1.0, description="Document 03 §7.2.")
-    agent_id: NonEmptyStr = Field(description="Document 03 §7.2.")
-    agent_version: NonEmptyStr = Field(description="Document 03 §7.2.")
-    llm_version: NonEmptyStr = Field(description="Document 03 §7.2.")
-    trace_ref: NonEmptyStr = Field(
+    agent_id: NonEmptyStr | None = Field(
+        default=None,
+        description=(
+            "Document 03 §7.2.  [AMENDMENT] Made optional — required NonEmptyStr "
+            "made a human-created `purge`/`rewrap` proposal unrepresentable, "
+            "since `32-audit.md` §6.1 rejects any such proposal that carries an "
+            "`agent_id` at all (D14: the coordinator's only concrete defense "
+            "against a prompt-injected purge). Null means human-created; present "
+            "means agent-created, and `_agent_provenance_consistent` below "
+            "requires it to travel with the other three agent fields, never "
+            "alone."
+        ),
+    )
+    agent_version: NonEmptyStr | None = Field(default=None, description="Document 03 §7.2.")
+    llm_version: NonEmptyStr | None = Field(default=None, description="Document 03 §7.2.")
+    trace_ref: NonEmptyStr | None = Field(
+        default=None,
         description=(
             "Document 03 §7.2 and §8.5: tool invocations are recorded to Audit & "
-            "Provenance and correlated to the Domino trace by `trace_ref`."
-        )
+            "Provenance and correlated to the Domino trace by `trace_ref`. "
+            "Optional for the same reason as `agent_id` above — a human-created "
+            "proposal invokes no tool and has no Domino trace to correlate."
+        ),
     )
     authority_class: AuthorityClass = Field(
         description=(
@@ -2424,6 +2439,38 @@ class Proposal(FathomModel):
                 f"{self.kind.value!r}: dual control is mandatory at class and "
                 "fleet scope, for any kind with external legal effect, and for "
                 "purge/rewrap at every scope (document 03 §7.2 rule 4  [D16])"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _agent_provenance_consistent(self) -> Self:
+        """[AMENDMENT] `agent_id`, `agent_version`, and `llm_version` are all
+        present (agent-created) or all absent (human-created) — never a
+        partial set, which would be a proposal that is neither honestly
+        attributed to a human nor fully traceable to the agent that made it.
+        `trace_ref` is exempted from the all-or-nothing rule: a human
+        proposal MAY still cite a `trace_ref` (a human acting on a tool
+        result may want to correlate it), but an agent-created one MUST,
+        since 03 §8.5 requires every tool invocation traced.
+
+        `32-audit.md` §6.1 separately and independently rejects any
+        `purge`/`rewrap` proposal carrying a non-null `agent_id` at all — the
+        concrete D14 defense against a prompt-injected purge. That rule is
+        enforced there, not here: this validator only guarantees agent
+        provenance is internally consistent when it IS present, which is
+        what makes a human-created purge proposal (all four fields null)
+        representable in the first place."""
+        agent_fields = (self.agent_id, self.agent_version, self.llm_version)
+        if any(agent_fields) and not all(agent_fields):
+            raise ValueError(
+                "agent_id, agent_version, and llm_version must be all present "
+                "(agent-created) or all absent (human-created), never a "
+                "partial set (document 03 §7.2)"
+            )
+        if self.agent_id is not None and self.trace_ref is None:
+            raise ValueError(
+                "an agent-created proposal (agent_id present) requires "
+                "trace_ref (document 03 §8.5: every tool invocation is traced)"
             )
         return self
 

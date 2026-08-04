@@ -198,9 +198,16 @@ CREATE TABLE proposal_queue (
                                                                    --   The flag travels; the text does not.
 
   -- ── provenance pointers, not provenance content ──────────────────────────
-  agent_id                   text        NOT NULL,
-  agent_version              text        NOT NULL,
-  trace_ref                  text        NOT NULL,                 -- 03 §8.5 Domino trace correlation
+  -- [AMENDMENT] All three made NULLable — NOT NULL made a human-created
+  -- purge/rewrap proposal unrepresentable, since 32-audit.md §6.1 rejects any
+  -- such proposal carrying an agent_id at all. NULL means human-created;
+  -- 10-shared-packages.md's _agent_provenance_consistent enforces all-three-
+  -- or-none at the schema layer, mirrored here as a CHECK for the same
+  -- "malformed upstream row cannot enter the queue" reason every other CHECK
+  -- in this table exists.
+  agent_id                   text        NULL,
+  agent_version              text        NULL,
+  trace_ref                  text        NULL,                    -- 03 §8.5 Domino trace correlation
 
   -- ── classification (03 §7.3).  Always at this deployment's level (§7.1) ──
   classification             jsonb       NOT NULL,                 -- serialized ClassificationLabel
@@ -234,6 +241,14 @@ CREATE TABLE proposal_queue (
   CONSTRAINT proposal_queue_dual_control_at_scope
     CHECK (requires_dual_control OR (blast_radius NOT IN ('class', 'fleet')
                                      AND kind NOT IN ('requisition', 'purge', 'rewrap'))),
+
+  -- [AMENDMENT] Mirrors 10-shared-packages.md's _agent_provenance_consistent:
+  -- agent_id/agent_version/llm_version travel together or not at all. (No
+  -- llm_version column here — it is provenance CONTENT, not a routing/filter
+  -- pointer, so §2.4's PROJECTED_COLUMNS deliberately does not carry it; this
+  -- CHECK covers the two pointer columns the queue does carry.)
+  CONSTRAINT proposal_queue_agent_provenance_consistent
+    CHECK ((agent_id IS NULL) = (agent_version IS NULL)),
 
   -- 03 §5.4: exactly one scope identifier, matching `scope`; scope='fleet'
   -- requires none — the one singleton scope [C11].
