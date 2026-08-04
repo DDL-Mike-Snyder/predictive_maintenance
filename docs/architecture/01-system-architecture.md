@@ -581,8 +581,9 @@ Three closed loops carry the program's value, and all three should be demonstrab
 ```
 apps/web                          # React SPA, Sustainment Plane
 apps/practitioner                 # Domino Apps and Extensions
-services/{fleet-status,asset-registry,telemetry,pdm,maintenance,
+services/{fleet-status,registry,telemetry,pdm,maintenance,
           supply,pma,failure-intel,design-advisory}
+  # ^ slugs are canonical per document 03 §3.1 — "registry", not "asset-registry" [C27]
 platform/{gateway,auth,reference-data,knowledge-retrieval,audit,
           notification,tool-server,sync}
 agents/{copilot,pma-prescreener,diagnostic,work-package-planner,

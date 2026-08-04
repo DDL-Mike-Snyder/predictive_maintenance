@@ -166,9 +166,9 @@ Long-term candidate for federation with CDMD-OA. The substitution boundary is fa
 | Operation | Substitution |
 |---|---|
 | `GET /assets/{id}/channels`, `GET /channels/{id}` | Required |
-| `GET /health-indicators?equipment_id=&from=&to=&as_of=` | Required |
+| `GET /health-indicators?installed_item_id=&from=&to=&as_of=` | Required |
 | `GET /features?installed_item_id=&feature_set=&as_of=&as_known_at=` | Required |
-| `GET /usage-counters?equipment_id=` | Required |
+| `GET /usage-counters?installed_item_id=` | Required |
 | `GET /missions`, `GET /missions/{id}`, `GET /missions/{id}/telemetry` | Required |
 | `POST /ingest/telemetry`, `POST /ingest/usage` | Required |
 | `POST /ingest/indicators`, `POST /ingest/detections` (Domino Job write-back) | Required |
@@ -231,15 +231,15 @@ Unlikely to be substituted, as it is tightly coupled to program-specific channel
 
 **Configuration change invalidates predictions, loudly.** On `configuration.baseline_changed`, affected predictions transition to invalidated, `prediction.invalidated` is published, and re-scoring is queued. Consumers display invalidated predictions as such. Silent staleness after a component replacement is the failure mode most likely to destroy operator trust permanently.
 
-**Cold start is designed, not deferred.** A newly introduced NIIN, a new class, or a hull with no history must produce something defensible. The fallback hierarchy is explicit: item history, then NIIN fleet history, then equipment-family history, then class-level engineering estimate, with the fallback level exposed in `confidence` and in `drivers`.
+**Cold start is designed, not deferred.** A newly introduced NIIN, a new class, or a hull with no history must produce something defensible. The fallback hierarchy is explicit: item history, then NIIN fleet history, then equipment-family history, then class-level engineering estimate, with the fallback level exposed in `fallback_level` — a field distinct from `confidence` since one scalar cannot carry both sharpness and cold-start depth — and in `contributing_factors` (document 03 §7.1).
 
 ### API surface
 
 | Operation | Substitution |
 |---|---|
-| `GET /predictions?asset_id=&equipment_id=&min_probability=&horizon_days=` | Required |
+| `GET /predictions?asset_id=&installed_item_id=&min_probability=&horizon_days=` | Required |
 | `GET /predictions/{id}`, `GET /predictions/{id}/provenance` | Required |
-| `GET /criticality?niin=&equipment_id=` | Required |
+| `GET /criticality?niin=&installed_item_id=` | Required |
 | `GET /scoring-runs`, `GET /scoring-runs/{id}` | Required |
 | `POST /scoring-runs` (on-demand re-score; `x-side-effects: none`) | Required |
 | `POST /scoring-runs/{id}/predictions` (bulk, idempotent, baseline-epoch fenced) | Required |
@@ -384,7 +384,7 @@ Not a substitution candidate, though it is the sub-application most likely to be
 | `GET /availabilities`, `GET /availabilities/{id}/work-package` | Required |
 | `POST /work-packages/plan` | Required |
 | `GET /work-packages/{id}/explanation` | Required |
-| `GET /maintenance-history?equipment_id=` | Required |
+| `GET /maintenance-history?installed_item_id=` | Required |
 | `POST /proposals` (agent-originated candidates and interval changes) | Required |
 | Optimizer configuration, PMS catalog administration | Internal |
 
@@ -529,7 +529,7 @@ The primary substitution candidate and the reference case for the protocol in do
 | `POST /reviews/{id}/candidates/{cid}/confirm` | Required |
 | `POST /reviews/{id}/candidates/{cid}/reject` | Required |
 | `POST /reviews/{id}/complete` | Required |
-| `GET /tags?equipment_id=&mission_id=&taxonomy=` | Required |
+| `GET /tags?installed_item_id=&mission_id=&taxonomy=` | Required |
 | `GET /taxonomy` | Required |
 | `POST /proposals` (agent-originated candidates) | Required |
 | Taxonomy administration, reviewer qualification management | Internal |
@@ -587,7 +587,7 @@ Core program capability, not a substitution candidate. The tag stream is the pro
 
 **Evidence strength is explicit and standardized.** Every hypothesis carries what supports it, how many independent observations, across how many hulls and classes, by what method, and what confounders remain unaddressed. Downstream consumers — PdM deciding whether to admit a causal feature, and Design Advisory building a business case — make different decisions at different strength levels, and can only do so if strength is expressed consistently.
 
-**Causal features are versioned and admitted deliberately.** A causal finding becomes a tier-3 model feature only after adjudication and only as a versioned feature-set entry. This prevents a weak hypothesis from silently propagating into operational predictions, and it keeps the PdM contract's `drivers` field meaningful.
+**Causal features are versioned and admitted deliberately.** A causal finding becomes a tier-3 model feature only after adjudication and only as a versioned feature-set entry. This prevents a weak hypothesis from silently propagating into operational predictions, and it keeps the PdM contract's `contributing_factors` field meaningful.
 
 **Rejections and negative findings are retained.** A hypothesis examined and found unsupported is valuable knowledge and prevents rediscovery.
 
@@ -596,9 +596,9 @@ Core program capability, not a substitution candidate. The tag stream is the pro
 | Operation | Substitution |
 |---|---|
 | `GET /failure-modes`, `GET /failure-modes/{id}` | Required |
-| `GET /hypotheses?niin=&equipment_id=&status=&min_strength=` | Required |
+| `GET /hypotheses?niin=&installed_item_id=&status=&min_strength=` | Required |
 | `GET /hypotheses/{id}/evidence` | Required |
-| `GET /attributions?equipment_id=&mission_id=` | Required |
+| `GET /attributions?installed_item_id=&mission_id=` | Required |
 | `GET /causal-feature-sets`, `GET /causal-feature-sets/{version}` | Required |
 | `POST /hypotheses/{id}/adjudicate` | Required |
 | Discovery run management, taxonomy administration | Internal |
@@ -708,10 +708,6 @@ Cross-cutting services on the Sustainment Plane. Each requires Phase 3 design; t
 
 Single ingress for the operator interface and for agent tool calls. Responsibilities: authentication, token exchange for delegated authority, rate limiting per caller identity, view-model composition across sub-applications, and construction of the unified proposal adjudication queue by consuming the `fathom.*.proposal.v1` topic pattern. Composition happens here, which is what keeps sub-applications from calling one another synchronously.
 
-### Identity & Authorization
-
-OIDC provider, Keycloak in the demonstration, federated with Domino's Keycloak so that a single identity spans both planes — the prerequisite for delegated agent authority. ABAC policy evaluation via OPA or Cedar, with attributes including classification, caveats, compartments, unit, billet, and qualification. CAC and PIV substitution is an identity-provider change rather than an application change.
-
 ### Reference Data
 
 Versioned enumerations, ESWBS and EIC code sets, unit hierarchy, and the shared taxonomies. Distributed as a versioned package and served for runtime resolution. The taxonomy reconciliation question raised in §8 and §9 resolves here: one vocabulary, three points of capture.
@@ -743,7 +739,12 @@ Routing and escalation for raised risk flags, opened reviews, shortfalls, and ad
 
 ### Sync Gateway
 
-Inert in the demonstration. The seam implementing document 03 §9: outbox drain, inbox apply, per-aggregate conflict policy enforcement, and divergence budget tracking. Built as a library consumed by every sub-application plus a coordinating service, so that the outbox obligation is satisfied uniformly rather than nine times.
+**Two components, not one, and only the second is inert in the demonstration** — an earlier revision described the whole thing as inert, which would mean no event ever reaches the broker; that was corrected at finding C21.
+
+- **The outbox/inbox relay library** — always active, in every sub-application and every platform consumer, from the demonstration onward. Implements document 03 §5.2's outbox and inbox patterns: transactional outbox write, relay publish, atomic inbox record-and-apply. This is not optional and is not edge-specific.
+- **The edge reconciliation coordinator** — inert in the cloud-only demonstration; the seam for afloat and forward-deployed operation per document 03 §11 (edge reconciliation policy): outbox drain over the ship-to-shore link, inbox apply on the shore side, per-aggregate conflict-policy enforcement, and divergence-budget tracking.
+
+Both are built as libraries consumed by every sub-application, so the outbox obligation is satisfied uniformly rather than nine times, and only the edge coordinator's activation differs by deployment profile.
 
 ---
 

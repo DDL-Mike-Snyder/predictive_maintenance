@@ -33,8 +33,8 @@ The contracts specified here are binding on document 04 and on all Phase 3 detai
 5. **Backward-compatible evolution by default; major versions for anything else.** Additive optional fields require no version change. Removals, renames, type changes, and semantic changes require a new major version served alongside the prior one.
 6. **Every contract has an executable conformance suite,** and every obligation in a contract is externally observable. An obligation that cannot be observed from outside a black-box implementation is a program implementation standard, not a contract term, and is recorded separately (§11) `[D24]`.
 7. **Classification travels with data, and derived values inherit it.** Every event envelope and every API response carries a classification label. Any derived value carries the union of its inputs' labels, enforced by the same provenance machinery that §11 requires. Producers segregate by classification; consumers additionally enforce (§7.3, §12) `[D13]`.
-8. **Retrieved and user-supplied content is untrusted data, never instruction** (§13) `[D14]`.
-9. **Every store has a remediation path.** Append-only is an integrity property, not an excuse for unrecoverable data (§14) `[D15]`.
+8. **Retrieved and user-supplied content is untrusted data, never instruction** (§9) `[D14]`.
+9. **Every store has a remediation path.** Append-only is an integrity property, not an excuse for unrecoverable data (§13) `[D15]`.
 
 ---
 
@@ -95,6 +95,8 @@ AssetRef {
 SystemRef {                                                          # [C31]
   system_id          # stable internal UUID; the join key
   eswbs              # ESWBS code — human reference and external federation only
+  eic?               # Equipment Identification Code, where the system level has one.
+                     # Federation and human reference only — never a join key [see rule below]
 }
 
 PositionRef {
@@ -109,6 +111,8 @@ InstalledItemRef {                                                   # [C10, D9]
                      # DoDI 4151.22 §1.2.d and §1.2.l require serialized item management
                      # and IUID "to optimize RCM and CBM+ data analytics", so this is the
                      # externally mandated instance identity — not the EIC
+  eic?               # Equipment Identification Code of the class this item instantiates.
+                     # Federation and human reference only — never a join key
   position_id        # where it is installed
   niin               # what it is
   serial_or_lot      # where tracked
@@ -158,7 +162,7 @@ Applicable to all sub-applications and platform services.
 | Bulk writes | Where a batch process writes results, the receiving sub-application exposes a bulk, idempotent, fenced operation. Direct database access by any other workload is prohibited `[D10, C7]` |
 | Correlation | `X-Correlation-Id` accepted, generated when absent, propagated to every log line, event, and downstream call |
 | Authentication | OIDC bearer tokens. Service-to-service calls carry the calling workload's identity |
-| Agent authority | Per §9.2. Interactive agent calls carry the user's delegated token; autonomous runs carry an accountable workload identity |
+| Agent authority | Per §8.3. Interactive agent calls carry the user's delegated token; autonomous runs carry an accountable workload identity |
 | Authorization | Enforced by the receiving sub-application against ABAC attributes including classification, caveats, and compartments. Never delegated to the gateway alone |
 | Classification | `X-Classification` on responses; per-field redaction where a response mixes levels |
 | Rate limiting | Per-caller-identity token bucket at the gateway; per-sub-application limits declared in its chart |
@@ -172,7 +176,7 @@ Every operation declares two annotations, validated in CI.
 | Annotation | Values | Purpose |
 |---|---|---|
 | `x-substitution` | `required` \| `internal` | Whether a substituting implementation must provide it (§10) |
-| `x-side-effects` | `none` \| `proposal-only` \| `state-changing` | The basis for agent eligibility (§9.1) |
+| `x-side-effects` | `none` \| `proposal-only` \| `state-changing` | The basis for agent eligibility (§8.1) |
 
 `x-side-effects: none` asserts the operation does not alter domain state. It is permitted on `GET` and on computational `POST` operations such as scenario analysis and planning. **Agent eligibility is determined by declared side-effect class, not by HTTP method** — a method check wrongly excludes the compute-only `POST` operations that three of the seven agents require `[C1, D11]`.
 
@@ -226,16 +230,23 @@ EventEnvelope {
   occurred_at         # when the fact became true in the domain
   recorded_at         # when the producer persisted it
   producer            # slug from §3.1, plus version
+  producer_node       # which DEPLOYMENT INSTANCE of that slug emitted this event:
+                     # "enterprise" | "edge:<asset_id>". Required because a sub-application
+                     # with an edge profile runs as two independent instances of the SAME
+                     # slug, each minting its own monotonic_seq — without this field their
+                     # sequences collide and the dedup key in §5.4 silently drops an event
   correlation_id
   causation_id        # event_id of the immediately preceding event, where applicable
-  scope               # asset | system | installed_item | niin | class | fleet   [C11]
-  subject {           # exactly one scope identifier required, matching `scope`
+  scope               # asset | system | installed_item | niin | class | mission | fleet   [C11]
+  subject {           # exactly one scope identifier required, matching `scope`,
+                     # EXCEPT scope=fleet, which requires none — fleet is the one
+                     # singleton scope covering the entire fleet rather than one member of it
     asset_id?
     system_id?
     installed_item_id?
     niin?
     class_id?
-    mission_id?
+    mission_id?      # required when scope=mission (e.g. mission.completed, mission_review.*)
   }
   baseline_epoch?     # monotonic per-asset configuration epoch, where applicable [D3, D4]
   classification
@@ -271,7 +282,7 @@ clock {
 
 Four rules follow:
 
-- **Ordering and deduplication use `(producer, monotonic_seq)` or the HLC.** Never `source_time`. Consumers apply idempotently on that key or on a content hash.
+- **Ordering and deduplication use `(producer, producer_node, monotonic_seq)` or the HLC.** Never `source_time`. Consumers apply idempotently on that key or on a content hash. `producer_node` is required precisely because an edge-profiled sub-application is two deployment instances of one slug, each with its own sequence.
 - **Durations, timeouts, retry backoff, and lease expiry use a monotonic clock**, never the wall clock. A wall-clock backoff loop storms or hangs the instant a step lands — again, at reconnection.
 - **`dispersion_ms` is a published epsilon that grows while disconnected, and the application branches on it.** Small epsilon permits wall-clock-assisted presentation; epsilon exceeding the inter-write interval forces causal-only ordering and forbids any timestamp arbitration. A time service that declares itself untrusted is far safer than one confidently serving wrong time.
 - **`sync_quality` is retained permanently.** It converts "our timestamps drifted" from an audit finding into a bounded, documented condition, and it is the only way to re-derive true ordering after the fact. Without it that information is gone. Skew is indistinguishable from tampering to an assessor, and non-repudiation claims collapse if the time is contestable.
@@ -410,10 +421,15 @@ FailurePrediction {
   asset_id, installed_item_id, position_id, niin, equipment_family
   baseline_id, baseline_epoch
   horizon_days
-  p_failure                # calibrated within its declared reference class
+  p_failure?               # calibrated within its declared reference class.
+                          # NULL when calibration_population < 50 (document 06 §3's
+                          # gate) — below the gate the cell publishes population_hazard_rate
+                          # only, with reference_class forced to class_estimate. A predicted
+                          # probability that cannot be calibrated must not be emitted merely
+                          # because the field exists; omission is the honest signal
   reference_class          # item | niin_fleet | equipment_family | class_estimate
   sharpness                # dispersion relative to the reference-class base rate
-  calibration_population   # n backing the calibration cell; null if ungated
+  calibration_population   # n backing the calibration cell. Gates p_failure at n >= 50
   rul {                    # OMITTED where reference_class is not item-conditional
     p10, p50, p90, unit    # days | steaming_hours | eoh | cycles | sorties | dives
   } | null
@@ -435,6 +451,7 @@ FailurePrediction {
 Four corrections are embedded, and each closes a defect that would otherwise be silent:
 
 - **`reference_class` replaces cross-tier probability comparability.** A tier-0 population rate and a tier-3 item-conditional probability can each be perfectly calibrated and remain incomparable. Consumers do not compare `p_failure` across reference classes; the scheduling optimizer applies a per-class decision-theoretic conversion to expected consequence `[D7]`.
+- **`p_failure` is gated on `calibration_population`, per document 06 §3.** Below n=50 in the calibration cell, no calibrated probability is published at all — `p_failure` is null, `reference_class` is forced to `class_estimate`, and `population_hazard_rate` is the only rate-like figure available. A consumer that treats a missing `p_failure` as zero, rather than as "uncalibrated," reintroduces the comparability defect this field exists to prevent.
 - **`rul` is omitted where the reference class is not item-conditional.** A memoryless population fit cannot produce a per-item residual-life distribution, and rendering one indistinguishably from a tier-3 distribution misleads the operator `[D19]`.
 - **`fallback_level` is separate from `confidence`.** One scalar cannot carry both sharpness and epistemic reference-class depth and remain orderable `[D7]`.
 - **`contributing_factors` requires `attribution_method` and `stability`,** and `observation_ref` points at a feature observation rather than at itself. Factors below a stability threshold are suppressed from display, and agents must not render them in causal language — a causal statement must cite an adjudicated Failure Intelligence hypothesis `[D23]`.
@@ -459,7 +476,7 @@ Proposal {
   }
   rationale, confidence
   agent_id, agent_version, llm_version, trace_ref
-  authority_class        # required authority to adjudicate (§9.3)   [D16]
+  authority_class        # required authority to adjudicate (§7.2.1)   [D16]
   blast_radius           # item | asset | class | fleet              [D16]
   requires_dual_control  # boolean; true for class or fleet scope, and for
                          # any kind with external legal effect
@@ -478,6 +495,35 @@ Four rules make this safe rather than merely descriptive:
 - **Re-validation at approval is mandatory.** The owning sub-application re-validates `payload` against current configuration at adjudication time and rejects if `baseline_epoch` is superseded or `valid_until` has passed. Validation at creation is insufficient `[D16]`.
 - **Adjudication requires a claim.** `POST /proposals/{id}/claim` obtains a lease; adjudication requires `If-Match` on the claimed ETag. Without this the eventually-consistent queue permits two approvals and two work orders `[D16]`.
 - **Authority is checked against blast radius.** An `interval_change` suppressing a preventive task across a class is not the same act as confirming an anomaly tag, and must not be adjudicable by the same authority. Dual control is mandatory at class and fleet scope and for any kind with external legal effect `[D16]`.
+
+#### 7.2.1 Authority classes for adjudication
+
+**This is distinct from the agent authority classes in §8.3.** §8.3 governs which credential an *agent* calls with (delegated versus accountable-autonomous); this section governs which *human organizational role* is permitted to adjudicate a proposal, given its `kind` and `blast_radius`. An agent's delegated token still carries a human's identity and roles, and it is that identity's roles that are checked here.
+
+```
+AuthorityClass = maintainer | planner | supply_officer | design_authority | fleet_authority
+```
+
+| Class | Organizational role (document 01 §4) | Sub-application context |
+|---|---|---|
+| `maintainer` | Ship's Force Maintainer | Confirms anomaly tags, item-scoped work candidates |
+| `planner` | RMC / Availability Planner | Work packages, asset-scoped scheduling decisions |
+| `supply_officer` | (Supply role, ship or RMC) | Requisitions, expedites |
+| `design_authority` | PEO / Design Engineer | Redesign cases |
+| `fleet_authority` | TYCOM Readiness Officer | Class- or fleet-scoped interval changes; dual control's second signature at that scope |
+
+**Minimum authority by blast radius, per proposal kind:**
+
+| `kind` | `item`/`asset` | `class` | `fleet` |
+|---|---|---|---|
+| `anomaly_tag` | `maintainer` | — (not applicable at this scope) | — |
+| `work_candidate` | `maintainer` or `planner` | `planner` | `fleet_authority` |
+| `requisition` | `supply_officer` | `supply_officer` | `fleet_authority` |
+| `interval_change` | `planner` | `fleet_authority` + dual control | `fleet_authority` + dual control |
+| `redesign_case` | `design_authority` | `design_authority` | `design_authority` + dual control |
+| `configuration_change` | `maintainer` (edge-submitted) then Registry confirmation | — | — |
+
+A proposal's `authority_class` field is set by the owning sub-application at creation, from this table, and re-validated at adjudication (§7.2's re-validation rule) in case the scope was corrected between proposal and adjudication. Phase 3 per-sub-application design may add finer-grained roles within a class (e.g. splitting `planner` by RMC), but may not remove the minimum this table establishes.
 
 ### 7.3 ClassificationLabel
 
@@ -499,9 +545,6 @@ ClassificationLabel {
 ```
 
 The category and dissemination lists are typed rather than free text because DoDI 5200.48 requires a five-line CUI designation indicator whose third and fourth lines are *"all types of CUI contained in the document"* and *"the distribution statement or the dissemination controls applicable"* — structured obligations, not annotations. Minimum marking is `CUI` in both banner and footer; the older `U//FOUO` form is retired.
-
-```
-```
 
 Producers segregate by topic; consumers additionally enforce. **Every derived value carries the union of its inputs' labels,** recorded in `inherited_from` and enforced by the provenance obligation in §15. The vector store enforces at query time rather than post-filtering, because post-filtering leaks the existence of records.
 
@@ -630,9 +673,9 @@ Per-aggregate policies are contracts between enterprise and edge instances, decl
 
 | Aggregate | Policy | Rationale |
 |---|---|---|
-**No policy below compares wall-clock timestamps across nodes.** Where an earlier revision said "last-writer-wins," the winner is determined by `(producer, monotonic_seq)` or hybrid logical clock per §5.4, never by `source_time`. A mandated STIG clock step fires at reconnection, so timestamp arbitration would invert exactly when the outbox drains `[D29]`.
+**No policy below compares wall-clock timestamps across nodes.** Where an earlier revision said "last-writer-wins," the winner is determined by `(producer, producer_node, monotonic_seq)` or hybrid logical clock per §5.4, never by `source_time`. A mandated STIG clock step fires at reconnection, so timestamp arbitration would invert exactly when the outbox drains `[D29]`.
 
-| Telemetry samples and batches | Append-only; deduplicated on `(producer, monotonic_seq)` | Immutable observations; duplication is a transport artifact |
+| Telemetry samples and batches | Append-only; deduplicated on `(producer, producer_node, monotonic_seq)` | Immutable observations; duplication is a transport artifact |
 | Health indicators | Recomputable; enterprise recomputation supersedes | Derived data |
 | Anomaly candidates | **Edge-generatable**; enterprise adds further candidates on reconnect | Afloat review requires a local candidate source `[D18]` |
 | Anomaly tags | Append-only; never overwritten or deleted; supersession recorded | Human judgments are evidence |
