@@ -199,7 +199,7 @@ The two differ in exactly one respect, and it is the respect that matters:
 | `maintenance_action_recorded` | **legally-immutable** | The 3-M record is the statutory maintenance record (document 07; NAVSEAINST 4790.8). Also the label stream for every model in the system (03 §6) |
 | `proposal_adjudication` where the proposal `kind` has **external legal effect** (`requisition`) or `blast_radius` is `class`/`fleet` | **legally-immutable** | Document 03 §7.2: dual control is mandatory *"for any kind with external legal effect."* A destroyed adjudication of a legally effective act destroys the accountability for that act |
 | `proposal_adjudication`, all other kinds | operationally-append-only | Item- and asset-scoped judgments with no external legal effect |
-| `model_binding_activated`, `agent_promotion` | **legally-immutable** | Document 04 §11: *"an accreditation artifact."* Destroying the record of which model version served which tier destroys the accreditation basis |
+| `model_binding_activated`, `agent_promotion`, `agent_answer` | **legally-immutable** | Document 04 §11: *"an accreditation artifact."* Destroying the record of which model version served which tier — or what an agent told a maintainer — destroys the accreditation basis |
 | `purge_record`, `purge_receipt`, `purge_certificate` | **legally-immutable** | A purge must remain auditable forever (§6.6). Also: they live in their own purge group so no key destruction can reach them (§5.4) |
 | `integrity_checkpoint` | **legally-immutable** | The chain's anchors. Destroying one destroys the proof that nothing else was destroyed |
 | `quarantine_record` | operationally-append-only | A record that failed signature verification is quarantined, never dropped (11 §10.2) — and quarantine is exactly where hostile or mislabeled content accumulates |
@@ -332,6 +332,38 @@ The full request and response bodies are **payload** on the spine row, encrypted
 - **`ti_no_state_changing` is a database constraint, not a comment.** Document 03 §8.1 permits `x-agent-eligible` only where side effects are `none` or `proposal-only`. If a `state-changing` invocation ever reaches audit, the insert fails and pages, because its existence means the CI gate of document 09 §6.2 job 4 and the import-time raise of document 09 §5.1 were both bypassed. Audit is the last place that can notice.
 - **Tool request and response bodies are never returned by any read operation in plaintext form to a caller whose ABAC attributes do not dominate the record's label**, and never post-filtered (§10.6). The retrieval corpus is where a mislabeled payload is most likely to originate, so this table is the most likely purge target in the system.
 
+### 4.3a Agent answer records `[AMENDMENT]`
+
+**[AMENDMENT — closes `40-copilot.md` §16 correction 10, a real gap this document's own record-type list left open.]** Document 04 §11 makes audit *"an accreditation artifact."* For a proposal-emitting agent, the proposal record already covers its terminal output. For a read/answer-only agent (the Maintainer Copilot, `40-copilot.md` §2) the emitted answer **is** the entire output — the artifact a maintainer read and acted on — and nothing in the corpus recorded it until this section.
+
+```sql
+CREATE TABLE agent_answer (
+  record_id            uuid   NOT NULL PRIMARY KEY REFERENCES audit_record(record_id),
+  turn_id              uuid   NOT NULL,
+  run_id               uuid   NOT NULL,
+  agent_id             text   NOT NULL,
+  agent_version        text   NOT NULL,
+  prompt_digest        text   NOT NULL,
+  llm_version          text   NOT NULL,
+  promotion_digest     text   NOT NULL,        -- 03 §8.4: prompt + model version, promoted as one unit
+  manifest_pins        jsonb  NOT NULL,         -- every manifest this run's binding compiled against
+  bundle_digest        text   NOT NULL,         -- 34 §3.2's compiled-binding digest
+  verifier_version     text   NOT NULL,
+  question             text   NOT NULL,
+  claims                jsonb NOT NULL,         -- the emitted claims, each with its citation refs
+  refusal_reason       text   NULL,             -- set iff the agent refused rather than answered
+  classification       jsonb  NOT NULL,         -- union of every cited input's label, inherited_from populated
+  trace_ref            text   NOT NULL,
+  correlation_id       text   NOT NULL,
+
+  CONSTRAINT aa_answer_or_refusal CHECK (
+    (claims != '[]'::jsonb AND refusal_reason IS NULL) OR
+    (claims  = '[]'::jsonb AND refusal_reason IS NOT NULL))
+);
+```
+
+Retention class **`accreditation`** (§4.8, extending the row below) — an answer a maintainer acted on is at least as consequential as the tool invocations that produced it, and the same "destroying the record destroys the accreditation basis" reasoning that already governs `model_binding_activated`/`agent_promotion` applies here. Written per `40-copilot.md` §5.7's C7 step, in the same transaction as the turn's close, over the universal `any service or agent runtime → audit` edge (`09-monorepo-and-conventions.md` §4.4.2) — the edge that already named this record type as its justification before this section existed to back it.
+
 ### 4.4 Event ingest records and the attestation stream
 
 Every ingested envelope is stored complete: all of document 03 §5.4's fields, the whole `clock` block, and `sync_quality` with all five sub-fields. The envelope shape is `packages/canonical-schemas`' (document 10 §4.5) and audit **imports it rather than redefining it** — document 09 §4.1's rule that canonical kernel types are imported, never redefined, applies with force here, because a divergent copy of the envelope in the audit store would make the signature unverifiable.
@@ -446,7 +478,7 @@ AU-9(3) [08 §3.5] is claimed by cryptographic protection of audit information. 
 | `retention_class` | Applies to | Retention | Basis |
 |---|---|---|---|
 | `permanent` | `attestation`, `integrity_checkpoint`, `purge_*`, provenance edges, dissemination ledger | Indefinite. Partitions transfer to the object-store tier, never dropped | 03 §5.4 (`sync_quality` permanent); AU-4(1) [08 §3.5] |
-| `accreditation` | `model_binding_activated`, `agent_promotion`, `proposal_adjudication`, `anomaly_tag_adjudication`, `maintenance_action_recorded` | Indefinite | 04 §11 "accreditation artifact" |
+| `accreditation` | `model_binding_activated`, `agent_promotion`, `agent_answer`, `proposal_adjudication`, `anomaly_tag_adjudication`, `maintenance_action_recorded` | Indefinite | 04 §11 "accreditation artifact" |
 | `program` | `event_ingest`, `prediction_recorded`, `tool_invocation`, `agent_run` | **[OPEN — OQ-1]** No document states a retention period. Interim: indefinite, because a shorter period cannot be invented (document 09 DO-NOT 31) and because the accreditation body sets it | §17 |
 | `quarantine` | `quarantine_record` | Indefinite until adjudicated, then `program` | 11 §10.2 |
 

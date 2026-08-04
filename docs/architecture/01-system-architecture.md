@@ -588,9 +588,11 @@ platform/{gateway,auth,reference-data,knowledge-retrieval,audit,
           notification,tool-server,sync}
 agents/{copilot,pma-prescreener,diagnostic,work-package-planner,
         supply-expediter,redesign-case-builder,readiness-narrative}
-  # each: prompt, manifest pin, API version pin, evaluation set, deployment spec
+  # each: prompt, manifest pin, model pin, API version pin, evaluation set, deployment spec
+  # ^ model pin added (09 §3.1, 03 §8.4) — previously omitted here
 models/{tier0-historical,tier1-survival,tier2-degradation,tier3-hybrid,causal}
-packages/{canonical-schemas,contracts,agent-tooling,py-common,ts-common}
+packages/{canonical-schemas,contracts,agent-tooling,py-common,py-sync,ts-common,ui}
+  # ^ py-sync (09 §3.1) and ui (09 §3.1, amendment 50-1) added — this list previously omitted both
 data/synthetic
 deploy/{helm,argocd,terraform}
 docs/{architecture,adr}

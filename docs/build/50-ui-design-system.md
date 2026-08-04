@@ -1037,11 +1037,12 @@ And [31 §3.1] rule 3 is the constraint that shapes everything below: *"`fathom.
 GET /api/v1/gateway/session          x-substitution: internal
                                      x-side-effects: none
                                      x-agent-eligible: false
-→ 200 { sub, display_name, unit_uic, billet, authority_classes[], clearance, classification }
+→ 200 { subject_id, edipi, display_name, unit_uic, unit_path, billet,
+        qualifications[], authority_classes[], clearance }
 → 401 urn:fathom:problem:gateway:unauthenticated   (no session cookie)
 ```
 
-Its fields are exactly [31 §3.1]'s identity block, minus everything [31 §3.6] says a token never contains, and it is `advisory` in the same sense [31 §8]'s `POST /authority-checks` is: *"[n]ever the enforcement point."* §13 correction 7 asks for it against [30 §8.1] and [31 §8].
+**[AMENDMENT — corrected against the operation actually landed.]** This shape was originally speculative (`sub`, and a `classification` field that does not exist on the identity block at all — classification is per-resource, never per-principal). `30-gateway.md` §8.1.2 declares the operation returns `fathom.identity`, *"byte-identical to §3.2's token shape"* — whose subject member is the nested `subject_id`, not a bare `sub` (the bare `sub` is the outer JWT's own registered claim, a different field), and which additionally carries `unit_path` and `qualifications`, both real attributes on [31 §2.3]'s user-attribute table. Its fields are exactly [31 §3.1]'s identity block, minus everything [31 §3.6] says a token never contains, and it is `advisory` in the same sense [31 §8]'s `POST /authority-checks` is: *"[n]ever the enforcement point."* §13 correction 7 asks for it against [30 §8.1] and [31 §8] — now resolved; §22 row 2 in `51-operator-console.md` tracked this exact field-name gap and is closed by this correction.
 
 **The interim, so 51 is not blocked:** until that operation exists, the console treats `authority_classes` as `[]` and `display_name` as unavailable. That degrades the hub to case 3 below — all eight cards, none marked — which is a working state, and it degrades the queue to unfiltered, which [30 §4.5]'s `authority_class` parameter still permits an operator to set by hand. Nothing is broken and nothing is faked.
 
