@@ -2096,12 +2096,19 @@ class ProposalKind(StrEnum):
     """Document 03 §7.2 `kind`  [C39].
 
     "anomaly_tag | work_candidate | requisition | interval_change |
-    redesign_case | configuration_change"
+    redesign_case | configuration_change | purge | rewrap"
 
     C39: "The conflict policy requires 'proposed' configuration changes with no
     matching proposal kind and no endpoint" — `configuration_change` is the
     sixth kind added by that fix.  Document 05 §3.4's note that "all five
     `Proposal` kinds have exactly one executing sub-application" predates it.
+
+    `PURGE` and `REWRAP` were added by amendment 03-2, landing the Audit
+    build framework's crypto-shred purge mechanism at the contract level.
+    Document 03 §7.2's standing rule binds regardless of enum membership: a
+    `purge` or `rewrap` proposal may never be created or adjudicated by an
+    agent principal or an `accountable_autonomous` identity — stricter than
+    every other kind above, all of which permit an agent to propose.
     """
 
     ANOMALY_TAG = "anomaly_tag"
@@ -2110,6 +2117,8 @@ class ProposalKind(StrEnum):
     INTERVAL_CHANGE = "interval_change"
     REDESIGN_CASE = "redesign_case"
     CONFIGURATION_CHANGE = "configuration_change"
+    PURGE = "purge"
+    REWRAP = "rewrap"
 
 
 class BlastRadius(StrEnum):

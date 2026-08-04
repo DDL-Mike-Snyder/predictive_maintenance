@@ -129,8 +129,11 @@ Attribute validation is enforced at the realm boundary by a Keycloak declarative
 Document 03 §7.2.1 (added in the correction landed today) fixes the vocabulary:
 
 ```
-AuthorityClass = maintainer | planner | supply_officer | design_authority | fleet_authority
+AuthorityClass = maintainer | planner | supply_officer | design_authority | fleet_authority |
+                  security_officer
 ```
+
+`security_officer` was added by amendment 03-1, after this section was first drafted — the ISSM/ISSO role holding the crypto-shred purge/rewrap authority (03 §7.2.1), under mandatory dual control with a `fleet_authority` counter-signature at class/fleet scope. Every occurrence below is written against the current, six-member enum.
 
 Document 10 currently types `Proposal.authority_class` as `NonEmptyStr` and records **OQ-13** as *"the most consequential gap in the package"* precisely because the vocabulary was undefined at the time it was written. **OQ-13 is now closed by 03 §7.2.1**, and the consequence is a required edit to document 10:
 
@@ -150,8 +153,8 @@ class AuthorityClass(StrEnum):
 
     Closed vocabulary.  Phase 3 "may add finer-grained roles WITHIN a class
     (e.g. splitting `planner` by RMC), but may not remove the minimum this
-    table establishes."  A sixth member is a change to document 03, not to this
-    file.
+    table establishes."  A seventh member is a change to document 03, not to
+    this file — `security_officer` (amendment 03-1) is already the sixth.
     """
 
     MAINTAINER = "maintainer"                 # Ship's Force Maintainer
@@ -159,11 +162,12 @@ class AuthorityClass(StrEnum):
     SUPPLY_OFFICER = "supply_officer"         # Supply role, ship or RMC
     DESIGN_AUTHORITY = "design_authority"     # PEO / Design Engineer
     FLEET_AUTHORITY = "fleet_authority"       # TYCOM Readiness Officer
+    SECURITY_OFFICER = "security_officer"     # ISSM / ISSO
 ```
 
 `Proposal.authority_class` is retyped from `NonEmptyStr` to `AuthorityClass`. Recorded as amendment **A-1** in §14.
 
-**Realm representation.** The five values are **realm roles** named exactly as the enum values — not user attributes. Reason: roles are what Keycloak's role-scope mapper puts into a token, they are assignable through groups, and they are visible to an auditor as a role assignment rather than as a string in a bag of attributes. Group membership derives roles from billet through a program-owned mapping (`platform/auth/keycloak/billet-authority-map.json`), which is data, versioned in git, and reviewed as a change to authority.
+**Realm representation.** The six values are **realm roles** named exactly as the enum values — not user attributes. Reason: roles are what Keycloak's role-scope mapper puts into a token, they are assignable through groups, and they are visible to an auditor as a role assignment rather than as a string in a bag of attributes. Group membership derives roles from billet through a program-owned mapping (`platform/auth/keycloak/billet-authority-map.json`), which is data, versioned in git, and reviewed as a change to authority.
 
 **No implicit hierarchy. [ESTABLISHED HERE]** A `fleet_authority` does **not** automatically satisfy a requirement for `maintainer`. The classes are organizational roles, not levels: 03 §7.2.1 maps `maintainer` to *"Ship's Force Maintainer"* who *"[c]onfirms anomaly tags"*, and a TYCOM Readiness Officer holds no deckplate qualification to confirm what a sensor signature was. The policy therefore evaluates set membership against an explicit allow-set per table cell, never a rank comparison. Document 03 §7.2.1's word *"[m]inimum"* is ambiguous on this point and the ambiguity is recorded as **OQ-31-3** in §15; the safe reading is implemented.
 
@@ -1287,7 +1291,7 @@ Each item carries the finding or citation that makes it a defect rather than a p
 9. **Do not use symmetric token signing, and do not accept `alg: none`.** Symmetric signing gives every service the power to mint. *(§2.1, T-14)*
 10. **Do not gate agent eligibility on HTTP method.** Eligibility follows declared `x-side-effects`; a method check wrongly excludes the compute-only `POST` operations three agents require. *(**C1 / D11**; 03 §4.1, §8.1)*
 11. **Do not treat `authority_class` as one field with one meaning.** `fathom.agent.authority` is the agent credential class (03 §8.3); `authority_classes` and `Proposal.authority_class` are organizational roles (03 §7.2.1). *(§2.5)*
-12. **Do not add a sixth `AuthorityClass`, and do not compare classes by rank.** Finer-grained roles *within* a class are permitted; removing the minimum, or inventing a hierarchy, is not. *(03 §7.2.1; §2.4)*
+12. **Do not add an `AuthorityClass` beyond document 03 §7.2.1's enumerated set (six, as of amendment 03-1), and do not compare classes by rank.** Finer-grained roles *within* a class are permitted; removing the minimum, or inventing a hierarchy, is not. *(03 §7.2.1; §2.4)*
 
 ### 13.3 The Domino Endpoint path
 
