@@ -1650,3 +1650,208 @@ Per 03 §8.4 and 10 §6.8, contributed into each target's suite so that a confor
 - **A vacuous gate is a failing gate.** G4 with an empty adversarial set fails; G2 with no rationale to score fails; G6 with fewer adjudicated proposals than its declared minimum reports `insufficient_data` and blocks promotion rather than passing. 21 §14.1 states the same rule for its leakage suite: *"a vacuous test is a failing test."*
 
 ---
+
+## 17. Explicit DO-NOT list
+
+Each item carries the finding or citation that makes it a defect rather than a preference. A reviewer may cite the number and stop reading.
+
+### 17.1 The proposal boundary
+
+1. **Do not write a tag, a candidate, a detection, or any other domain state.** The entire output is a `Proposal` with `kind: anomaly_tag`. There is no second write path, and `POST /telemetry/anomaly-candidates` and `POST /pma/tags/bulk` are both unreachable by construction. *(01 principle 7, §8.2; 03 §7.2; 09 DO-NOT 17; 23 DO-NOT-28)*
+2. **Do not adjudicate anything, and do not build a surface that could.** Adjudication requires the absence of `fathom.agent` entirely, regardless of the accountable owner's roles. *(31 §3.3 rule 6, T-6; 03 §7.2.1)*
+3. **Do not emit a proposal at `class` or `fleet` blast radius, and do not set an `authority_class` other than `maintainer`.** 03 §7.2.1 marks both cells not applicable; widening the radius would recreate the ambiguity D16's table removes. *(**D16**; 03 §7.2.1; 23 §2.8, DO-NOT-30)*
+4. **Do not acquire a second `kind`.** `purge` and `rewrap` may never be created by an agent principal *"with no exception"*, and a new kind is a change to 03 §7.2, not a convenience. *(03 §7.2, §7.2.1; 32 §6.1)*
+5. **Do not emit a proposal after authority has lapsed.** Terminate with a resumable checkpoint. Do not retry, do not re-authenticate as the workload, do not resume under any credential the runtime can mint for itself. *(**D12**; 01 §8.5; 03 §8.3; 31 §4.4, §4.5)*
+
+### 17.2 The metric trap
+
+6. **Do not read candidate sets, quality metrics, or label exports.** `GET /pma/reviews/{id}/candidates` is the one caller position from which a canary tell is learnable from aggregate structure; `GET /pma/quality-metrics` is a self-optimisation surface; `GET /pma/labels/export` is both. None is in the manifest and none may be added. *(23 §3.7, §5.5, §6.5; 06 §6)*
+7. **Do not adapt candidate volume from the rejection rate, online, in any form.** No controller, no persisted state, no heuristic decay. The rejection rate rises when reviewers reject to finish, and reducing volume in response is D17's collapse executed at machine speed with no counter-signal available. Volume changes are promotions, gated on the joint precision-and-recall report. *(**D17**; 01 §8.8; 06 §6; §8.3, §8.4)*
+8. **Do not carry, infer, or correlate canary status in any field, channel, or timing.** Not in a proposal, not in a metric, not in a log line, not in a latency difference. A reviewer who can identify plants makes recall a measurement of nothing. *(06 §6; 13 §13.2; 23 §5.2, DO-NOT-4)*
+9. **Do not synthesise a detector version, a detector score, a score scale, or a detection identifier.** Copy them from the real `anomaly.detected` or leave them null. *(13 §13.1; 23 §5.2, §9.4, DO-NOT-5)*
+10. **Do not emit a proposal without a pinned `llm_version`, and do not fall back to a heuristic proposer when the model is unavailable.** A proposal whose model cannot be named is unauditable, and 01 §8.6 makes the pin part of the promoted unit. Terminate the run instead. *(01 §8.6; 03 §7.2)*
+11. **Do not suppress a candidate to improve precision, merge two anomalies into one proposal, widen a window to cover two events, or re-propose a rejected window without new cited evidence.** *(§6.7; **D17**)*
+12. **Do not let any agent field influence `label_weight`.** Label weight derives from the reviewer's qualification snapshot; an agent input would make the corpus's weighting a function of the thing being evaluated. *(23 §6.2; 01 §8.8)*
+13. **Do not conclude equipment health from a rejection whose `is_negative_label` is false.** `insufficient_evidence`, `sensor_artifact`, `wrong_installed_item`, `already_known_and_repaired`, and `duplicate_of_candidate` are not evidence that the equipment was healthy. *(**D34** by direct analogy; 23 §2.5, §11.1 item 2; §8.5)*
+
+### 17.3 Evidence, time, and identity
+
+14. **Do not let a hindsight read become a mission-time claim.** The pre-screen reads at `as_known_at=latest` and the resulting tag is hindsight-authored; a rationale that presents current-definition knowledge as having been available at mission end is a leak stated in prose. *(**D22**; 03 §5.4; 23 §2.4; §5.4)*
+15. **Do not default, omit, or infer `as_of` or `as_known_at`.** Both are required with no default and `latest` is an explicit literal, visible in the manifest. *(**D22**; 21 §5.1, §5.8)*
+16. **Do not read a raw telemetry sample, and do not seek a path to one.** `GET /missions/{id}/telemetry` is not agent-eligible; raw-window materialisation is PMA's act into PMA's own bucket. *(21 §9.1; 23 §2.6; **C36**)*
+17. **Do not treat a suppressed, missing, or below-completeness value as zero.** Absence renders as absence. *(21 §5.3; 23 §9.5; §5.9)*
+18. **Do not propose an equipment-degradation candidate whose only support is a stuck, clipped, or implausible channel.** *(13 §9.6; 21 §3.7; §5.7)*
+19. **Do not resolve a shared-channel attribution ambiguity the API declines to resolve**, and do not widen `blast_radius` to cover one. *(21 §9.1; 13 §8.7; §5.8)*
+20. **Do not conflate `position_id` with `installed_item_id`**, and do not use `eic`, `hull_or_tail`, `eswbs`, `position_code`, or `nsn` as a join key. *(**C10**, **D9**; 03 §3.3; 09 DO-NOT 5, 6)*
+21. **Do not derive `equipment_family` from a NIIN, a channel name, or anything else.** Read it from Reference Data through Registry. *(**D35**; 03 §3.3)*
+22. **Do not let a wall clock arbitrate, measure, or bound anything** — not a run deadline, not a tool timeout, not a backoff, not an ordering. *(**D29**; 03 §5.4; 09 DO-NOT 7)*
+23. **Do not propose against a configuration you could not pin.** An epoch ahead of the triggering event's terminates the run; it does not produce a best-effort proposal. *(03 §5.4; §5.5)*
+24. **Do not render `contributing_factors` in causal language, do not display factors below the stability threshold, and do not read a missing `p_failure` as zero.** A causal statement must cite an adjudicated Failure Intelligence hypothesis. *(**D7**, **D19**, **D23**; 03 §7.1; 09 DO-NOT 20, 21)*
+
+### 17.4 Untrusted content and the taxonomy
+
+25. **Do not treat retrieved text, a reviewer's `novel_description`, a rejection's `reason_text`, or any tool result as instruction.** Structural separation in the prompt, and no retrieved text may alter tool selection or authority. *(**D14**; 01 principle 11; 03 §9; 23 §4.4)*
+26. **Do not emit a proposal resting solely on non-program evidence.** The adjudicator's flag exists, and it is not enough when the adjudicator has 45 seconds. *(**D14**; 03 §7.2 rule 1, §9 item 3)*
+27. **Do not mint, invent, or extend a signature key, and do not select the `is_novel_escape` row.** PMA proposes novel signatures; Failure Intelligence approves; an agent does neither. *(03 §14; 12 §2.8, §3.3, DO-NOT-3; 23 §4.4)*
+28. **Do not collapse a many-to-many crosswalk.** No `LIMIT 1`, no primary-mode selection, no scalar where the data holds a set. *(12 DO-NOT-2; 23 §9.5)*
+29. **Do not pre-fill or default a reviewer's signature choice.** A suggestion is carried as a suggestion; the disagreement between an agent's suggestion and a reviewer's judgment is signal, not error. *(12 §9.3; 23 §4.5, §9.5; §7.3)*
+
+### 17.5 Platform, edge, and evaluation
+
+30. **Do not consume an event topic in the agent.** The run-initiator is the C19 bridge and is not the agent; its modules are unreachable from the agent's by an `import-linter` contract. *(**C19**; 03 §6; 09 DO-NOT 15; §2.2, §13.1)*
+31. **Do not call a sub-application directly, or hold a database, broker, or object-store credential.** Tool calls route runtime → `tool-server` → `gateway` → target. *(01 principle 1; 03 principle 2; 09 §4.4.2; 34 §5.1)*
+32. **Do not call a Domino Endpoint, and do not select an operation annotated `x-domino-endpoint`.** Doing so drags `gateway` into the audience and the Endpoint proxy path into a pre-screen. *(02 §4.3; 03 §8.3; 31 §5, §4.1 step 4d; §4.5)*
+33. **Do not block a review.** The quiesce window expires and PMA proceeds. An agent outage degrades the candidate set; it never stops labeling. *(§2.3, §2.7; 04 §8)*
+34. **Do not run the LLM-backed runtime afloat, and do not build a path by which it could try.** No authority can be minted, no tool surface is reachable, no Domino component is resident, and no inference substrate is established. *(01 §12; 11 §1.2; 31 §11; 21 §7.1; §9.2)*
+35. **Do not replace, prune, supersede, or re-rank an edge candidate.** Enterprise adds. *(**D18**; 03 §11; 21 §7.4; 23 §7.5, DO-NOT-9)*
+36. **Do not re-propose a window already adjudicated afloat.** *(§9.4 obligation 4; 23 §7.5)*
+37. **Do not read the generator's truth partition from the runtime, and do not let any truth-derived value into a prompt, a manifest, or a few-shot example.** *(13 §8.6; §12.2)*
+38. **Do not treat a policy-frozen item differently, in either direction.** Proposing less suppresses the stratum's labels; proposing more makes its burden unrepresentative. Both are D1 reintroduced through the labeling path. *(**D1**; 06 §2; 13 §10.2, §10.3; §12.2 rule 5)*
+39. **Do not install anything at container start, and do not call a public-internet service at runtime** — including for a model, a JWKS, or a policy bundle. *(**D26**; 01 principle 5, §12; 09 DO-NOT 25, 26)*
+40. **Do not invent a quantity.** The budget is derived from 06 §6 and §7 with the arithmetic shown; the caps are relationships to 23 §3.4's constants; the quiesce window and the uncorroborated cap have no cited value and are recorded as open. *(**D37**; 09 DO-NOT 31)*
+
+---
+
+## 18. Requirements this agent places on other components
+
+Stated in the form 28 §7.4 uses for `DA→PDM-1`, so each is a reviewable obligation on a named document rather than an assumption embedded here. Items marked **blocking** must be resolved before this agent's proposals can reach a reviewer at all.
+
+| ID | On | Requirement | Status |
+|---|---|---|---|
+| **PS→PMA-1** | 23 §3.1, §3.2 | **A bounded pre-screen quiesce window** between review creation and candidate grouping, during which agent proposals for that mission are admitted; with a configured duration, expiry that proceeds without waiting, early close on run completion, and instrumentation of the expiry rate (§2.3) | **Blocking.** Without it every agent proposal misses its mission's primary review |
+| **PS→PMA-2** | 23 §3.3 | **The ranker must handle a null `detector_confidence`.** An uncorroborated agent candidate has no detector score by construction (§5.2), and 23 §3.3's `detector_confidence` component is *"normalised within `detector_version`"* — undefined when there is none. Substitute the agent's `confidence`, normalised within `(agent_version, llm_version)`, and record which was used in `rank_components` | **Blocking** for the uncorroborated class |
+| **PS→PMA-3** | 23 §2.2, §3.3 | **`candidate_class` (corroborated / uncorroborated) must be persisted on `anomaly_candidate` and carried in `rank_components`**, so §12.3's stratified precision is computable and so a class-level regression is locatable | Required for §12.3 |
+| **PS→PMA-4** | 23 §2.2, §5.3, invariant I3 | **(a) `source_proposal_id` joins the withheld set**, absent from `AnomalyCandidateView` and from every reviewer-facing repository method, covered by `pma-canary-schema-clean` and `pma-canary-no-leak-fuzz`. **(b) A plant may be bound to an agent-origin candidate** that corroborates the plant's underlying real detection, with provenance `designated`, so canary recall covers both origins (§12.4) | **Blocking for recall validity.** Without (a) a reviewer can partition plants out of the agent-origin set; without (b) the agent's own recall is unmeasured — the exact quantity D17 says nothing measures |
+| **PS→PMA-5** | 23 §4.5, §9.5 | **A `suggested_signature` is never pre-filled, defaulted, or highlighted as a selection.** The same rule 23 already applies to a maintenance findings code applies to an agent suggestion, for the same reason: a pre-selected value converts a judgment into a confirmation | Required |
+| **PS→PMA-6** | 23 §2.8, §3.7, §8.5 | **One human act per agent-originated candidate.** The reviewer's `confirm`/`reject` on an admitted agent candidate adjudicates its proposal, transitioning the `Proposal` and publishing `proposal.adjudicated` in the same transaction as the tag or rejection. `POST /proposals/{id}/adjudicate` remains for never-admitted proposals (§7.6) | **Blocking.** Two independent surfaces double-count the reviewer budget D17 exists to protect |
+| **PS→PMA-7** | 23 §5.5 | **`QualityMetrics` should stratify precision by candidate class**, alongside the existing joint report. Optional but strongly indicated: §12.3's figures are otherwise computable only in the evaluation harness, which runs at promotion cadence rather than continuously | Recommended |
+| **PS→TEL-1** | 21 §9.5 | **`telemetry-mission-context` at v2**, adding `GET /health-indicators`, `GET /quality`, `GET /installed-items/{id}/channels`, and `GET /channels/{key}` to 21 §9.5's three-operation v1, with `as_of`/`as_known_at` defaults visible in the manifest (§4.3) | **Blocking.** v1 cannot support §5 |
+| **PS→AUTH-1** | 31 §4.3 | **A run-status value for a target refusal.** `agent_runs.status` has no member for "the target refused with 429 and the run stopped." Either add one, or state that such a run records `completed` with the outcome carried in the audit record — the interim this document adopts (§2.6) | Required before the run record is implemented |
+| **PS→ARCH-1** | 03 §6, Telemetry rows | **Name the bridging consumer of `mission.completed`.** C19 requires the platform component that bridges to an agent to be the consumer named in the catalog. The run-initiator is that component and the row does not list it, so the catalog-reconciliation gate (09 §8.2) has nothing to reconcile against (§2.2) | Required for CI parity |
+| **PS→09-1** | 09 §10 item 5 | **Idempotency retention must exceed the admission-control deferral interval** for proposal-only operations, or duplicate suppression must rest on content grouping rather than on `Idempotency-Key`. A deferral lasts hours to days; the assumed retention is 24 hours (§2.5) | Required; interim is PMA's candidate grouping |
+
+---
+
+## 19. Definition of Done
+
+The shared Definition of Done in [09 §8](09-monorepo-and-conventions.md) applies **in full**, and the items that are genuinely inapplicable to an artifact that owns no API and no database are enumerated below with justification rather than removed — the discipline 34 §16 establishes, because 09 §8 *"permits additions but not silent removals."* Copy the whole set into `agents/pma-prescreener/README.md` and tick it there.
+
+### 19.1 The four items this document exists to add
+
+- [ ] **The trigger path is complete and idempotent.** The run-initiator consumes `fathom.telemetry.mission.completed` and nothing else, with full inbox semantics (`processed_at` after processing, **D2**); mints a per-run `accountable_autonomous` grant scoped to one asset; opens a run record; and invokes the runtime idempotency-keyed on `event_id`. `PS-T1`, `PS-T6`, `PS-T7` green. *(§2.2, §3; **D12**)*
+- [ ] **The quiesce window is agreed and implemented on PMA's side, and the agent's proposals reach the primary review.** `PS→PMA-1` is merged, and a golden-mission run shows agent candidates admitted to the review that mission opened — not to a later one. *(§2.3, §18)*
+- [ ] **The bound holds at both stages, and the agent's caps are provably below PMA's.** `PS-T4` green, reading 23 §3.4's constants rather than duplicating them; `ps-budget-under-ceiling` green against 06 §6 and §7. *(§6; **D17**, **D37**)*
+- [ ] **No online adaptation exists.** No controller, no persisted operating-point state, no aggregate rejection-rate query in any manifest. Asserted by a static check over the manifests and by the absence of any writable configuration path in the runtime. *(§8.3; **D17**)*
+
+### 19.2 Authority
+
+- [ ] The token carries `fathom.agent.authority = "accountable_autonomous"`, `authority_classes = []`, a non-empty `declared_scope` with exactly one asset and `fleet: false`, and a resolvable `accountable_owner`. *(31 §3.3)*
+- [ ] `sfx:state-changing` is unmintable for this client, and `PS-T8` proves the **receiver** refuses a validly signed token that carries it anyway. *(31 §3.4, T-1a)*
+- [ ] `PS-T9` green: neither agent class can adjudicate, regardless of roles. *(31 T-6)*
+- [ ] Mid-run lapse terminates with a checkpoint containing **no token**; no proposal exists created after `exp`; no retry and no alternative credential is attempted. *(31 §4.4, §4.5)*
+- [ ] `RUN_DEADLINE_SECONDS < grant TTL`, asserted at startup. *(§14.4)*
+- [ ] Every run appears in Audit with the accountable owner; every tool call appears in `audit.tool_invocation` with full request and response and `declared_side_effects ∈ {none, proposal-only}`. *(03 §8.3, §8.5; 32 §4.3)*
+
+### 19.3 Tool surface
+
+- [ ] `tool-pins.yaml` resolves; rules B1–B4 pass in the tool-server compiler; `make check-bundle` clean. *(34 §2.2, §15 item 7)*
+- [ ] All five manifests ship conformance tests **inside their target's suite**, all green. *(03 §8.4; 10 §6.8; §16.6)*
+- [ ] `PS-T11` green: the withheld operations of §4.6 and §4.8 are absent from the committed descriptors, not merely unused.
+- [ ] `PS-T13` green: a live side-effect-class change fails the run rather than proceeding on the cached descriptor. *(34 §4.3)*
+- [ ] Every manifest declares a reviewed `purpose`; no unowned manifest exists. *(03 §8.2, §8.4; 09 §8.7)*
+
+### 19.4 Proposals and evidence
+
+- [ ] `PS-T14` through `PS-T22` green. Every proposal validates against `packages/canonical-schemas`, at `blast_radius: item` with `authority_class: maintainer`, with non-empty resolvable evidence including at least one structured `program`-trust item. *(03 §7.2, §7.2.1; 10 §4.7)*
+- [ ] `PS-T3` green: detector attribution is copied byte-for-byte or null. There is no code path that writes a detector version the agent produced. *(13 §13.1; 23 §5.2)*
+- [ ] Every proposal's `classification` is the union of its inputs with `inherited_from` populated, so 32 §4.5's `label_inheritance` edges resolve. *(03 §7.3; 09 §8.4)*
+- [ ] `PS-T23` through `PS-T30` green over the generator's corruption and noise classes. *(13 §9, §15)*
+
+### 19.5 Edge
+
+- [ ] `ps-edge-six-week` green against `edge-ssn-6wk-*`, with every row of §16.5's table asserted, and the golden files unmodified — a regeneration is *"a contract change [requiring] the same review as an edit to 03 §11."* *(13 §15.4)*
+- [ ] The `import-linter` contract proving `reduced/` cannot import `llm.py` is green, and the afloat mode creates no proposal and mints no grant. *(§9.3, §13.1)*
+- [ ] The enterprise run after reconnect produces overlapping candidates deliberately, so 23 §9.6's overlap assertions are not vacuous. *(13 §15.2 case 3; §9.5)*
+- [ ] The three-way ownership conflict of §9.1 is resolved in the Wave-5 reconciliation, and `23 §7.1`/`DO-NOT-10` is corrected or this document is. *(§20 item 3)*
+
+### 19.6 Evaluation and promotion
+
+- [ ] All nine gates of §12.1 green, with **G4 recorded as partial** and its D38 dependency stated in the README rather than only here. *(01 §8.8; **D38**)*
+- [ ] `PS-T5` green: holdout neutrality, over matched pairs. **This is the gate that protects D1's fix from the labeling path.** *(**D1**; 13 §10.3)*
+- [ ] `ps-no-truth-reference` green: no truth-partition reference anywhere outside `eval/`. *(13 §8.6)*
+- [ ] §12.3's stratified figures are computed and reported; precision is never reported without a recall figure or an explicit statement that recall is unmeasurable. *(23 §5.5's discipline)*
+- [ ] The registered promotion unit of §13.3 is asserted internally consistent by all seven gates, and `ps-version-bumped` prevents a prompt or pin change without a version. *(01 §8.6; 03 §8.4)*
+- [ ] The evaluation tier runs as its own blocking CI job and cannot be selected away. *(21 §10.1's precedent)*
+
+### 19.7 Deployment and governance
+
+- [ ] The run-initiator's rendered NetworkPolicy egress set **equals** its declared set, contains no database or object-store peer, and every peer maps to an existing 09 §4.4.2 row — **no new sanctioned edge is required by this artifact**. *(09 §4.4.2, §8.6)*
+- [ ] Both budget values and both deadline values have **no defaults** and fail startup when absent. *(09 §4.5; §13.2, §14.4)*
+- [ ] Nothing is installed at container start; images are digest-pinned; the runtime stage is non-root with a read-only root filesystem. *(**D26**; 09 §8.6)*
+- [ ] `README.md` records: purpose, authority class and accountable owner, the five manifests and their pins, the budget and its derivation, the run outcomes, the sanctioned peers, and the local resolution of every open item in §21.
+- [ ] Every `[ESTABLISHED HERE]` decision in this document is either ratified in the Wave-5 reconciliation or carries an ADR under `docs/adr/`. *(09 §7.5, §8.7)*
+
+### 19.8 Shared items explicitly not applicable, with justification
+
+09 §8 permits additions, not silent removals, so each row states why it does not apply and what replaces it.
+
+| 09 §8 item | Disposition | Justification |
+|---|---|---|
+| §8.1 OpenAPI document, base path, `x-substitution`/`x-side-effects` on every operation, `changed_since` reads, pagination, problem details, `ETag`/`If-Match` | **Not applicable to the agent**; applies to the run-initiator only for its `/healthz`, `/readyz`, `/metrics` routes | An agent artifact exposes no API and is not a sub-application. It is a *client* of surfaces that carry all of these |
+| §8.1 `Idempotency-Key` | **Applies, inverted** | The agent *sends* it on every proposal (§2.5); it operates no idempotency cache |
+| §8.2 Events published, envelope, topics, partition keys, AsyncAPI, `catalog.py` parity | **Not applicable to the agent.** Applies to the run-initiator's `CONSUMES` only, which is one explicitly named type | The agent publishes nothing. 03 §6 assigns it no aggregate, and inventing a topic would add a contract term to a document-03-owned catalog — 34 §9 declines the same thing for the same reason |
+| §8.3 Transactional outbox | **Not wired.** ADR required | 11 §1.1 scopes the outbox to *"every program-built service that publishes any event."* Neither the agent nor the initiator publishes one. 34 §2.4 records the identical deviation |
+| §8.3 Consumer inbox, antecedent rule, monotonic clock discipline | **Applies to the run-initiator in full** | It consumes an event; 03 §5.2's inbox rule and **D2** bind it. Clock discipline binds both |
+| §8.3 Read models, `changed_since` rebuild, read-model lag | **Not applicable** | Neither component maintains a read model. The agent's state comes from tool calls, per run, and is discarded |
+| §8.3 Conflict policy per aggregate | **Not applicable to the agent; declared by PMA for the reduced mode's host aggregates** | The agent owns no aggregate. 23 §7.3 declares PMA's |
+| §8.4 One logical database, migrations, `migrations` readiness check | **Absent.** ADR required | No aggregate, no state. Asserted by a test, so a later contributor adding a database has to argue for it (34 §12's precedent) |
+| §8.4 Provenance for every derived value | **Applies** | A proposal is a derived value: `evidence[]`, `inherited_from`, `trace_ref`, and the pinned versions are its provenance (obligation 9) |
+| §8.4 Declared purge path | **Applies indirectly** | The agent stores nothing. Its records live in `audit` (32 §4.1, §4.3) and in PMA's proposal store (23 §10.5), each with its own declared purge class |
+| §8.5 Conformance suite for a slug | **Not applicable**; replaced by the manifest conformance of §16.6 plus the evaluation tier of §16.7 | An agent is not a discipline and has no substitution protocol (03 §10; §1.5) |
+
+---
+
+## 20. Corrections to source documents
+
+Found while reconciling. Each is a **defect or gap in the cited document**, not a decision of this one. Following the convention 26 §13 uses. Items 1–4 block clean implementation.
+
+| # | Document | Defect | Correction | Status |
+|---|---|---|---|---|
+| 1 | **03 §6, Telemetry rows** | `mission.completed` lists consumers `pma`, `failure-intel`, `audit`. This agent is event-triggered on it (03 §8.3 names the trigger), but C19 requires that *"where a downstream capability is realized by an agent, the consumer named here is the platform component that bridges to it"* — **and no platform component in the corpus consumes this event.** Verified against 30 §9.1 (nine proposal topics only), 33 §2.1 (six rows, not this one), 34 §9 (consumes nothing), 32 §1.3 (not an orchestrator). The bridge C19 promises does not exist for the one agent 03 §8.3 names as event-triggered | Add the bridging consumer to the `mission.completed` row. §2.2 specifies it as the `run-initiator` shipped from `agents/pma-prescreener/`; if the architecture prefers a platform service, 01 §5's inventory needs a tenth row and this document's §2.2 changes | **Not applied — flagged.** Interim in §2.2; the catalog-reconciliation gate (09 §8.2) has nothing to reconcile against until it lands. **PS-OQ-1** |
+| 2 | **21 §9.5** | `telemetry-mission-context.v1` is defined with three operations — `GET /missions/{id}`, `GET /anomalies?mission_id=`, `GET /features` — and the purpose *"PMA Pre-Screener candidate context."* That subset has no indicator series, no data-quality surface, and no channel-to-item attribution, so the pre-screener cannot distinguish degradation from a sensor fault (§5.7) or from a load change (§5.8) — the two discriminations 13 §9.5 and §9.6 generate deliberately | Extend to v2 with `GET /health-indicators`, `GET /quality`, `GET /installed-items/{id}/channels`, `GET /channels/{key}`, all already `x-agent-eligible` in 21 §9.1, with `as_of`/`as_known_at` defaults visible in the manifest | **Not applied — flagged as PS→TEL-1.** §4.3 specifies v2. Blocking |
+| 3 | **23 §7.1 and DO-NOT-10** | States that *"the detector ensemble / pre-screener… is **`telemetry`'s**, not PMA's"* and cites 11 §1.2 as placing *"the edge-resident detector ensemble… **and the small pre-screener** under `telemetry`."* **11 §1.2 does not say that.** Its table gives the `telemetry` row *"edge-resident detector ensemble producing anomaly candidates `[D18]`"* and the `pma` row *"Afloat mission review and anomaly tagging; **small edge pre-screener** `[D18]`."* 04 §8 and 21 §7 both agree with 11 §1.2 and against 23. 23 §7.1 additionally calls this *"the single most misread line in this design"*, which is accurate for a different reason than it intends | Correct 23 §7.1's table row and DO-NOT-10 to place the reduced afloat pre-screener with PMA, retaining the detector ensemble with `telemetry`. §9.3 specifies what the PMA-side component actually is — deterministic, no model, no proposal | **Not applied — flagged.** Three documents against one; §9.1 adopts the majority reading. Blocking for §9.3's deployment |
+| 4 | **23 §2.8, §3.7, §8.5** | An agent-originated candidate is adjudicable through **two** independent surfaces: the reviewer's `POST /reviews/{id}/candidates/{cid}/confirm` and the proposal's `POST /proposals/{id}/adjudicate`, both of which 23 says terminate in an `AnomalyTag`. It also appears in the gateway's unified queue, built from a topic pattern over `fathom.pma.proposal.v1` (30 §4.1). If both are live and independent, one candidate costs two human acts and 06 §6's 10.5 reviewer-hours are double-counted | State that the reviewer's confirm/reject on an admitted agent candidate **is** the adjudication of its proposal, transitioned in the same transaction (23 §8.5 already requires that transaction for the events); reserve `POST /proposals/{id}/adjudicate` for never-admitted proposals; and render an admitted agent proposal in the gateway queue as claimed-by-review | **Not applied — flagged as PS→PMA-6.** §7.6 states the interim. Blocking, because the alternative corrupts the capacity model D17 exists to protect |
+| 5 | **23 §5.6.2 layer 5** | Says the enterprise pre-screener *"terminates with a resumable checkpoint rather than continuing"* on a `429`, and cites 03 §8.3. But 03 §8.3's checkpoint-and-terminate protocol is the **authority-lapse** condition; a 429 is a target refusal with a valid token and an active grant. Conflating them means an implementer looks for an `agent_runs.status` value that does not exist (31 §4.3) | Distinguish the two: a `429` is a target refusal recorded as a run outcome; an authority lapse is 31 §4.4's protocol. Both stop the run; only one is an authority event | Not applied; flagged. §2.6 records the interim |
+| 6 | **31 §4.3** | `agent_runs.status` is `running \| completed \| terminated_authority_lapsed \| terminated_pod_restart \| terminated_revoked`. There is no value for a run stopped by a **target refusal** — the admission-control case 23 §5.6.2 requires and which is a routine, designed condition for this agent | Add `terminated_target_refused`, or state that such a run records `completed` with the cause carried in the audit record and the agent's own run record | **Not applied — flagged as PS→AUTH-1.** §2.6 adopts the second reading and invents no enum value |
+| 7 | **32 §4.3** | `tool_invocation.authority_class` is commented `-- delegated \| accountable-autonomous [03 §8.3]` — **hyphenated**. 31 §2.5 fixes the wire value as `accountable_autonomous`, `snake_case`, *"because 03 §4 fixes `snake_case` for JSON field *and* enumeration values."* A CHECK or an insert built on the hyphenated literal will reject every autonomous invocation this agent makes | Use `accountable_autonomous` in 32 §4.3, and in any constraint or index built on it | Not applied; flagged. Same defect class as 31's amendment A-2 |
+| 8 | **30 §5.4** | Asserts on the claim `fathom:authority_class == "accountable_autonomous"`. 31 §2.5 resolves the one-name-two-meanings collision by renaming this claim to **`fathom.agent.authority`**, reserving `authority_classes` for 03 §7.2.1's organizational roles. The gateway reading `fathom:authority_class` would read the wrong field, or nothing | Read `fathom.agent.authority`, per 31 §2.5 and its amendment A-2 | Not applied; flagged |
+| 9 | **34 §2.2** | The worked `tool-pins.yaml` — which is this agent's — writes `authority_class: accountable-autonomous`, hyphenated, and names the field `authority_class`, colliding with 03 §7.2.1's vocabulary exactly as 31 §2.5 describes | `authority_class: accountable_autonomous` at minimum; preferably rename the pin-file field to `agent_authority` to match 31 §2.5's resolution | Not applied; flagged. §4.1 uses the snake_case value |
+| 10 | **01 §8.1** | The agent inventory row gives the PMA Pre-Screener's primary user as *"Ship's force"*, which is correct for the *consumer of its output* but misleading for an **event-triggered** agent with no interactive user — the same row shape is used for the Maintainer Copilot, which genuinely has one. 03 §8.3 and 01 §8.5 both establish that this agent has no requesting user | Annotate the row: primary user is the reviewer who adjudicates its proposals; the agent itself is event-triggered with no interactive user | Cosmetic; flagged because the row is the first thing a reader of 01 §8 sees, and it is where the delegated-versus-autonomous distinction is most easily missed |
+| 11 | **09 §10 item 5** | Idempotency retention is unresolved with an assumed 24 hours, and 21 OQ-12 sets 60 days on edge-reachable bulk paths. Neither covers a **proposal-only** operation whose caller may legitimately retry days later, after an admission-control gate clears (23 §5.6.1's hysteresis alone is one hour of sustained clearance) | Set retention for `proposal-only` operations to exceed the maximum admission-control deferral, or state that duplicate suppression for agent proposals rests on content grouping (23 §3.4) rather than on `Idempotency-Key` | Not applied; flagged as **PS→09-1**. §2.5 adopts the second reading |
+| 12 | **04 §8, Phase 3 questions** | Lists *"Candidate cap per review and the ranking function"* as open. 23 §3.3 and §3.6 closed both (cap 12 from 06 §6, `pma-ranker-1.0.0`). 04 §8's list is stale in a way that matters here, because a reader arriving at 04 §8 for the agent's constraints would conclude the cap is undecided and size the agent's budget freely | Mark the two as resolved by 06 §6 and 23 §3.3 | Cosmetic; flagged |
+
+---
+
+## 21. Open questions
+
+Recorded rather than resolved with an invented value, in the form 21 §13 and 26 §14 use. Each names the reading adopted so behaviour is deterministic in the meantime, and each is resolved centrally — a local resolution is recorded in the README and is not treated as settled (09 §8.7).
+
+| ID | Question | Blocks | Interim position | Owner |
+|---|---|---|---|---|
+| **PS-OQ-1** | **Who is the catalogued bridging consumer of `mission.completed`?** C19 requires one; the corpus has none (§20 item 1) | The catalog-parity gate (09 §8.2), and the consumer-driven conformance test for the trigger | The `run-initiator` shipped from `agents/pma-prescreener/`, with full inbox semantics and no domain logic (§2.2). If the architecture prefers a platform service, 01 §5's inventory grows and §2.2 changes | Architecture |
+| **PS-OQ-2** | **The pre-screen quiesce window's duration.** No document publishes a value, and it trades review latency against agent contribution directly | Nothing hard — the expiry behaviour is fully specified and never blocks a review | Helm value, **no default**, startup fails without it (§2.3). The *behaviour* at expiry is fixed here and is not configurable. Instrument the expiry rate and set the value from it | Program, with PMA |
+| **PS-OQ-3** | **Idempotency retention versus the admission-control deferral interval** (§20 item 11) | Duplicate suppression after a multi-day deferral | Rely on PMA's `candidate_group_id` content grouping (23 §3.4), not on `Idempotency-Key` alone | 09's owner, per 09 §10 item 5 |
+| **PS-OQ-4** | **Does the demonstration have an unstructured corpus at all?** **D38** records no generation plan, and 05 §2.8 leaves the depth question open | 01 §8.3's *"two retrieval sources, both required"*, and D14's adversarial golden sets (§12.1 G4) | The narrative manifest is specified and **shipped disabled** (§4.7); the demonstration pre-screener is structured-only, stated as a reduction rather than presented as the design; G4 runs on synthesised adversarial content and reports **partial** | Program, per **D38** |
+| **PS-OQ-5** | **Should a later-arriving maintenance record trigger a re-pre-screen of an already-reviewed mission?** The record is the highest-value corroboration signal (04 §8) and arrives after the review | Nothing. The corroboration signal is already applied where available, by PMA's ranker | No re-pre-screen. 23 §6.4's re-review mechanism exists and spends scarce capacity; spending it on re-pre-screening is a capacity decision, not an implementation one | Program, with PMA |
+| **PS-OQ-6** | **`PROPOSAL_BUDGET_PER_MISSION`'s value.** §6.2 derives 6 from 06 §6 and §7 with the arithmetic shown; the derivation rests on the pre-screener taking the majority share of a *"< 20 proposals per day"* ceiling marked MEDIUM confidence | Nothing — the value is configuration | 6, as a Helm value, with the derivation in the chart comment and coupled to `candidate_cap`: if 06 §6's 45 s figure moves and the cap drops to 4–5, the budget drops with it (23 §3.6) | Capacity model, 06 §7 |
+| **PS-OQ-7** | **`MAX_UNCORROBORATED`'s value.** No cited figure constrains it. What is defensible is the *relationship* — a minority of the budget, clamped by the corroborated count | Nothing; the class can be disabled with `0` | 2, as a Helm value, with the relationship asserted by test rather than the number (§6.5). First candidate for reduction if §12.3's stratified precision is materially worse | Program, informed by §12.3 |
+| **PS-OQ-8** | **Could a language-model pre-screener ever run afloat?** §9.2 gives five independent blockers, four of which are platform positions | Nothing today. The afloat pre-screen is deterministic (§9.3) | Not in this design. It would require, at minimum: an edge-resident authority or a long-lived scoped credential (31 §11, and 31 OQ-31-6); an edge tool surface (11 §1.2 gives `tool-server` and `gateway` no edge profile); a hull GPU allocation absent from 06 §7; and D13's air-gap blocker resolved (01 §9) | Architecture + program |
+| **PS-OQ-9** | **Multi-level posture: is a rationale spanning several items an aggregation event?** 03 §7.3 makes aggregation a classification event | Nothing in the single-level demonstration (03 §12, 06 §5) | Single-level. Production would need the union label and 06 §5's `restricted_contributors_present` treatment applied to a rationale, which is a Fleet-Status-shaped problem this document does not solve | Architecture |
+| **PS-OQ-10** | **How is this agent's recall measured in production?** **D39** leaves canary sourcing unresolved, and the surviving instrument — 5% double-blind re-review — is ~3.5 re-reviews per month (23 §6.4) | Production recall measurement for the component 01 §8.2 calls the critical path | Nothing is resolved here. §12.5 records the dependency and §8.4 is written so that the promotion gate degrades safely to *"no volume reduction is approvable on precision alone"* if canary recall is permanently unavailable | Program, per **D39** and 23 PMA-OD-2 |
+| **PS-OQ-11** | **Can a Domino Job be started programmatically by an in-cluster workload holding a program identity?** 01 §8.7's documented gap concerns **application** invocation; this document asserts nothing either way about the Job surface | The enterprise runtime's vehicle (§14.1) | Domino Job, triggered by the initiator, marked **[VERIFY]**. If it fails, 01 §8.7's own contingency applies — relocate orchestration to the Sustainment Plane, retain Domino inference, tracing, and evaluation — and 34 §2.3 confirms no tool-governance change follows | Program, against primary Domino documentation |
+| **PS-OQ-12** | **Which role should the accountable owner hold?** 03 §8.3 requires a named human and says nothing about their role. 33 §4 already makes them a co-primary recipient of the admission-control alarm | Nothing hard | `planner`, not `maintainer` (§3.4): the owner is accountable for the agent's volume and behaviour, and making them the same person who adjudicates its proposals creates an appearance of self-approval even though 31 §3.3 rule 4 makes it technically impossible | Program |
+| **PS-OQ-13** | **Should the agent's `confidence` ever be calibrated, and against what?** §7.4 defines it as belief-in-confirmation, comparable only within a version triple | Nothing. It gates nothing (§6.3) | Uncalibrated and explicitly so, following 03 §7.1's discipline that an uncalibratable figure should not be dressed as a calibrated one. Revisit once §12.3 has enough adjudicated volume to fit a reliability curve per version | Program + Failure Intelligence |
+
+---
+
+*End of build framework 41.*
