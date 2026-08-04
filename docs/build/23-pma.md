@@ -1889,15 +1889,15 @@ networkPolicy:
     toEventBus: true
     toServices: [auth, audit, reference-data, gateway]   # gateway: see below
     toNamespaces: []
+    toObjectStore: true                # [AMENDMENT] 09 §4.4.2; the fathom-pma-evidence bucket
     allowDNS: true
 ```
 
-**`pma → gateway` is not in 09 §4.4.2's sanctioned edge set and requires an ADR.** Evidence materialisation must read Telemetry (§2.6), and 09 §4.4.2 forbids sub-application → sub-application traffic outright, citing 03 principle 2. The position taken here, to be recorded as `docs/adr/NNNN-pma-evidence-materialisation-egress.md`:
+**[AMENDMENT — resolved; `pma → gateway` is now sanctioned outright, no ADR needed.]** `09-monorepo-and-conventions.md` §4.4.2's sanctioned-edge table now carries the row explicitly: *"`pma` → `gateway` | yes, one rule, evidence materialisation only | `docs/build/23-pma.md` §10.3: PMA materialises an immutable evidence package from Telemetry's replay API rather than reading Telemetry's own object store (C36)..."* — citing this exact section. The reasoning below is retained as the rationale 09's row itself points back to, not as an open ADR ask:
 
-- Materialisation is **not a compute path** in 03 principle 2's sense. It is an asynchronous, retried, out-of-band bulk transfer that gates a workflow state transition; no request/response path and no correctness property depends on its latency. Its nearest existing analogue is the one cross-namespace rule 09 §4.4.2 already sanctions — Domino scoring Jobs writing to PdM **through the gateway**.
+- Materialisation is **not a compute path** in 03 principle 2's sense. It is an asynchronous, retried, out-of-band bulk transfer that gates a workflow state transition; no request/response path and no correctness property depends on its latency. Its nearest existing analogue is the same cross-namespace pattern 09 §4.4.2 sanctions for Domino scoring Jobs writing to PdM **through the gateway**.
 - It routes **through the gateway** for the reason 09 gives for that precedent: a single ingress and caller identity attached in one place. The rejected alternative is a direct `pma → telemetry` rule, rejected because it would need repeating for every future evidence consumer and would weaken the invariant NetworkPolicy exists to hold.
-- At the **edge** the peer is the on-hull Telemetry service, and the same reasoning and the same ADR apply.
-- This is a genuine tension in the source documents rather than a convenience, and §13 records it as an item for 09 §4.4.2 to absorb.
+- At the **edge** the peer is the on-hull Telemetry service, and the same reasoning applies; 09 §4.4.2's row does not distinguish enterprise from edge, so no separate edge-profile rule is needed.
 
 Two prohibitions restated as policy rather than as prose: PMA holds no credential for Telemetry's TimescaleDB and no credential for Telemetry's bucket (C36, and 09 §8.6's DoD item).
 

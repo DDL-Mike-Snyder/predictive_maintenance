@@ -571,7 +571,7 @@ networkPolicy:
     toObjectStore: false               # nothing else, so §4.4.2's egress-equality assertion still holds
 ```
 
-**`toKeyService` and `toObjectStore` render nothing for the nine domain sub-applications** — both default `false`, and the values schema in CI rejects `true` on any chart other than `audit`'s. They exist as named, typed booleans rather than a generic `toServices`/`toNamespaces` entry because Vault/HSM and the object store sit outside `fathom-sustainment`'s own namespace and outside the `toServices` peer set's assumptions; see the two new sanctioned-edge rows below `[amendment 09-3]`.
+**`toKeyService` renders for `audit` only** — the values schema in CI rejects `true` on any other chart, because Vault/HSM wrap/unwrap authority is `audit`'s alone (03 §5.2 Decision 2). **`toObjectStore` renders for `audit`, `telemetry`, `pma`, `failure-intel`, `pdm`, and `auth`** **[AMENDMENT — widened; this row previously restricted `toObjectStore` to `audit` only, which made every other service's own D27 by-reference payload impossible to fetch: `telemetry`'s `raw_payload_ref` and `telemetry.batch_ingested`'s `payload_ref` (`21-telemetry.md` §2, §7), `pma`'s `fathom-pma-evidence` bucket (`23-pma.md` §7.x), `failure-intel`'s discovery-run artifacts (`25-failure-intelligence.md` §11.x), `pdm`'s label sets and scoring-run artifacts (`22-pdm.md` §13.1), and `auth`'s agent-checkpoint objects (`31-auth.md` §4.4) all cite an object-store dependency the schema itself would have rejected]**. Both exist as named, typed booleans rather than a generic `toServices`/`toNamespaces` entry because Vault/HSM and the object store sit outside `fathom-sustainment`'s own namespace and outside the `toServices` peer set's assumptions; see the sanctioned-edge rows below.
 
 #### 4.4.2 NetworkPolicy — default-deny plus explicit allow
 
@@ -609,6 +609,11 @@ spec:
             matchLabels: { fathom.navy/service: {{ . }} }
       ports: [{ protocol: TCP, port: 8000 }]
     {{- end }}
+    {{- range .Values.networkPolicy.ingress.fromNamespaces }}
+    - from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: {{ . }} } }
+      ports: [{ protocol: TCP, port: 8000 }]
+    {{- end }}
     {{- if .Values.networkPolicy.ingress.allowPrometheusScrape }}
     - from:
         - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: monitoring } }
@@ -634,13 +639,33 @@ spec:
           podSelector: { matchLabels: { app.kubernetes.io/name: redpanda } }
       ports: [{ protocol: TCP, port: 9093 }, { protocol: TCP, port: 8081 }]
     {{- end }}
+    {{- if .Values.networkPolicy.egress.toKeyService }}
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: fathom-data } }
+          podSelector: { matchLabels: { app.kubernetes.io/name: vault } }
+      ports: [{ protocol: TCP, port: 8200 }]
+    {{- end }}
+    {{- if .Values.networkPolicy.egress.toObjectStore }}
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: fathom-data } }
+          podSelector: { matchLabels: { app.kubernetes.io/name: object-store } }
+      ports: [{ protocol: TCP, port: 9000 }]
+    {{- end }}
     {{- range .Values.networkPolicy.egress.toServices }}
     - to:
         - podSelector:
             matchLabels: { fathom.navy/service: {{ . }} }
       ports: [{ protocol: TCP, port: 8000 }]
     {{- end }}
+    {{- range .Values.networkPolicy.egress.toNamespaces }}
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: {{ . }} } }
+    {{- end }}
 ```
+
+**[AMENDMENT — closes B1, the most consequential finding of the Domino-configuration adversarial review: the template above rendered only six of the values block's ten keys.]** `fromNamespaces`, `toNamespaces`, `toKeyService`, and `toObjectStore` were declared in §4.4.1's values block and referenced throughout this document's own sanctioned-edge table below, but no template block ever rendered them — every service declaring one of these four keys got a NetworkPolicy that silently omitted the edge, under a namespace-wide default-deny. That means the gateway's Domino Endpoint proxy (§5.6 in `30-gateway.md`) and its ingress from `ingress-nginx`/`domino-compute`, and audit's key-service/object-store egress, were **all** unreachable as shipped, regardless of how correctly the values block itself was written.
+
+Two placement decisions this fix makes, `[ESTABLISHED HERE]`, since no prior document names a concrete namespace or port for either: **the key service (Vault/HSM) and the object store both run in `fathom-data`**, alongside the CloudNativePG cluster and the Redpanda brokers — the same cluster-adjacent stateful-infrastructure namespace, rather than a new one, keeping the number of namespaces this table has to reason about fixed. `toNamespaces`' egress rule intentionally carries **no port restriction** — unlike every other egress rule above, which pins one service's known port, a cross-namespace-to-Domino edge (§4.4.2's `domino-platform`/`domino-compute` rows) has no single port this document can assert, since it covers both the AI Gateway/LLM Endpoint (`gateway`/`agents/*` rows) and the Domino Endpoint proxy path, each with Domino-determined ports this program does not control.
 
 **The sanctioned edge set.** **[ESTABLISHED HERE]** — document 01 §11 states the principle and document 03 §6 states the event dependencies, but no document enumerates the allowed HTTP edges. These are they, and anything not listed requires a change to this document plus an ADR:
 
@@ -659,12 +684,13 @@ spec:
 | `gateway` → any of the nine, plus `tool-server`, `knowledge-retrieval`, `notification`, and `audit` | yes | 01 §5: the gateway performs all view-model composition. **[AMENDMENT]** `audit` was missing — `audit` is a tenth, platform-service producer under 03 §6's proposal convention (`fathom.audit.proposal.v1`, for `purge`/`rewrap`), and `30-gateway.md` §4.6's detail-fetch/adjudicate mechanism resolves `detail_fetch_path` to `target_sub_app = audit` for those rows exactly as it does for any of the nine — an edge this table did not sanction, so the queue's projection (fixed in `30-gateway.md` §4.1) had no route to actually reach the proposal it now subscribes to |
 | `tool-server` → `gateway` | yes, **one rule**, pass-through only | `docs/build/34-tool-server.md` §4.4: an agent tool call is proxied through the gateway rather than the tool server calling a target sub-application directly, so the gateway's existing composition/auth path is reused rather than duplicated. The gateway must serve a pass-through mode for this edge — a requirement on the gateway's own build document, not established here |
 | `pma` → `gateway` | yes, **one rule**, evidence materialisation only | `docs/build/23-pma.md` §10.3: PMA materialises an immutable evidence package from Telemetry's replay API rather than reading Telemetry's own object store (C36). Not a compute path in principle 2's sense — asynchronous, retried, out-of-band, and gating a workflow state transition rather than a request/response latency. Routes through the gateway for the same single-ingress-plus-caller-identity reason as the two rows above, rejecting a direct `pma → telemetry` rule for the same reason: it would need repeating for every future evidence consumer |
+| `pdm` → `gateway` | yes, **one rule**, Domino Endpoint proxy only | **[AMENDMENT]** `docs/build/22-pdm.md` §13.1's `POST /what-if` is the only synchronous model call in the corpus, Endpoint-backed per 01 §7/§9. `31-auth.md` DO-NOT 13 forbids a sub-application calling a Domino Endpoint directly (it would distribute the static, non-rotating, non-expiring Endpoint credential into a domain service); `30-gateway.md` §5.6's Endpoint proxy is the sanctioned path, and this is the edge that reaches it. `34-tool-server.md` §5.5 and this document's own prior text both independently asserted the direct-call topology as normative before this pass — closing both, not just naming the correct one |
 | any sub-application → **its own declared producers**, `changed_since` reads only | yes, **`GET` only, one path** | **[ESTABLISHED HERE]** — Registry's build-framework agent flagged that this row was missing: 03 §4 obligation 5 requires every declared consumer to rebuild its read model from `GET /{collection}?changed_since=` on the producer it consumes events from, and that is unavoidably a direct sub-application → sub-application call, not a gateway-composed one (the gateway does not sit on this path; rebuild must work even if the gateway is down). The row below still holds for everything else: only the exact `x-substitution: required` snapshot-read path, restricted to the producer/consumer pairs 03 §6's catalog already declares (so the peer set is closed and auditable, not "any service, any reason"), egress-allowed for `GET` only, and never used for a synchronous compute-path call — a service reading beyond that path from another sub-application's API is the violation this table's next row still forbids |
 | **sub-application → sub-application, for anything other than the `changed_since` row above** | **NO** | 03 principle 2. This is the whole point of the policy |
 | `domino-compute` namespace → `gateway` | yes, **one rule** | 01 §3 correction 2: scoring Jobs write predictions through PdM's bulk ingest API. **[ESTABLISHED HERE]** they route through the gateway so PdM keeps a single ingress and the caller's workload identity is attached at one place. The alternative — a direct `domino-compute` → `pdm` rule — is rejected because it would need repeating for every future batch producer. **[amendment]** This edge's justification is widened to also cover `apps/practitioner`'s co-resident host: `31-auth.md` §5.8 and `30-gateway.md` §6.2 both route a Domino-hosted practitioner App over this same edge, on the identical single-ingress-plus-attached-identity reasoning — a second edge for the same shape of caller would be the repetition this row already rejects. **The gateway's ingress allow-list is rendered from `fathom.navy/service` pod labels, and a Domino-deployed App carries no such label** (we do not deploy its pod, `09 §9.5 item 28`) — the rendered rule for this row is therefore a **namespace selector** (`domino-compute`), not a pod-label selector, and is the one exception to this table's otherwise label-selected peers, recorded here rather than left implicit |
 | program ingress namespace → `domino-*` namespaces | yes | 01 §11, the documented coexistence seam |
 | `audit` → key service (Vault/HSM) | yes, **`audit` only** | `[amendment 09-1]` — the only service holding wrap/unwrap authority; document 03 §5.2 Decision 2 forbids exporting key material, so the module holding it must itself be reachable. ADR: `docs/adr/0001-audit-key-service-edge.md` |
-| `audit` → object store | yes, **`audit` only** | `[amendment 09-1]` — oversized payloads travel by reference, encrypted under the same envelope; `11-outbox-sync-library.md` §10.1's rule that "`payload_ref` objects are encrypted with the same KEK class — a reference is not an exemption" applies equally to audit's own oversized records. ADR: `docs/adr/0002-audit-object-store-edge.md` |
+| `audit`, `telemetry`, `pma`, `failure-intel`, `pdm`, `auth` → object store | yes, **exactly these six** | `[amendment 09-1]` — oversized payloads travel by reference, encrypted under the same envelope; `11-outbox-sync-library.md` §10.1's rule that "`payload_ref` objects are encrypted with the same KEK class — a reference is not an exemption" applies equally to audit's own oversized records. **[AMENDMENT]** Widened from `audit` only — five other services' own D27 by-reference payloads (`telemetry`'s raw samples, `pma`'s evidence packages, `failure-intel`'s discovery artifacts, `pdm`'s scoring-run artifacts, `auth`'s agent checkpoints) name the same dependency the schema previously rejected for them. ADR: `docs/adr/0002-audit-object-store-edge.md`, extended to cover all six |
 | any service → public internet | **NO** | 01 principle 5, 01 §12 |
 
 A helm-unittest spec asserts, per service, that the rendered egress peer set is exactly the values-declared set. That is the CI-testable invariant 01 §11 promises.

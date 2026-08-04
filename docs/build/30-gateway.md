@@ -1246,7 +1246,8 @@ POST /api/v1/gateway/inference/{domino_endpoint_name}
 | The caller's token — user, delegation, or workload — is **never** forwarded to Domino | Domino cannot validate it, and forwarding a bearer credential to a system that ignores it is a credential leak with no benefit |
 | An audit record is written **before** the response returns, carrying `principal_id`, the full `act` chain, `correlation_id`, `trace_ref`, the Endpoint name, and request/response digests | This route exists *for* the audit record. Writing it after the response would make a crash lose exactly the record the route was built to produce |
 | A `503` from the audit write fails the request | If the identity attribution cannot be recorded, the anonymous call must not be made |
-| The declared timeout is below Domino's documented practical request ceiling near 60 s (01 §3 correction 2), and a timeout returns `504` with the audit record already written | 01 §3 correction 2 also records that Domino Endpoints have *"no cancellation of timed-out requests"* — so a gateway timeout does not mean the inference stopped, and the audit record must reflect that a call was made |
+| The declared timeout is below Domino's documented practical request ceiling near 60 s (01 §3 correction 2), and a timeout returns `504` with the audit record already written, outcome `timeout_result_unknown` **[AMENDMENT]** | 01 §3 correction 2 also records that Domino Endpoints have *"no cancellation of timed-out requests"* — so a gateway timeout does not mean the inference stopped, and `31-auth.md` §5.6 requires the outcome value **never imply the model did not run**; `timed out`, `failed`, or `cancelled` would all be false claims. The audit record reflects that a call was made, of unknown outcome |
+| A request body exceeding Domino's 10 MB Endpoint payload ceiling is rejected **before** the call is attempted: `413` `urn:fathom:problem:gateway:endpoint-payload-too-large`, outcome `payload_too_large` **[AMENDMENT]** | `31-auth.md` §5.6 requires this pre-call rejection explicitly. The static Endpoint token is never spent, and no audit-record ambiguity is created, on a request Domino would reject anyway |
 | Egress to Domino namespaces is a declared NetworkPolicy edge — see §11.3 and §14 item 3 | **[AMENDMENT]** `09-monorepo-and-conventions.md` §4.4.2 now names `gateway → domino-platform`/`domino-compute` explicitly, closing the gap this document flagged |
 
 Note the boundary: this route is a **proxy**, not an agent host and not a model server. It attaches identity and audits. Batch scoring does not use it — scoring Jobs write predictions through PdM's bulk ingest operation on the pass-through surface (01 §3 correction 2, 09 §4.4.2), which is a write path, not an inference path.
@@ -1915,7 +1916,12 @@ events:
 networkPolicy:
   enabled: true                     # NEVER false
   ingress:
-    fromServices: []
+    fromServices: [pma, pdm]        # [AMENDMENT] was empty — NetworkPolicy is bidirectional, so
+                                     # 09 §4.4.2's sanctioned pma->gateway (evidence materialisation)
+                                     # and pdm->gateway (Domino Endpoint proxy, below) edges also
+                                     # need gateway's OWN ingress to admit them, not only the
+                                     # caller's egress. Neither service could reach this pod at all
+                                     # until this list named them
     fromNamespaces: [ingress-nginx, domino-compute]   # program ingress; batch scoring writes
     allowPrometheusScrape: true
   egress:
