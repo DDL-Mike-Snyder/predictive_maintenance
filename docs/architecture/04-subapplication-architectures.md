@@ -541,7 +541,7 @@ The primary substitution candidate and the reference case for the protocol in do
 | Taxonomy administration, reviewer qualification management | Internal |
 
 **Events published:** `mission_review.opened`, `anomaly_tag.confirmed`, `anomaly_tag.rejected`, `mission_review.completed`, plus proposal events.
-**Events consumed:** `mission.completed`, `anomaly.detected`, `telemetry.batch_ingested`, `channel_mapping.version_published`, `configuration.baseline_changed`, `maintenance_action.recorded`.
+**Events consumed:** `mission.completed`, `anomaly.detected`, `telemetry.batch_ingested`, `channel_mapping.version_published`, `configuration.baseline_changed`, `maintenance_action.recorded`, `agent_run.completed` **[AMENDMENT]** (`fathom.auth.agent_run.v1`, filtered to `agent_id='pma-prescreener'` — closes the pre-screen quiesce window without a direct call to the agent, `41-pma-prescreener.md` §2.3).
 
 `maintenance_action.recorded` is consumed so that a review can present what was subsequently found and repaired alongside the candidate window — the single most useful context a reviewer can have, and the basis for retrospective tag quality assessment.
 

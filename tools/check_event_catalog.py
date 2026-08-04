@@ -5,6 +5,29 @@ but absent from a sub-application, or vice versa, is an unbuildable
 consumer-driven conformance test and a silently undeclared dependency.
 
 Run from the repository root.  Exits non-zero on any discrepancy.
+
+[AMENDMENT] Originally parsed only the nine domain sub-application sections'
+three-column `| event | payload | consumers |` rows. The platform-service
+sections (Audit & Provenance, Authentication & Authorization) use a four-column
+`| topic | event | payload | consumers |` shape, with a blank topic cell on a
+continuation row meaning "same topic as the row above" and a consumers cell of
+"as above" meaning "same consumer set as the row above" -- neither was parsed
+at all, so a platform-service-published event a build document declared
+consuming (e.g. `pma` consuming `auth`'s `agent_run.completed`) was invisible
+to this checker and produced a false [UNKNOWN EVENT].
+
+Extended below to parse the Authentication & Authorization block, whose
+consumers are named individually (`pma`, `audit`) exactly like the nine
+domain sections, so rules 1-3 apply to it unchanged. The pre-existing Audit &
+Provenance block is DELIBERATELY NOT included in the strict cross-check: its
+consumers cell uses corpus-wide shorthand ("all nine domain sub-applications")
+that no per-service document in doc 04 individually restates, and doc 04 has
+no section of its own for a platform service's own publications (04 is
+scoped to the nine domain sub-applications only) -- extending the strict
+check there would invent a doc04-enumeration requirement nobody has asked
+for and flag ~50 pre-existing, never-flagged relationships as new defects.
+That remains a known, accepted gap (see the corpus's own note on this), not
+one this pass resolves.
 """
 import os, re, sys, collections
 
@@ -15,16 +38,43 @@ D4 = open(os.path.join(DOCS, '04-subapplication-architectures.md')).read()
 SLUGS = {'registry','telemetry','pdm','fleet-status','maintenance','supply','pma',
          'failure-intel','design-advisory','gateway','audit','notification',
          'knowledge-retrieval','reference-data','sync','tool-server','auth'}
+DOMAIN_SLUGS = {'registry','telemetry','pdm','fleet-status','maintenance','supply',
+                'pma','failure-intel','design-advisory'}
 
-# --- parse doc 03 catalog: rows are | `event` | payload | consumers |
+def consumers_in(cons_text):
+    found = {s for s in SLUGS if re.search(r'`'+re.escape(s)+r'`', cons_text)}
+    if 'all nine domain sub-applications' in cons_text:
+        found |= DOMAIN_SLUGS
+    return found
+
+# --- parse doc 03 catalog ---------------------------------------------------
 cat = {}                       # event -> set(consumer slugs)
 sec = D3[D3.index('## 6. Event catalog'):D3.index('## 7. Shared payload')]
+
+# Three-column shape: | `event` | payload | consumers |  (the nine domain sections)
 for line in sec.splitlines():
     m = re.match(r'\|\s*`([a-z_]+\.[a-z_]+)`\s*\|(.*?)\|(.*?)\|\s*$', line)
     if not m: continue
     ev, _, cons = m.groups()
-    found = {s for s in SLUGS if re.search(r'`'+re.escape(s)+r'`', cons)}
-    cat[ev] = found
+    cat[ev] = consumers_in(cons)
+
+# Four-column shape: | topic | `event` | payload | consumers |, Authentication &
+# Authorization block ONLY (see the amendment note above for why Audit & Provenance
+# is excluded from this strict check).
+auth_start = sec.index('### Authentication & Authorization')
+auth_end = sec.index('### Proposals — a convention')
+no_doc04_publisher = set()     # platform-service events: doc04 has no per-service
+                                # section to publish from, so rule 1 doesn't apply
+                                # (same accepted gap as the excluded Audit block)
+for line in sec[auth_start:auth_end].splitlines():
+    if not re.match(r'\|\s*`fathom\.auth\.[a-z_.]+\d*`\s*\|', line): continue
+    cells = line.split('|')
+    if len(cells) < 5: continue
+    ev_cell, cons_cell = cells[2], cells[4]
+    cons = consumers_in(cons_cell)
+    for ev in re.findall(r'`([a-z_]+\.[a-z_]+)`', ev_cell):
+        cat[ev] = cons
+        no_doc04_publisher.add(ev)
 
 # --- parse doc 04 published/consumed per section
 pub = collections.defaultdict(set); con = collections.defaultdict(set)
@@ -50,7 +100,7 @@ errs = 0
 # 1. every catalog event is published by exactly the sub-app that owns its topic
 published_all = {e for s in pub.values() for e in s}
 for ev in sorted(cat):
-    if ev not in published_all:
+    if ev not in published_all and ev not in no_doc04_publisher:
         print(f"[MISSING PUBLISHER] {ev} in catalog, published by nobody in doc04"); errs+=1
 for slug, evs in pub.items():
     for ev in sorted(evs):

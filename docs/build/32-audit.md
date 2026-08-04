@@ -744,8 +744,10 @@ AuthorityClass = maintainer | planner | supply_officer | design_authority
 
 ```
 kind = anomaly_tag | work_candidate | requisition | interval_change
-     | redesign_case | configuration_change | purge        # ← added [AMENDMENT 03-2]
+     | redesign_case | configuration_change | purge | rewrap   # ← both added [AMENDMENT 03-2]
 ```
+
+**[AMENDMENT — corrected.]** `rewrap` was omitted above despite being amendment 03-2's other addition alongside `purge`, despite the table two rows above already requiring re-wrap proposals (a legally-immutable record in a purge's closure *"is automatically converted to a **re-wrap** proposal"*), and despite `31-auth.md` §6.4 carrying a full `rewrap` authority-matrix entry. Audit's own stated enum could not represent the proposal kind Audit itself is required to mint.
 
 with `target_sub_app = audit`, published on `fathom.audit.proposal.v1` per document 03 §6's proposals convention. **[AMENDMENT — corrected.]** This previously claimed the gateway's unified adjudication queue picked this topic up *"with no gateway change"* — false: `30-gateway.md`'s `CONSUMES` was hardcoded to the nine `SubAppSlug` topics, which structurally excludes this one (`audit` is a platform slug, not a `SubAppSlug`), so Sheet 11's queue was empty by construction. `30-gateway.md` §4.1 now adds `fathom.audit.proposal.v1` as an explicitly-named tenth topic (`AUDIT_PROPOSAL_TOPIC`), and `09 §4.4.2`'s sanctioned-edge table now grants `gateway → audit` so the detail-fetch/adjudicate mechanism (`30-gateway.md` §4.6) can actually reach it. This *is* a gateway change — the claim above understated it.
 

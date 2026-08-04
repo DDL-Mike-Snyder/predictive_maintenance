@@ -1682,7 +1682,7 @@ Components [50 §3.5]: `SheetFrame`, `Box`, `WfTable`, `WfTableScroll`, `StatusC
 | `status` | Multi-select, repeatable | `ProposalStatus` [03 §7.2]: `proposed \| claimed \| approved \| rejected \| superseded \| expired`. **Default `proposed`** — WF's box label is `Pending proposals` |
 | `kind` | Multi-select, repeatable | `ProposalKind` [03 §7.2]: `anomaly_tag \| work_candidate \| requisition \| interval_change \| redesign_case \| configuration_change \| purge \| rewrap` |
 | `target_sub_app` | Multi-select, repeatable | The nine slugs [09 §7.1], labelled with display abbreviations (§4.1's `src/display/`) |
-| `authority_class` | Multi-select, repeatable | **Five values as [30 §4.5] declares them, not six** — §15.3's defect below |
+| `authority_class` | Multi-select, repeatable | `AuthorityClass` [03 §7.2.1]: `maintainer \| planner \| supply_officer \| design_authority \| fleet_authority \| security_officer`. **[AMENDMENT]** All six — [30 §4.5] declared only five until its own fix (§15.3), and this row was never updated to match |
 | `blast_radius` | Multi-select, repeatable | `item \| asset \| class \| fleet` |
 | `requires_dual_control` | Tri-state (unset / true / false) | Boolean |
 | `awaiting_second_signature` | Tri-state | Boolean. *"`requires_dual_control` and one signature present"* — the second-signature worklist |

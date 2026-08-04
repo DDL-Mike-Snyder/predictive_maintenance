@@ -430,6 +430,16 @@ Audit is a consumer of every row above (the standing note at the top of this sec
 
 Audit's `purge`/`rewrap`-kind proposals follow the generic convention below rather than a separate block: `fathom.audit.proposal.v1` carries `proposal.created`/`.adjudicated`/`.expired` for the proposals Audit itself owns, exactly as any other proposal-accepting sub-application's topic does.
 
+### Authentication & Authorization (`auth`) `[AMENDMENT]`
+
+**[AMENDMENT]** This block was missing for the same reason §6's Audit block was originally missing: a conformant `auth` service publishes an event no version of this catalog declared, surfaced when `41-pma-prescreener.md` needed a way to learn of an agent run's completion without a forbidden direct call to the agent (`03` principle 2).
+
+| Topic | Event | Payload summary | Consumers |
+|---|---|---|---|
+| `fathom.auth.delegation.v1` | `delegation.issued`, `delegation.terminated`, `delegation.expired`, `autonomous_grant.issued`, `autonomous_grant.terminated` | `jti`, `delegation_id`/`grant_id`, subjects, status | `audit`; `gateway` and the nine sub-applications for the deny-list read model |
+| `fathom.auth.agent_run.v1` | `agent_run.started`, `agent_run.terminated_authority_lapsed`, `agent_run.terminated_pod_restart`, `agent_run.resumed` | `jti`, `run_id`, `agent_id`, the originating grant's `subjects` (including `mission_id` when the grant was scoped to one), status | `audit` |
+| `fathom.auth.agent_run.v1` | `agent_run.completed` | `jti`, `run_id`, `agent_id`, the originating grant's `subjects` (including `mission_id` when the grant was scoped to one), status | `audit`; `pma` — the pre-screen quiesce-window-completion signal (`41-pma-prescreener.md` §2.3/§2.4), correlated via `mission_id` |
+
 ### Proposals — a convention
 
 Every sub-application accepting agent proposals publishes to `fathom.<slug>.proposal.v1` using the §8.2 schema, permitting the gateway to build a unified adjudication queue from a topic pattern without any sub-application knowing the queue exists.

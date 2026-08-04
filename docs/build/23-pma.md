@@ -1514,7 +1514,7 @@ CONSUMES: frozenset[str] = frozenset({
 # projection cache is refreshed by conditional polling instead (§4.2).
 ```
 
-Each consumed type is confirmed present in 03 §6 with `pma` listed as a consumer: `mission.completed` (Telemetry), `anomaly.detected` (Telemetry), `telemetry.batch_ingested` (Telemetry), `configuration.baseline_changed` (Registry), and `maintenance_action.recorded` (Scheduling — the row lists `pdm`, `failure-intel`, `registry`, `supply`, **`pma`**, `design-advisory`).
+Each consumed type is confirmed present in 03 §6 with `pma` listed as a consumer: `mission.completed` (Telemetry), `anomaly.detected` (Telemetry), `telemetry.batch_ingested` (Telemetry), `configuration.baseline_changed` (Registry), `maintenance_action.recorded` (Scheduling — the row lists `pdm`, `failure-intel`, `registry`, `supply`, **`pma`**, `design-advisory`), and **[AMENDMENT]** `agent_run.completed` (03 §6's new `auth` block, filtered to this agent — §2.3's quiesce-window signal).
 
 ### 8.2 Topics, keys, and retention
 
