@@ -31,7 +31,7 @@ Two reasons, and neither is about convenience.
 
 ### 1.2 In scope
 
-1. **Trigger intake** — the six declared consumer rows in document 03 §6 (§2), plus the command-invoked triggers of §2.3.
+1. **Trigger intake** — the seventeen declared consumer rows in document 03 §6 (§2), plus the command-invoked triggers of §2.3.
 2. **Recipient resolution** — role and identity to deliverable recipient, with posture and connectivity context.
 3. **Urgency classification** — `routine` | `urgent` | `critical`, and its consequences for channel selection, retry, and escalation (§4).
 4. **The delivery-channel abstraction** — one interface, several implementations, split explicitly by *connectivity dependence* rather than by transport family (§5).
@@ -54,7 +54,7 @@ Two reasons, and neither is about convenience.
 
 ### 2.1 What the live catalog actually declares
 
-Document 03 §6 was read in full. **Six event rows declare `notification` as a consumer.** They are the complete set, transcribed verbatim from the current catalog, in catalog order:
+Document 03 §6 was read in full. **[AMENDMENT — the catalog has grown since this section was first written, and this document's own OD-1/OD-2 gaps have since closed; both are folded in below rather than left in §2.3 as undelivered promises.]** Seventeen event rows now declare `notification` as a consumer: the six sub-application rows below (readiness, the two CASREP-risk events, mission review, redesign candidate, and `allowance_shortfall.detected` — formerly OD-1, see below), `proposal.created` and `proposal.expired` (the proposal convention — `proposal.expired` was formerly OD-2, see below), and nine rows in `03 §6`'s Audit & Provenance block (§2.1a). They are the complete set, transcribed verbatim from the current catalog, in catalog order:
 
 | # | Event | Producer | Catalog consumers (verbatim) | Payload fields Notification uses for routing |
 |---|---|---|---|---|
@@ -63,18 +63,35 @@ Document 03 §6 was read in full. **Six event rows declare `notification` as a c
 | 3 | `casrep_risk.cleared` | `fleet-status` | `notification`, `maintenance` | `installed item`, cause of clearance |
 | 4 | `mission_review.opened` | `pma` | `notification` | `mission_id`, `asset`, candidate set, **`assigned reviewer`**, candidate origin |
 | 5 | `redesign_candidate.created` | `design-advisory` | `fleet-status`, `notification` | `NIIN`, driver evidence, affected population, **`preliminary priority`** |
-| 6 | `proposal.created` | every sub-application, per 03 §6's proposal convention on `fathom.<slug>.proposal.v1` — **and `audit`**, on `fathom.audit.proposal.v1`, for `purge`/`rewrap` (03 §6: *"exactly as any other proposal-accepting sub-application's topic does"*) | `gateway`, `notification` | `authority_class`, `blast_radius`, `requires_dual_control`, `valid_until`, `target_sub_app`, `kind` |
+| 6 | `allowance_shortfall.detected` **[AMENDMENT — closes OD-1 below]** | `supply` | `maintenance`, `fleet-status`, `notification`, `audit` | asset, NIIN, allowance versus on-hand, driver |
+| 7 | `proposal.created` | every sub-application, per 03 §6's proposal convention on `fathom.<slug>.proposal.v1` — **and `audit`**, on `fathom.audit.proposal.v1`, for `purge`/`rewrap` (03 §6: *"exactly as any other proposal-accepting sub-application's topic does"*) | `gateway`, `notification` | `authority_class`, `blast_radius`, `requires_dual_control`, `valid_until`, `target_sub_app`, `kind` |
+| 8 | `proposal.expired` **[AMENDMENT — closes OD-2 below]** | same proposal convention | `gateway`, `audit`, `notification` | `authority_class`, `target_sub_app`, `kind`, `valid_until` |
 
-**Nothing else in document 03 §6 names `notification` as a consumer.** In particular, and contrary to what a reader working from an earlier revision or from document 04 §11's prose might expect:
+Nine further rows, all in document 03 §6's Audit & Provenance block, also name `notification` — §2.1a.
+
+**Nothing else in document 03 §6 names `notification` as a consumer.** In particular:
 
 | Event | Live consumers | Consequence |
 |---|---|---|
-| `proposal.expired` | `gateway`, `audit` — **not** `notification` | Notification **must not** subscribe to it. An expired unadjudicated proposal is arguably the most notification-worthy proposal event there is, so this looks like an omission rather than a decision — but the catalog is binding and wildcard subscriptions are prohibited (09 DO-NOT-14, C38). Raised as **OD-2**. |
 | `proposal.adjudicated` | `audit`, and the owning sub-application | Not a Notification trigger. The acknowledgement loop for an adjudication request is closed by §7.4's *withdrawal* path, not by a second notification. |
-| `allowance_shortfall.detected` | `maintenance`, `fleet-status` — **not** `notification` | Document 04 §11 and document 01 §5 both promise Notification covers **"shortfalls."** The catalog does not deliver a shortfall event to it. This is a genuine contract gap, not a reading error. Raised as **OD-1**; the build ships the handler behind a flag so the amendment is a catalog edit, not a code change (§2.4). |
 | `prediction.invalidated`, `deferral.recorded`, `work_package.approved`, `requisition.status_changed`, everything else in §6 | Various; never `notification` | Not Notification triggers. Do not add them speculatively. |
 
-> **Why the enumeration is stated this precisely.** Finding **C14** records that *"Notification is a declared consumer in five catalog rows but appears in no 01 inventory."* The 01 inventory has since been repaired (01 §5 now lists the service). The row count is now six — the five sub-application catalog rows plus the proposal-convention row — and document 09 §8.2's Definition of Done requires that `src/fathom_notification/events/catalog.py` `CONSUMES`, `helm/values.yaml` `events.consumes`, and document 03 §6's rows for this slug be **equal**, verified by `tools/check_event_catalog.py`. That gate is what keeps this table honest as the catalog evolves. If a future catalog revision adds a seventh row, CI fails until this document and the code agree.
+> **Why the enumeration is stated this precisely, and why the count changed.** Finding **C14** records that *"Notification is a declared consumer in five catalog rows but appears in no 01 inventory."* The 01 inventory has since been repaired (01 §5 now lists the service). **[AMENDMENT]** The row count, stated as six in an earlier revision of this document, was wrong even then in one direction (`allowance_shortfall.detected` and `proposal.expired` were already catalog-declared consumer rows, misread here as gaps and raised as OD-1/OD-2 below) and is now additionally larger in the other (nine Audit & Provenance rows, §2.1a). The corrected total is **seventeen**. Document 09 §8.2's Definition of Done requires that `src/fathom_notification/events/catalog.py` `CONSUMES`, `helm/values.yaml` `events.consumes`, and document 03 §6's rows for this slug be **equal**, verified by `tools/check_event_catalog.py`. That gate is what keeps this table honest as the catalog evolves; a future catalog revision changing the count fails CI until this document and the code agree.
+
+### 2.1a The Audit & Provenance rows
+
+Document 03 §6's Audit block names `notification` as consumer on nine event types across four topics — a service-integrity channel distinct in kind from the domain-fact rows above, and never previously enumerated here:
+
+| Event | Topic | Urgency | Routed to | Basis |
+|---|---|---|---|---|
+| `remediation.purge_executed`, `.purge_certified`, `.rewrap_executed`, `.quarantine_ordered` / `.quarantine_lifted` | `fathom.audit.remediation.v1` | **`routine`** | `security_officer` | Confirmation of a purge/rewrap/quarantine action already adjudicated (32 §6) — informational, not actionable; the adjudicating authority is the natural recipient for the closing record |
+| `integrity.checkpoint_sealed` | `fathom.audit.integrity.v1` | **`routine`**, coalesced by default | `security_officer` | Routine proof-of-integrity heartbeat (32 §10.5); notifying on every seal would be a storm on the pattern §2.2's `readiness.recomputed` row already rejects |
+| `integrity.signature_verification_failed` | `fathom.audit.integrity.v1` | **`critical`** | `security_officer` | 32 §10.4: a tampered or corrupted audit record is quarantined and **"Page."** — audit's own text. The append-only chain's integrity is the accreditation basis for every other record this service delivers |
+| `integrity.sequence_gap_unrecoverable` | `fathom.audit.integrity.v1` | **`critical`** | `security_officer` | Same class as the row above — an unrecoverable gap in the audit sequence is evidence loss, not a transient condition |
+| `attestation.clock_step_recorded` | `fathom.audit.attestation.v1` | **`routine`** | `security_officer` | Document 11 §4.5: *"a measured, timestamped, signed record of 'the STIG-mandated step fired here, by this much' is the difference between a bounded documented condition and a finding"* — routine because it is that documented, bounded condition, not an anomaly |
+| `evaluation_export.completed` | `fathom.audit.evaluation_export.v1` | **`routine`** | `security_officer` | Confirmation that an export to Domino's Experiment Manager completed (32 §11.1, closing C19) — informational |
+
+`security_officer` is the routing role for all nine rows because every one of them is a fact about the audit/integrity subsystem itself, which 03 §7.2.1 places under that authority class exclusively (the same class that adjudicates `purge`/`rewrap`). No new role is invented.
 
 ### 2.2 Urgency and routing implication, per declared event
 
@@ -88,6 +105,8 @@ Urgency classes are defined in §4. Routing roles are document 03 §7.2.1's `Aut
 | `mission_review.opened` | **`routine`** | The `assigned reviewer` **identity** carried in the payload; falls back to the `maintainer` (ship's force persona) or shore-analyst cohort for the asset's unit when the field is absent | The only trigger that names its recipient in the payload, so it is identity-routed rather than role-routed. Routine because review is scheduled work within 06 §6's ~10-minute bounded-review budget, not an interrupt. **Afloat exception:** two of the demonstration's mission reviews occur *while dark* (06 §4), so this notification is generated by the **edge** instance for a **same-hull** recipient and never touches the ship-to-shore link at all (§6.2). |
 | `redesign_candidate.created` | **`routine`** | `design_authority` (PEO / Design Engineer) | Priority-driven, not time-driven; a redesign candidate has no operational deadline. `preliminary priority` selects digest placement, and a top-decile priority may be delivered individually rather than in digest. Never promoted above routine: 04 §10 frames Design Advisory as producing decision packages rather than decisions. |
 | `proposal.created` | **`routine`** by default; **`urgent`** when `requires_dual_control` is true, or `blast_radius` is `class` or `fleet`, or `valid_until` is within the urgent window | The proposal's own **`authority_class`** field, per 03 §7.2.1's minimum-authority-by-blast-radius table | The proposal schema already carries everything routing needs, which is the whole point of 03 §7.2's design — Notification performs **no** authority derivation of its own and **never** recomputes `authority_class` from `kind` and `blast_radius`. It reads the field the owning sub-application set. Where `requires_dual_control` is true, **both** signatures are notified, and the second is notified again on first-signature completion. `valid_until` is a real deadline: a proposal expiring inside the urgent window is urgent regardless of blast radius, because 03 §7.2 permits no un-expiring proposal and an expiry that nobody was told about is an adjudication silently declined. |
+| `allowance_shortfall.detected` **[AMENDMENT — formerly OD-1, §2.3; closed, the catalog already declares this row]** | `urgent` | `supply_officer`, and `maintainer` where the shortfall blocks an open work order | Promised by 04 §11 and 01 §5 ("shortfalls") and, contrary to this document's earlier reading, actually delivered — 03 §6's row names `notification` alongside `maintenance`, `fleet-status`, `audit`. Handler enabled (`triggers.allowance_shortfall.enabled=true`); no catalog amendment needed, only this document's correction and the values flip |
+| `proposal.expired` **[AMENDMENT — formerly OD-2, §2.3; closed, the catalog already declares this row]** | `routine` | The `authority_class` that failed to adjudicate it | 03 §6's row names `notification` alongside `gateway`, `audit`. Handler enabled (`triggers.proposal_expired.enabled=true`); no catalog amendment needed |
 
 ### 2.3 Required triggers that the live catalog does not yet carry
 
@@ -98,14 +117,12 @@ These are not in document 03 §6. They are enumerated separately, and deliberate
 | A | **Admission-control breach** — 06 §6: unadjudicated candidates exceed 3× monthly throughput (2,520 at demonstration figures); candidate generation halts | **`critical`** | **`fleet_authority`** (TYCOM Readiness Officer) as primary, **plus** the *named accountable human owner* of the PMA Pre-Screener's accountable-autonomous workload identity (03 §8.3) as co-primary. See §2.5 | **MANDATORY.** Intake is **dual-path** by design (§2.5): a synchronous command to `POST /notifications` *and* a durable event. Neither path alone is sufficient. |
 | B | **Admission control cleared** — the queue drains back below the threshold and generation resumes | `routine` | The recipient set of trigger A | Mandatory companion. Withdraws A's escalation and records the outage duration. Without it, A escalates forever after the condition resolves. |
 | C | **Divergence-budget breached / cleared** — `sync.divergence_budget_breached` on `fathom.sync.divergence.v1`, declared by document 11 §9.1 | **`urgent`** | `planner` and `fleet_authority` ashore; `watch_station` on the affected hull | Document 11 §9.1 declares the event and its purpose — *"so shore sees the hull's history after reconnect"* — but 03 §6 declares no consumers for `fathom.sync.*`. Handler built, subscription flagged. **OD-5.** |
-| D | **Allowance shortfall** — `allowance_shortfall.detected` (`supply`) | `urgent` | `supply_officer`, and `maintainer` where the shortfall blocks an open work order | Promised by 04 §11 and 01 §5 ("shortfalls"); **not delivered by 03 §6**. Handler built behind `triggers.allowance_shortfall.enabled=false`. **OD-1.** |
-| E | **Proposal expired** — `proposal.expired` | `routine` | The `authority_class` that failed to adjudicate it | Catalog declares `gateway`, `audit` only. Handler built, disabled. **OD-2.** |
 
-**Handlers for C, D, and E ship complete, tested, and disabled by Helm value.** The reason is stated once: enabling one of them is then a catalog amendment plus a values change reviewed against `tools/check_event_catalog.py`, not a code change written months later by someone who no longer remembers why the gap existed. Trigger A is **never** flag-gated.
+**[AMENDMENT]** Triggers D (allowance shortfall) and E (proposal expired) formerly listed here are **removed from this section** — both are catalog-declared rows, not undelivered promises, and now live in §2.2's main table with their handlers enabled. **Handler for C ships complete, tested, and disabled by Helm value**, for the same reason previously stated for all three: enabling it is a catalog amendment plus a values change reviewed against `tools/check_event_catalog.py`, not a code change written months later by someone who no longer remembers why the gap existed. Trigger A is **never** flag-gated.
 
 ### 2.4 The subscription set is closed
 
-No wildcard subscriptions (09 DO-NOT-14, C38). Notification's `events/catalog.py` names six consumed event types and no more until an amendment lands. Two additional read-model subscriptions are required for routing and are **also** absent from the catalog as Notification-consumed rows:
+No wildcard subscriptions (09 DO-NOT-14, C38). Notification's `events/catalog.py` names the seventeen consumed event types of §2.1/§2.1a and no more until an amendment lands. Two additional read-model subscriptions are required for routing and are **also** absent from the catalog as Notification-consumed rows:
 
 | Read model | Fed by | Needed for | Status |
 |---|---|---|---|
@@ -801,7 +818,7 @@ Service-specific additions, all of which must hold:
 
 1. **`test_d17_admission_control_alarm_reaches_a_human` green**, all eight assertions, including assertion 8. This is a release gate, not a test. Document 06 §6's admission control is not delivered until it passes.
 2. **`test_six_week_disconnect_queue_then_reconnect` green**, all ten assertions, run against a physically separate edge deployment where 06 §4's primary option holds and a network-partitioned one otherwise.
-3. **All six declared triggers of §2.1 implemented**, and `ntf-catalog-parity` green: `events/catalog.py` == `helm/values.yaml` == document 03 §6's rows for this slug, in both directions.
+3. **All seventeen declared triggers of §2.1/§2.1a implemented**, and `ntf-catalog-parity` green: `events/catalog.py` == `helm/values.yaml` == document 03 §6's rows for this slug, in both directions.
 4. **Handlers for triggers C, D, E of §2.3 implemented, tested, and shipped disabled**, each with its OD reference in the values comment.
 5. **The channel abstraction is one interface with at least five registered implementations**, spanning both `reach` values and both `requires_connectivity` values, and `GET /channels` serves their declared capabilities.
 6. **The §5.6 startup invariant is live** — the service refuses to start when no `afloat`-or-`both`, `requires_connectivity: false`, `critical`-capable channel is registered while any afloat holder exists for any routed role.

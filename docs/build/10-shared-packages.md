@@ -2151,7 +2151,7 @@ descriptive":
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Any, Self
+from typing import Any, Literal, Self
 from uuid import UUID
 
 from pydantic import Field, model_validator
@@ -2160,7 +2160,16 @@ from ._base import FathomModel, NonEmptyStr, UtcDateTime
 from .authority import AuthorityClass
 from .classification import ClassificationLabel
 from .envelope import EventSubject
-from .slugs import SubAppSlug
+from .slugs import PlatformServiceSlug, SubAppSlug
+
+ProposalTargetSlug = SubAppSlug | Literal[PlatformServiceSlug.AUDIT]
+"""**[AMENDMENT]** `Proposal.target_sub_app` was typed `SubAppSlug` alone (the
+nine sub-applications), but 32-audit.md §6.1 requires a `purge`/`rewrap`
+proposal's target to be `audit` — a `PlatformServiceSlug` value the
+nine-member enum could not hold, leaving every purge/rewrap proposal
+unrepresentable and the gateway's queue empty by construction regardless of
+this section's dual-control fix (`ALWAYS_DUAL_CONTROL_KINDS`, below). Same
+widening pattern as `ToolTargetSlug` below."""
 
 
 class ProposalKind(StrEnum):
@@ -2310,10 +2319,13 @@ class Proposal(FathomModel):
         )
     )
     kind: ProposalKind = Field(description="Document 03 §7.2  [C39].")
-    target_sub_app: SubAppSlug = Field(
+    target_sub_app: ProposalTargetSlug = Field(
         description=(
             "Slug from §3.1.  Document 03 §7.2.  One of the four schemes C27 "
-            "records as referencing a canonical identifier that did not exist."
+            "records as referencing a canonical identifier that did not exist. "
+            "**[AMENDMENT]** Widened from `SubAppSlug` alone — a `purge` or "
+            "`rewrap` proposal's target is `audit` (32-audit.md §6.1), a "
+            "`PlatformServiceSlug` value the nine-member enum could not hold."
         )
     )
     subject: EventSubject = Field(
