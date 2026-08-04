@@ -1783,7 +1783,7 @@ Document 04 §2's eight rows, expanded to every operation the contract actually 
 
 | # | Operation | `x-substitution` | `x-side-effects` | agent | Aggregate | Source |
 |---|---|---|---|---|---|---|
-| 1 | `GET /assets` | required | none | ✓ | `asset` | [04 §2] |
+| 1 | `GET /assets?hull_or_tail=&uic=&domain=&class_id=&changed_since=&cursor=` | required | none | ✓ | `asset` | [04 §2]. **[amendment]** No query parameter was declared here — closes `51-operator-console.md` §22 row 4 (blocking): with no filter, no operation answers "which asset is hull DDG 113" or maps a `unit_uic` to an asset, and `changed_since` is obligation 5's rebuild path for every consumer that projects `Asset` |
 | 2 | `GET /assets/{asset_id}` | required | none | ✓ | `asset` | [04 §2] |
 | 3 | `GET /assets/{asset_id}/configuration` | required | none | ✓ | `configuration_baseline` | [04 §2] |
 | 4 | `GET /assets/{asset_id}/systems` | required | none | ✓ | `system_node` | [04 §2] |
