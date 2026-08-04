@@ -116,7 +116,7 @@ Until OD-6 resolves, the enterprise instance treats an unresolved posture as **a
 
 ### 2.5 The admission-control alarm: recipient, and why intake is dual-path
 
-**The recipient decision.** No architecture document names an owner for this alarm. Document 04 §11 does not mention it; document 06 §6 says only that *"an alarm raises."* The available role vocabularies are document 01 §4's four operator personas and document 03 §7.2.1's five `AuthorityClass` values. Neither contains a "PMA program lead," an "on-duty supervisor," or anything resembling a queue owner.
+**The recipient decision.** No architecture document names an owner for this alarm. Document 04 §11 does not mention it; document 06 §6 says only that *"an alarm raises."* The available role vocabularies are document 01 §4's four operator personas and document 03 §7.2.1's six `AuthorityClass` values. Neither contains a "PMA program lead," an "on-duty supervisor," or anything resembling a queue owner.
 
 **`DECISION`, with the reasoning shown, because inventing a sixth role vocabulary would be worse than either alternative:**
 
@@ -708,7 +708,7 @@ THEN:
 
 ### 9.4 Reference dataset
 
-Deterministic runs from `data/synthetic` (document 13), extended with: the 06 §6 capacity trajectory that crosses 2,520; the 06 §4 six-week scenario timeline of §9.2; a recipient fixture set spanning all five `AuthorityClass` values plus `watch_station`, ashore and afloat, with distinct clearances; and a channel fixture set exercising every combination of `reach` × `requires_connectivity` × `max_classification`.
+Deterministic runs from `data/synthetic` (document 13), extended with: the 06 §6 capacity trajectory that crosses 2,520; the 06 §4 six-week scenario timeline of §9.2; a recipient fixture set spanning all six `AuthorityClass` values plus `watch_station`, ashore and afloat, with distinct clearances; and a channel fixture set exercising every combination of `reach` × `requires_connectivity` × `max_classification`.
 
 ### 9.5 Static gates (CI `lint` stage, per 09 §6.2)
 
@@ -776,7 +776,7 @@ Parallel fan-out across every channel with reach. A cascade's first hop is a pla
 |---|---|---|---|
 | **OD-1** | **`allowance_shortfall.detected` does not list `notification` as a consumer**, yet 04 §11 and 01 §5 both promise Notification covers "shortfalls." Add the row, or strike "shortfalls" from both | Architecture + Supply | A documented capability does not exist. Supply officers are never told about shortfalls by the service whose charter names them |
 | **OD-2** | **`proposal.expired` declares `gateway`, `audit` only.** Should `notification` consume it? An expired unadjudicated proposal is arguably the most notification-worthy proposal event | Architecture + Gateway | Proposals silently expire. The adjudicator who missed the window is never told they missed it |
-| **OD-3** | Confirm `watch_station` as a **non-adjudicating routing role** alongside 03 §7.2.1's five `AuthorityClass` values | Architecture | No canonical role names the on-watch billet, so afloat escalation hop 1 has no target and afloat `critical` cannot escalate at all |
+| **OD-3** | Confirm `watch_station` as a **non-adjudicating routing role** alongside 03 §7.2.1's six `AuthorityClass` values | Architecture | No canonical role names the on-watch billet, so afloat escalation hop 1 has no target and afloat `critical` cannot escalate at all |
 | **OD-4** | Confirm the promotion boundaries: CASREP **category 3/4** → `critical`; shortfall blocking a category-3/4 work order → `critical` | Fleet Status + TYCOM SME | Either alarm fatigue (boundary too low) or a category-4 risk that never reaches a dark hull (too high) |
 | **OD-5** | Declare consumers for `fathom.sync.divergence.v1` in 03 §6 (document 11 §9.1 declares the event; the catalog declares no consumer) | Architecture + Sync | A breached divergence budget produces a UI banner on the affected node and reaches nobody ashore, which is the opposite of 11 §9.1's stated purpose |
 | **OD-6** | Add `notification` as a consumer of `asset.status_changed`, or supply another posture source | Architecture + Registry | Channel selection cannot distinguish ashore from afloat. Interim: unresolved posture fails safe to AFLOAT (§2.4) |
