@@ -588,6 +588,11 @@ Following document 09 §5.6's fixed naming.
 ```
 fathom_tool_discovery_requests_total{agent_id,outcome}
 fathom_tool_invocations_total{agent_id,tool_name,outcome}          # outcome=succeeded|rejected|target_error|timed_out
+                                                                    # [AMENDMENT] labels are agent/tool/outcome only —
+                                                                    # never a target resource, asset, or NIIN, so this
+                                                                    # counter cannot become an existence oracle over
+                                                                    # which specific (compartmented) resource an agent
+                                                                    # touched. Same discipline as 35 §10.1's KR-CLS-08
 fathom_tool_invocation_duration_seconds{tool_name}                 # histogram, monotonic-clock measured
 fathom_tool_rejections_total{agent_id,tool_name,reason}            # reason == the §8.2 problem code
 fathom_tool_side_effects_mismatch_total{slug,operation_id,recorded,live}

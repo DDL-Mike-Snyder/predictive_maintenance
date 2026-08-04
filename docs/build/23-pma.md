@@ -1047,7 +1047,7 @@ def canary_recall(session, window: Window, scope_node: str) -> CanaryRecall:
 
 At ~126 plants per month (06 §6), a monthly window clears the gate comfortably and a weekly window does not. Windows are therefore reported at 30 days rolling as the primary, with a 7-day secondary that will frequently show `insufficient_canaries` — and showing that honestly is better than a weekly figure with an interval nobody displays.
 
-**Metrics are updated at review completion only.** A gauge that moved when a plant was *admitted* would let a reviewer with cluster metrics access infer that their current review contains a plant. All canary metrics are written in the completion transaction:
+**Metrics are updated at review completion only.** A gauge that moved when a plant was *admitted* would let a reviewer with cluster metrics access infer that their current review contains a plant. All canary metrics are written in the completion transaction. **[AMENDMENT]** The same reasoning that motivates completion-only writes here applies, undischarged, to classification: `scope_node` must be a coarse, pre-declared cohort identifier (asset class or fleet, never a specific hull or compartment-bearing identifier), so that this counter set cannot become a second existence oracle alongside the canary one it was designed to close — the discipline `35-knowledge-retrieval.md` §10.1's `KR-CLS-08` enforces by source-level test:
 
 ```
 fathom_pma_canary_recall{scope_node,window}              gauge, null-gated
