@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Draft rev 3 — pending approval to proceed to Phase 2 |
+| **Status** | Approved at rev 3. Rev 4 is a non-structural amendment elevating an existing property |
 | **Scope** | Top-level architecture. Sub-application internals are Phase 2; detailed per-sub-app design is Phase 3 |
 | **Working name** | FATHOM — Fleet Asset Tracking, Health & Operational Maintenance |
 | **Companion document** | [02 — Domino Platform Assessment](02-domino-platform-assessment.md), which supplies the evidence for every platform-boundary decision made here |
@@ -15,6 +15,7 @@
 | 1 | Initial decomposition, shared kernel, tiered modeling contract |
 | 2 | Domino repositioned from external system to platform substrate; Kubernetes-native microservices; agentic layer added |
 | 3 | Platform boundaries re-derived from primary-source research into Domino capability (see companion document). Three material corrections: the operator-facing user interface moves to the Sustainment Plane; inference becomes batch-first rather than endpoint-first; the afloat/edge off-ramp is redesigned around model export rather than a Nexus data plane |
+| 4 | MCP tool-surface readiness elevated to a first-class architectural property (new §8.0), with the dual-payoff clause added to principle 1 (§2). No structural change: the property was already present but understated as a single sentence. The one-to-many manifest model it introduces necessitates the two-level eligibility-and-selection correction in document 03 §10 |
 
 ---
 
@@ -90,7 +91,7 @@
 
 ## 2. Architectural principles
 
-1. **A sub-application is a discipline, deployed independently, owning its own REST API and its own database.** No cross-service database access. The public contract is the REST API plus published events. This is the mechanism by which a partner system can assume ownership of an entire discipline, and on Kubernetes it is enforceable through NetworkPolicy rather than merely agreed (§11).
+1. **A sub-application is a discipline, deployed independently, owning its own REST API and its own database.** No cross-service database access. The public contract is the REST API plus published events. This is the mechanism by which a partner system can assume ownership of an entire discipline, and on Kubernetes it is enforceable through NetworkPolicy rather than merely agreed (§11). The decomposition carries a dual payoff: the same properties that make a discipline substitutable — a bounded scope, a coherent vocabulary, and an explicit contract — make it correctly shaped as a language-model tool surface (§8).
 2. **One shared kernel, deliberately small** (§6). An expansive shared kernel is the mechanism by which modular systems revert to monoliths.
 3. **Uniform output contracts across heterogeneous internals** (§7). Consumers of a prediction must not be able to determine whether it originated from a Weibull fit or a physics-informed ensemble.
 4. **Events for propagation, REST for queries.** The event log additionally serves as the store-and-forward substrate for the afloat off-ramp.
@@ -309,7 +310,23 @@ Fleet Status, Scheduling, Supply, and every agent consume this single shape. A N
 
 ## 8. The agentic layer
 
-Agent runtimes are hosted and governed in Domino's Intelligence Plane. The principal architectural consequence of the decomposition in §5 is realized here: because every sub-application already exposes a versioned REST API, the agentic layer requires no additional data plane. The sub-application APIs constitute the tool surface. Modularity adopted to enable partner substitution yields a second return.
+Agent runtimes are hosted and governed in Domino's Intelligence Plane.
+
+### 8.0 Sub-applications are tool surfaces by construction
+
+The decomposition in §5 was adopted to permit a partner to assume an entire discipline. It produces a second payoff of equal value: each sub-application is a bounded discipline with a coherent vocabulary and a published contract, which is precisely the shape a language-model tool surface requires. No additional data plane, adapter layer, or agent-specific API is needed — the sub-application APIs *are* the tool surface.
+
+The granularity is correct for a non-obvious reason. Tool surfaces fail in two directions. A monolithic service exposes either one enormous undifferentiated surface — too many operations, ambiguous tool selection, and measurably degraded agent performance — or an arbitrary internal carve-up whose boundaries correspond to nothing semantic. Nine discipline-bounded services with published contracts land on the granularity that tool selection requires, without anyone having designed for it.
+
+The relationship between sub-application and tool surface is **one-to-many rather than one-to-one**, and that is where the value concentrates. A single sub-application backs several tool manifests, each scoped to a task or persona rather than mirroring the API's resource structure. Predictive Maintenance alone plausibly backs three: fleet-risk triage, which is broad, ranked, and read-heavy; single-equipment deep dive, which is narrow and provenance-rich; and what-if scenario analysis, which is interactive and tier-3 bound. One API, one contract, three manifests differing in operation subset, descriptions, and parameter defaults.
+
+This matters because tool descriptions occupy prompt space. A manifest tuned to a task outperforms a generic one, and the one-to-many relationship means agent tuning never requires an API change. That decoupling is the substantive benefit.
+
+Because manifests are generated from contracts rather than from implementations, **substitution-safety and tool-safety are the same property**. A conformant partner implementation preserves every manifest written against the discipline it assumes: if Palantir assumes Supply, every agent continues to function, because the manifest is unchanged because the contract is unchanged. The conformance suite certifying the substitution simultaneously certifies the tool surface.
+
+A consequence worth stating explicitly: **third parties can develop tools against these sub-applications without program involvement.** A partner, another program, or a customer's own agents can build against the published OpenAPI contracts. Given that document 02 establishes MCP is not a Domino capability and the program therefore hosts its own tool servers on the Sustainment Plane, this readiness is program intellectual property rather than platform-provided function.
+
+The manifest model, its versioning, and its conformance requirements are specified in document 03 §10.
 
 ### 8.1 Agent inventory
 
@@ -575,10 +592,11 @@ No Domino predictive-maintenance or CBM+ solution accelerator, reference archite
 2. **The nine-sub-application decomposition and boundaries** (§5), including Knowledge & Retrieval as a platform service.
 3. **The shared kernel scope** (§6), and its constraint to the entities listed.
 4. **The tier-invariant `FailurePrediction` contract** (§7), including the requirement that consumers not branch on tier.
-5. **The agentic layer** (§8) — the agent inventory, the propose-and-adjudicate constraint as inviolable, and the §8.7 contingency should machine-to-machine authentication remain unresolved.
-6. **The Kubernetes approach** (§11), particularly NetworkPolicy-enforced boundaries, database-per-service, and separate node pools per plane.
-7. **The off-ramp seams** (§12) as build-now constraints, particularly the transactional outbox and the prohibition on installing dependencies at container start.
-8. **The platform requests** in the companion document (§5), and whether the program pursues design-partner status with Domino product management on the six blocking items.
+5. **The tool-surface property** (§8.0) — that sub-application APIs are the tool surface with no agent-specific API layer; that the sub-application-to-manifest relationship is one-to-many; and that third-party tool development against published contracts is a deliberate platform property of the program rather than a side effect.
+6. **The agentic layer** (§8) — the agent inventory, the propose-and-adjudicate constraint as inviolable, and the §8.7 contingency should machine-to-machine authentication remain unresolved.
+7. **The Kubernetes approach** (§11), particularly NetworkPolicy-enforced boundaries, database-per-service, and separate node pools per plane.
+8. **The off-ramp seams** (§12) as build-now constraints, particularly the transactional outbox and the prohibition on installing dependencies at container start.
+9. **The platform requests** in the companion document (§5), and whether the program pursues design-partner status with Domino product management on the six blocking items.
 
 ---
 
