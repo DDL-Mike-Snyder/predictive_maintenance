@@ -187,7 +187,7 @@ The trap is that a reviewer under time pressure rejects to finish, rejections tr
 
 | Domain | Count | Representative class | Confidence |
 |---|---|---|---|
-| Surface | 5 | DDG-51 Flight IIA | HIGH — a program choice |
+| Surface | 5 | DDG 51 Flight IIA | HIGH — a program choice |
 | Subsurface | 3 | VIRGINIA-class | HIGH — a program choice |
 | Unmanned | 4 | 2 large UUV, 2 USV | HIGH — a program choice |
 | **Total assets** | **12** | | |

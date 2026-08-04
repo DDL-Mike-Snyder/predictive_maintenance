@@ -63,7 +63,8 @@
 | **IL4 / IL5 / IL6** | DoD Impact Levels, governing where data may be hosted. **Redefined 2 July 2025:** IL4 expanded to cover both Moderate and High confidentiality and integrity and is now the level for CUI; **CUI is no longer part of IL5**, which became "Unclassified National Security System / National Security Information"; IL6 remains up to SECRET. Impact Levels are a DoD construct and are not classification levels |
 | **NAVSUP** | Naval Supply Systems Command |
 | **NIIN / NSN** | National Item Identification Number / National Stock Number — the part identifier |
-| **NOFORN / FOUO** | Handling caveats: Not Releasable to Foreign Nationals; For Official Use Only |
+| **NOFORN** | Not Releasable to Foreign Nationals — one of the ten authorized CUI Limited Dissemination Controls |
+| **FOUO** | For Official Use Only — a **retired** marking, superseded by the CUI program (DoDI 5200.48). Listed here only because it appears in legacy material |
 | **OFRP** | Optimized Fleet Response Plan — the Navy deployment, maintenance, and training cycle |
 | **OMMS-NG** | Organizational Maintenance Management System–Next Generation |
 | **PEO** | Program Executive Office — holds acquisition and design authority for a platform |
@@ -283,7 +284,7 @@ The sole vocabulary shared across sub-applications. Distributed as a versioned p
 ```
 Fleet
  └── TYCOM / ISIC
-      └── Class                 (DDG-51 Flt IIA, VIRGINIA Blk IV, MQ-25, LDUUV)
+      └── Class                 (DDG 51 Flight IIA, VIRGINIA Block IV, MQ-25, LDUUV)
            └── Asset            hull number / boat / tail / vehicle ID, UIC,
                                 domain = surface | subsurface | unmanned
                 └── System      ESWBS-aligned (e.g. 233 propulsion, 300 electrical)

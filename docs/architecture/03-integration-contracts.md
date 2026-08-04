@@ -78,9 +78,17 @@ One term per concept. Losing variants are not to be used in any document or iden
 ```
 AssetRef {
   asset_id           # stable internal UUID; the join key
-  hull_or_tail       # "DDG-113", "SSN-796", "MQ-25-004" — human reference only
-  uic                # Unit Identification Code
-  class_id           # "DDG-51-FLTIIA"
+  hull_or_tail       # "DDG 113", "SSN 796", "MQ-25 004" — human reference only.
+                     # SPACE, never a hyphen: SECNAVINST 5030.8D Enclosure 6 states
+                     # "Hyphens will not be used in the hull number of any ship or
+                     # craft." Trailing N denotes nuclear propulsion; a leading "T-"
+                     # denotes Military Sealift Command.
+  uic                # Unit Identification Code. 5 characters; a 6-character form
+                     # carries a leading Service identifier, and Navy ships use
+                     # R (Pacific) or V (Atlantic) in DoDAAC contexts
+  class_id           # class designation. The Navy expresses ship class as the LEAD
+                     # HULL NUMBER (68 for NIMITZ, 51 for ARLEIGH BURKE), so the
+                     # internal identifier carries both that and the flight or block
   domain             # surface | subsurface | unmanned
 }
 
@@ -97,6 +105,10 @@ PositionRef {
 
 InstalledItemRef {                                                   # [C10, D9]
   installed_item_id  # stable internal UUID; the join key. Identifies the PHYSICAL ITEM
+  iuid               # Item Unique Identification per DoDI 8320.04, where assigned.
+                     # DoDI 4151.22 §1.2.d and §1.2.l require serialized item management
+                     # and IUID "to optimize RCM and CBM+ data analytics", so this is the
+                     # externally mandated instance identity — not the EIC
   position_id        # where it is installed
   niin               # what it is
   serial_or_lot      # where tracked
@@ -114,6 +126,7 @@ PartRef {
 Four rules govern their use:
 
 - **`asset_id`, `system_id`, `position_id`, `installed_item_id`, and `niin` are the join keys.** `hull_or_tail`, `eswbs`, `position_code`, and `nsn` are carried for human reference and for federation with external systems, and are never used as join keys internally, because external systems reissue and reformat them.
+- **EIC is never a join key, and this is documented rather than preferential.** NAVSEAINST 4790.8 Appendix A defines the Equipment Identification Code as *"a 7-character code… The first position identifies the system; the first and second characters together identify the subsystem; the third and fourth together identify the equipment category,"* and adds *"Where the EIC is known to more than four digits, it should be recorded at that level."* EIC is therefore a **class code of variable specificity**, not an instance identifier. It is carried on `SystemRef` and `InstalledItemRef` for federation and human reference only.
 - **A payload identifying a physical item identifies it as `installed_item_id`.** A payload identifying a location identifies it as `position_id`. The distinction is load-bearing: remaining useful life, usage accumulation, and failure history attach to the installed item, and a payload that conflates the two produces the inherited-degradation failure document 04 §2 exists to prevent `[C10]`.
 - A NIIN alone is a part type, not an installed item.
 - Every payload referencing configuration carries `baseline_id` and `baseline_epoch` (§5.4). A prediction computed against a superseded baseline is invalid, and consumers must be able to detect that without inference.
@@ -471,11 +484,23 @@ Four rules make this safe rather than merely descriptive:
 ```
 ClassificationLabel {
   level                  # U | CUI | S | TS
-  caveats[]              # e.g. NOFORN, FOUO handling
+  cui_categories[]       # CUI Registry categories present, e.g. SP-CTI, SP-NNPI, SP-EXPT.
+                         # Corresponds to line 3 of the DoDI 5200.48 designation indicator
+  dissemination[]        # constrained to the ten authorized Limited Dissemination Controls:
+                         # NOFORN | FED ONLY | FEDCON | NOCON | DL ONLY | RELIDO |
+                         # REL TO | DISPLAY ONLY | AC | AWP.
+                         # "FOUO" and "U//FOUO" are RETIRED markings (DoDI 5200.48 §3.4.b)
+  distribution_statement # A..F or REL TO, per DoDI 5230.24 Table 1.
+                         # Corresponds to line 4 of the designation indicator
   compartments[]
   derived_from           # classification authority reference
   inherited_from[]       # input label references, for derived values   [D13]
 }
+```
+
+The category and dissemination lists are typed rather than free text because DoDI 5200.48 requires a five-line CUI designation indicator whose third and fourth lines are *"all types of CUI contained in the document"* and *"the distribution statement or the dissemination controls applicable"* — structured obligations, not annotations. Minimum marking is `CUI` in both banner and footer; the older `U//FOUO` form is retired.
+
+```
 ```
 
 Producers segregate by topic; consumers additionally enforce. **Every derived value carries the union of its inputs' labels,** recorded in `inherited_from` and enforced by the provenance obligation in §15. The vector store enforces at query time rather than post-filtering, because post-filtering leaks the existence of records.
@@ -648,7 +673,15 @@ This is an accreditation prerequisite, not a refinement.
 
 ## 14. Agent, model, and taxonomy authority
 
-- **Taxonomy.** Reference Data is the single owner of the unified taxonomy — definition, versioning, publication. Post-Mission Analysis owns tag *assignments*; Failure Intelligence owns *attributions*; Scheduling owns findings *codings*. None owns the vocabulary `[C8, D31]`.
+- **Taxonomy.** Reference Data is the single owner of the unified taxonomy — definition, versioning, publication. Post-Mission Analysis owns tag *assignments*; Failure Intelligence owns *attributions* and is the sole authority to *extend* the vocabulary; Scheduling owns findings *codings*. None owns the vocabulary itself `[C8, D31]`.
+
+  **Single ownership is an external obligation, not a preference.** DoDI 8320.02 requires authoritative data sources to be registered and *"structural metadata, including vocabularies, taxonomies, and ontologies"* to be published. A vocabulary with three owners cannot be registered as an authoritative source.
+
+  **The vocabulary is anchored on published standards** (document 08 §2): MIL-STD-3034A §3 supplies the semantics, ISO 14224 levels 6–9 and Annex B supply the structure and codes, and SAE GEIA-STD-0007C is the export contract. DoDI 4151.22 §1.2.j is the authority: data must conform to *"non-proprietary, open industry standards… Accept data in proprietary formats only by exception."*
+
+  **Three projections, reconciled at read time.** Post-Mission Analysis presents a coarsened subset keyed on observable signature; Scheduling captures the 3-M code sets (CAUSE, WHEN DISCOVERED, ACTION TAKEN) because maintainers cannot be asked to learn a second vocabulary at the deckplate; Failure Intelligence works in the full vocabulary. A published, versioned, **many-to-many** crosswalk maps between them, and 3-M CAUSE is a *cause* code rather than a *mode* code, so one findings record maps to a **set** of candidate modes. **Carry that ambiguity as data — `candidate_modes[]` with confidence — rather than forcing a single code and silently corrupting the labels.** Normalising on write would destroy the disagreement signal that is the entire reason for having three capture points.
+
+  **Every label carries `taxonomy_version`.** A training set assembled across an unversioned revision is silently corrupt and undetectably so. A taxonomy revision never rewrites historical tags; it records a crosswalk and marks superseded entries, retaining both.
 - **Equipment family.** Owned by Reference Data, versioned, required on every part `[D35]`.
 - **Model bindings.** PdM owns which registry version serves which tier and family; Domino owns the model artifacts and the registry.
 
