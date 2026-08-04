@@ -87,7 +87,7 @@ Five markers, following [50 §0](50-ui-design-system.md) and [09 §1.3](09-monor
 
 Two further rows changed state and matter to this document:
 
-- **[50 §13] row 10** (`apps/practitioner` has no credential path) is **CLOSED** by [31 §5.8](31-auth.md), *"[AMENDMENT — closes a BLOCKING gap, `50-ui-design-system.md` §13 correction 10]"*, extending [31 §5.4]'s two-credential shape to an app→gateway hop. It changes nothing in `apps/web`, which holds a cookie and no token either way [50 §6.3], and it is [52](52-practitioner-apps.md)'s to consume.
+- **[50 §13] row 10** (`apps/practitioner` has no credential path) is **CLOSED** by [31 §5.8](31-auth.md). **[AMENDMENT]** Originally closed by extending [31 §5.4]'s two-credential shape to an app→gateway hop; a security review found that extension defective (one header name validating two structurally incompatible credentials), so [31 §5.8] was corrected instead to a token-exchange operation, `POST /api/v1/auth/practitioner-exchange` — a settled mechanism, not an interim. It changes nothing in `apps/web`, which holds a cookie and no token either way [50 §6.3], and it is [52](52-practitioner-apps.md)'s to consume.
 - **[50 §13] row 5** (the composed-view envelope's `as_of` has no defined semantics) is **STILL OPEN**. [30 §3.4](30-gateway.md) still shows `as_of` in the envelope example and defines it nowhere. Every screen below therefore labels it **"composed at"**, per [50 §5.3] rule 5, and §22 row 3 carries the correction forward.
 
 ### 1.4 Sheet-to-route accounting, reconciled

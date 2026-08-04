@@ -774,9 +774,13 @@ Every limit below is from document 02 §4.3, and each is enforced locally so a p
 
 **[AMENDMENT — closes a BLOCKING gap, `50-ui-design-system.md` §13 correction 10.]** §2.2 establishes that federation gives a Domino Workspace or App only a Domino-realm session, and warns explicitly against reasoning past the resulting gap: *"[f]ederation does not put caller identity on a Domino Endpoint invocation… that gap must not be reasoned away by pointing at federation."* The same gap exists one level up: `apps/practitioner` (`28-design-advisory.md` §2's case review, `25-failure-intel.md`'s causal exploration) has **no client ID, no token-acquisition path, and no specified credential** for calling `gateway` at all, because it holds a Domino session and a Domino session is not a `fathom`-realm credential.
 
-**Resolution: extend §5.4's two-credential shape from an Endpoint proxy call to an app→gateway hop.** The practitioner SPA holds no token — same as `apps/web` (§4.1 step 1) — and its co-resident single-container FastAPI process (`50-ui-design-system.md` §6.2's `02 §4.1`-mandated single-container shape) is the credential holder. That process authenticates to `gateway` with a client-credentials **workload identity** over the sanctioned `domino-compute → gateway` NetworkPolicy edge (09 §4.4.2), and attaches the caller's authority the same way the Endpoint proxy's `X-Fathom-Caller-Authorization` does — except the "caller's authority" here is the Domino-session-linked `fathom` `sub` from the broker's linked record (§2.2), not a delegated agent token. The gateway never accepts a claimed subject from the practitioner app's request body (§13 item 15's rule, applied identically).
+**Resolution, corrected: a token-exchange operation, not a second credential shape reusing the Endpoint proxy's header name.** `[AMENDMENT — this section originally proposed reusing X-Fathom-Caller-Authorization for a bearer shape with none of §5.4's actual claims (no fathom `iss`, no aud: gateway, no sfx: scope, no delegation) — the same header name validated two structurally incompatible credentials, which a security review correctly identified as two mechanisms wearing one name, with no document specifying which validator applies. 52-practitioner-apps.md §4.4 rule 5 independently proposed the fix below as "the cleanest, and what this document would ask for" — adopted here rather than left as an ask.]`
 
-This is recorded as an amendment ask rather than a settled mechanism, because it repurposes a proxy built for one caller shape (a service holding a delegated/autonomous token) for a different one (an app holding a linked Domino session and nothing else) — the two are close enough that the shape transfers, but a reviewer confirming that is exactly the review this amendment asks for. Until confirmed, `apps/practitioner` is buildable as a read surface against operations its workload identity may reach; its state-changing adjudication actions (approve/reject a redesign case, admit a causal hypothesis) are blocked on this section landing, per `50-ui-design-system.md` §6.3.
+`POST /api/v1/auth/practitioner-exchange` — a new, narrow token-exchange operation. The practitioner app's co-resident single-container FastAPI process (`50-ui-design-system.md` §6.2's `02 §4.1`-mandated single-container shape) presents its own client-credentials **workload identity** plus the verified Domino identity JWT (the Domino-session-linked `fathom` `sub` from §2.2's broker-linked record) to this operation, over the sanctioned `domino-compute → gateway` NetworkPolicy edge (09 §4.4.2) — `auth`, not `gateway`, is the target, matching this document's own "gateway is the caller, `auth` is the authority over exchange" split (§4.1). `auth` returns a short-lived, ordinary `fathom`-realm **delegated** access token (§3.2's exact shape, `sub` = the linked human, `aud` = the practitioner surface's own manifest targets), reusing §4.2's RFC 8693 exchange machinery with the Domino identity JWT as `subject_token` and the host's workload token as `actor_token`.
+
+**This removes the second credential shape entirely.** The practitioner host's every subsequent call to `gateway` carries exactly one credential — `Authorization: Bearer <the exchanged fathom token>` — identical in shape to every other delegated call in this document, which the gateway already validates unchanged (§5.3) with no second header, no second validator, and no ambiguity about which mechanism applies. `X-Fathom-Caller-Authorization` remains exclusively §5.4's Endpoint-proxy credential; it is never sent by `apps/practitioner`. The gateway never accepts a claimed subject from the practitioner app (§13 item 15's rule, applied identically) — the exchange, not the gateway, is where the Domino identity is verified.
+
+**Consequence for `52-practitioner-apps.md`:** its two-credential wire shape (§4.4), its `host-sends-two-credentials` test, and its §4.7 interim (no `IdentityBlock`, no sign-out, the narrowest-workload-envelope posture) are all superseded by this resolution — the exchanged token carries a real identity block and real `authority_classes`, so `GET /api/v1/gateway/session` (§8.1.2) works for `apps/practitioner` exactly as it does for `apps/web`, with no caller-authority-borne variant needed. `52`'s own P-OQ-3 (*"does the gateway authorize against the caller-authority credential, or merely record it"*) is moot under this resolution — there is no caller-authority credential at the gateway to ask that question about.
 
 ---
 
@@ -871,11 +875,11 @@ Built by `packages/py-common` from the validated token, the matched route's anno
 }
 ```
 
-`action` is a closed vocabulary: `read`, `create_proposal`, `claim`, `adjudicate`, `second_adjudicate`, `write`, `invoke_endpoint`, `retrieve`.
+`action` is a closed vocabulary: `read`, `create_proposal`, `claim`, `adjudicate`, `second_adjudicate`, **`counter_sign`**, `write`, `invoke_endpoint`, `retrieve`. **[AMENDMENT]** `counter_sign` is new — added below alongside the corrected `purge`/`rewrap` matrix cells, because a class/fleet-scope purge needs a *third*, distinct action from a *third* distinct person, and reusing `second_adjudicate` for it was the defect this amendment fixes.
 
 ### 6.4 Authority versus blast radius — document 03 §7.2.1, executable
 
-`authority_matrix.json`, generated, is document 03 §7.2.1's table verbatim. Note that three cells carry an **alternative set** rather than a single class, one carries a two-stage requirement, and two (`purge`, `rewrap`) carry a **counter-signature by a different class** rather than a second instance of the primary one:
+`authority_matrix.json`, generated, is document 03 §7.2.1's table verbatim. Note that three cells carry an **alternative set** rather than a single class, one carries a two-stage requirement, and two (`purge`, `rewrap`) carry an **additional** counter-signature by a different class **on top of**, not instead of, same-role dual control:
 
 ```json
 {
@@ -908,19 +912,23 @@ Built by `packages/py-common` from the validated token, the matched route's anno
   "purge":                { "item": {"any_of": ["security_officer"], "dual_control": true},
                             "asset": {"any_of": ["security_officer"], "dual_control": true},
                             "class": {"any_of": ["security_officer"], "dual_control": true,
+                                      "requires_counter_signature": true,
                                       "counter_signature_class": "fleet_authority"},
                             "fleet": {"any_of": ["security_officer"], "dual_control": true,
+                                      "requires_counter_signature": true,
                                       "counter_signature_class": "fleet_authority"} },
   "rewrap":               { "item": {"any_of": ["security_officer"], "dual_control": true},
                             "asset": {"any_of": ["security_officer"], "dual_control": true},
                             "class": {"any_of": ["security_officer"], "dual_control": true,
+                                      "requires_counter_signature": true,
                                       "counter_signature_class": "fleet_authority"},
                             "fleet": {"any_of": ["security_officer"], "dual_control": true,
+                                      "requires_counter_signature": true,
                                       "counter_signature_class": "fleet_authority"} }
 }
 ```
 
-**`purge` and `rewrap` were missing from this matrix** — they postdate this document's original authoring (amendments 03-1/03-2). Their item/asset cells are **same-role** dual control, like `interval_change`'s and `redesign_case`'s class/fleet cells: a second `security_officer`, not a different class. Their class/fleet cells add `counter_signature_class`, because document 03 §7.2.1 specifies the second signature there as a **`fleet_authority` counter-signature**, not a second `security_officer` — the two-signature requirement is satisfied by one of each, never by two of the primary class.
+**`purge` and `rewrap` were missing from this matrix** — they postdate this document's original authoring (amendments 03-1/03-2). Their item/asset cells are **same-role** dual control, like `interval_change`'s and `redesign_case`'s class/fleet cells: a second `security_officer`, not a different class. **[AMENDMENT — corrected.]** An earlier revision of this matrix had the class/fleet cells' `counter_signature_class` *replace* the second `security_officer` signature, yielding two signatures total (one `security_officer`, one `fleet_authority`) where `32-audit.md` §6.1 and `51-operator-console.md` §16.4/§22 row 19 both independently specify **three**: dual control (two `security_officer`s) **plus** a `fleet_authority` counter-signature, on top. Two independently-authored documents converging on the stricter reading, against this document's own single earlier interpretation of admittedly ambiguous source text, is the signal that the stricter reading is correct. `requires_counter_signature` is now a separate boolean from `dual_control` — both are `true` at class/fleet scope for `purge`/`rewrap`, and the two are checked by two different Rego rules below, guarding two different actions (`second_adjudicate` and the new `counter_sign`).
 
 ```rego
 package fathom.authz
@@ -941,13 +949,74 @@ decision := {
     allow_base
 }
 
+# --------------------------------------------------------------------------
+# allow_base: the POSITIVE gate. [AMENDMENT — this was referenced above and
+# defined nowhere in the corpus, a critical omission a security review
+# caught: without it, a naive "token validated" placeholder would make every
+# action unconditionally allowed except where a deny rule happens to exist —
+# and no deny rule below fires on create_proposal, claim, write, or
+# invoke_endpoint, so those four actions would have been allow-anything.]
+#
+# allow_base is intentionally NARROW: it only asserts the request is
+# well-formed enough for the deny rules below to evaluate meaningfully. It is
+# NOT where authorization decisions are made — every substantive restriction
+# is a deny rule, per this file's own "deny by default" comment above. Token
+# validity itself is checked upstream (09 §5.5's require_authz dependency,
+# evaluated before OPA is ever called); allow_base assumes a validated
+# principal and checks only that (a) the action is in the closed vocabulary,
+# and (b) the resource type matches what that action operates on.
+# --------------------------------------------------------------------------
+allow_base if {
+    input.action in {"read", "create_proposal", "claim", "adjudicate",
+                      "second_adjudicate", "counter_sign", "write",
+                      "invoke_endpoint", "retrieve"}
+    resource_type_matches_action
+}
+
+resource_type_matches_action if {
+    input.action in {"create_proposal", "claim", "adjudicate",
+                      "second_adjudicate", "counter_sign"}
+    input.resource.type == "proposal"
+}
+resource_type_matches_action if {
+    input.action in {"read", "write", "retrieve"}
+    input.resource.type in {"domain_record", "tool_call"}
+}
+resource_type_matches_action if {
+    input.action == "invoke_endpoint"
+    input.resource.type == "domino_endpoint"
+}
+
 # --- ADJUDICATION: 03 §7.2.1 + D16 ---------------------------------------
 
 # An AGENT never adjudicates, of either class. 01 principle 7; §3.3 rule 6.
+# [AMENDMENT] Extended to `counter_sign` (new action, above) and to
+# `create_proposal` for purge/rewrap specifically — 03 §7.2's standing rule
+# that "a purge proposal may never be created or adjudicated by an agent
+# principal or an accountable_autonomous identity" binds creation too, and
+# this is the Rego-level backing for that rule, not merely 32-audit.md's
+# own coordinator-level check (defense in depth, per this policy's own
+# convention of checking things a receiving service also checks).
 deny contains "agent_may_not_adjudicate" if {
-    input.action in {"adjudicate", "second_adjudicate"}
-    input.principal.agent_authority != null
+    input.action in {"adjudicate", "second_adjudicate", "counter_sign"}
+    is_agent_principal
 }
+
+deny contains "agent_may_not_create_purge_or_rewrap" if {
+    input.action == "create_proposal"
+    input.resource.kind in {"purge", "rewrap"}
+    is_agent_principal
+}
+
+# [AMENDMENT] `object.get` with a default makes this safe against an ABSENT
+# key, not only a null one — `input.principal.agent_authority != null` is
+# UNDEFINED (not false) when the key is missing entirely, which would make
+# the two deny rules above silently not fire for a request that omitted the
+# field rather than setting it to null. This is the same shape of bug the
+# hardcoded second-signature check was (31 §6.4, above): a check written
+# against one representation that a different-but-equally-valid input shape
+# defeats silently.
+is_agent_principal if object.get(input.principal, "agent_authority", null) != null
 
 cell := data.fathom.authority_matrix[input.resource.kind][input.resource.blast_radius]
 
@@ -995,11 +1064,18 @@ deny contains "second_adjudicator_must_differ" if {
     input.principal.sub == input.resource.adjudicated_by
 }
 
-# The class(es) the SECOND signature must hold. Same-role dual control (2 of
-# cell.any_of) unless the cell names a counter_signature_class (purge/rewrap
-# at class/fleet: 1 security_officer + 1 fleet_authority, never 2 of either).
-second_signature_any_of := {cell.counter_signature_class} if cell.counter_signature_class
-second_signature_any_of := cell.any_of if not cell.counter_signature_class
+# The class(es) the SECOND signature must hold. ALWAYS same-role dual control
+# (a second member of cell.any_of) — this is the "dual" in dual control, and
+# it is never satisfied by the counter-signature below, which is a THIRD,
+# additional party at class/fleet-scope purge/rewrap, not a substitute for
+# the second same-role signer.
+# [AMENDMENT — this rule previously redirected to counter_signature_class
+# when present, which silently reduced a required THREE-signature control
+# (32-audit.md §6.1; 51-operator-console.md §16.4, §22 row 19) to two. Two
+# independently-authored documents specified three; this rule now enforces
+# exactly the same-role second signature for every kind, always, and the
+# counter-signature is a separate, additional deny rule below.]
+second_signature_any_of := cell.any_of
 
 # GENERALIZED to every kind, not just interval_change. The prior rule checked
 # only input.resource.kind == "interval_change", which meant a class- or
@@ -1020,8 +1096,36 @@ deny contains sprintf(
                  c == p}) == 0
 }
 
+# --- COUNTER-SIGNATURE: a THIRD, additional party, distinct from both
+#     adjudicators, required only where the cell says so (purge/rewrap at
+#     class/fleet scope: 03 §7.2.1's `fleet_authority` counter-signature).
+#     [AMENDMENT — new action, new rules, closing the 2-vs-3-signature defect
+#     the second_signature_any_of fix above also closes from the other side.]
+counter_signature_required if cell.requires_counter_signature
+
+deny contains "counter_signature_required_but_not_declared" if {
+    input.action == "adjudicate"
+    counter_signature_required
+    not input.resource.requires_counter_signature
+}
+
+deny contains "counter_signer_must_differ" if {
+    input.action == "counter_sign"
+    input.principal.sub in {input.resource.adjudicated_by, input.resource.second_adjudicator}
+}
+
+deny contains sprintf(
+    "counter_signer_authority_insufficient: need %v, principal holds %v",
+    [cell.counter_signature_class, input.principal.authority_classes],
+) if {
+    input.action == "counter_sign"
+    counter_signature_required
+    not cell.counter_signature_class in input.principal.authority_classes
+}
+
 obligations := {
     "dual_control_required": dual_required,
+    "counter_signature_required": counter_signature_required,
     "classification_predicate": classification_predicate,
     "redact_fields": redact_fields,
 }
