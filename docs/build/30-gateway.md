@@ -1512,6 +1512,49 @@ The pass-through surface is why 03 §4 requires slug-namespaced base paths: *"Th
 
 **Which agent uses which shape is not a free choice per runtime** — it follows from whether the interaction is a bounded conversational exchange (shape 1) or a long-running assembly with no single human waiting synchronously (shape 2). `41-pma-prescreener.md`'s enterprise path uses **neither**: it is `accountable_autonomous` and event-triggered through its own run-initiator (§5.4 below; that document's §2.2), never invoked by the gateway on a human's behalf, so it has no row here.
 
+**[AMENDMENT] Where this state lives, closing a gap the CI assertion below would otherwise catch immediately.** `GET /api/v1/gateway/agent-sessions/{session_id}` returns *"[s]ession and turn history"* and `GET /api/v1/gateway/agent-runs/{run_id}` returns *"[a] polled result"* — both imply persisted state, and until this amendment nothing declared where. §10.1's `test_d32_no_domain_readmodel_other_than_the_queue` asserts the migration head equals exactly five named tables, and DO-NOT 3 reads *"a tenth table is a D32 regression whatever it is called"* — read literally, these two amendments were mutually unsatisfiable.
+
+**Resolution: two more tables, the same kind of exception `idempotency_keys` and `queue_rebuild_watermark` already are.** D32-R1's actual prohibition is a **domain** read model — a cache of another sub-application's aggregate (an asset, a prediction, a configuration, a readiness snapshot). Session and turn/run bookkeeping is the gateway's own record of its own orchestration activity, exactly as `idempotency_keys` is the gateway's own record of its own request handling — neither is a view onto a domain a sub-application owns. DO-NOT 3 is corrected below to say so explicitly rather than leaving the distinction implicit.
+
+```sql
+CREATE TABLE agent_session (
+  session_id       uuid        PRIMARY KEY,
+  requesting_sub   text        NOT NULL,       -- 'gateway' human's principal_id (sub), never the agent's
+  agent_id         text        NOT NULL,
+  subject_hint     jsonb       NULL,
+  status           text        NOT NULL,       -- open | closed
+  opened_at        timestamptz NOT NULL,
+  closed_at        timestamptz NULL
+);
+
+CREATE TABLE agent_turn (
+  turn_id          uuid        PRIMARY KEY,
+  session_id       uuid        NOT NULL REFERENCES agent_session(session_id),
+  turn_seq         int         NOT NULL,       -- 1-based, per session
+  question         text        NOT NULL,
+  answer_ref       text        NULL,           -- 32-audit.md agent_answer record_id — content lives THERE (D32)
+  refusal_reason_code text     NULL,
+  created_at       timestamptz NOT NULL,
+  UNIQUE (session_id, turn_seq)
+);
+
+CREATE TABLE agent_run (
+  run_id           uuid        PRIMARY KEY,
+  requesting_sub   text        NOT NULL,
+  agent_id         text        NOT NULL,
+  invocation       jsonb       NOT NULL,       -- the request body, for the poll response only
+  candidate_id     uuid        NULL,
+  session_id       uuid        NULL REFERENCES agent_session(session_id),
+  case_id          uuid        NULL,
+  status           text        NOT NULL,       -- accepted | running | succeeded | failed
+  result_ref       text        NULL,           -- 32-audit.md record_id — content lives THERE (D32)
+  created_at       timestamptz NOT NULL,
+  completed_at     timestamptz NULL
+);
+```
+
+**`answer_ref`/`result_ref`, never the content, for the identical D32 reason `proposal_queue` never carries `payload`.** The gateway's own bookkeeping tracks *that* a turn was answered and *where* the record is (`32-audit.md`'s `agent_answer`/`agent_run` records, §11.1's audit obligation already requires those to exist), not *what* the answer was — a second copy of agent output would be exactly the kind of domain-content duplication D32-R1 forbids, even though the session/run bookkeeping itself is not.
+
 #### 8.1.2 Session identity and sign-out — the operations `apps/web` needs and none of this document declared
 
 **[AMENDMENT — closes a BLOCKING gap.]** `31-auth.md` §4.1 step 1 establishes the BFF shape (*"the user's access token never leaves the server. `apps/web` holds a session cookie"*), which means `apps/web` cannot read the user's roles from a token it never has — yet §8.1.1's shape-1 flow, the Persona Hub, and the queue's client-side `authority_class` filter (OQ-9, corrected above) all need those roles somewhere in the browser. Nothing in this document exposed them, and nothing anywhere specifies a sign-out. Flagged by `50-ui-design-system.md` §13 correction 7.
@@ -1521,7 +1564,7 @@ The pass-through surface is why 03 §4 requires slug-namespaced base paths: *"Th
 | `GET /api/v1/gateway/session` | `none` | `internal` | **false** | Returns the session's identity block (`fathom.identity`, byte-identical to §3.2's token shape) and its six `authority_classes`, read from the session cookie's server-side session store — never from a token the browser holds, because it holds none. `404` if no session. **[amendment, closes `52-practitioner-apps.md` §13 correction 3]** `apps/practitioner`'s co-resident host calls this operation exactly as `apps/web` does, with its own `fathom`-realm delegated token obtained from `31-auth.md` §5.8's `POST /api/v1/auth/practitioner-exchange` — **no caller-authority-borne variant is needed**; §5.8 was corrected to eliminate the second credential shape rather than add a second code path here |
 | `POST /api/v1/gateway/session/logout` | `state-changing` | `internal` | **false** | Destroys the server-side session and its cookie. **RP-initiated logout** at the identity provider is triggered server-side in the same call, per `31-auth.md` §2's Keycloak binding — there is no client-side `end_session_endpoint` redirect, because the browser holds no `id_token` to present to one. Not applicable to `apps/practitioner`, which has no session cookie to destroy (§4.7 of `52-practitioner-apps.md`) |
 
-**The session store and cookie, stated because §1.3 of `31-auth.md` deferred them to this wave:** an opaque session identifier in a cookie named **`fathom_session`** — `HttpOnly`, `Secure`, `SameSite=Lax` — keyed against a server-side store (Redis, TTL-bound to the underlying token's remaining life) holding the actual tokens. CSRF: `SameSite=Lax` plus a double-submit token, cookie **`fathom_csrf`** (readable by JavaScript, unlike the session cookie) echoed on header **`X-Fathom-CSRF`**, required and matched on every state-changing gateway-owned operation, checked in the middleware order of §8.6 immediately after authentication. **[amendment, closes `51-operator-console.md` UI-OQ-1]** Neither name was previously stated; both are needed before a console can construct the header.
+**The session store and cookie, stated because §1.3 of `31-auth.md` deferred them to this wave:** an opaque session identifier in a cookie named **`fathom_session`** — `HttpOnly`, `Secure`, `SameSite=Lax` — keyed against a server-side store holding the actual tokens, TTL-bound to the underlying token's remaining life. **[AMENDMENT — corrected.]** This originally specified Redis for that store, directly contradicting this document's own **DECISION G-5** (§6.3): *"[t]here is no shared cache in the 01 §11 inventory. Adding Redis… is a new infrastructure component, a change to 09 §2."* The session store is instead a table in the gateway's **own CloudNativePG database** — `gateway_session(session_id, tokens_jsonb, expires_at, created_at)` — on the identical precedent 09 §5.3 already set for idempotency records: a service's own database, not a shared cache, for exactly this reason. Expiry is enforced two ways: a lookup rejects (`404`, matching a missing session) any row past `expires_at`, and a `pg_cron` job (or the same `pre-upgrade` Job pattern §8.6 uses elsewhere) deletes expired rows on a bounded interval so the table does not grow unboundedly between logins. This is a genuine cost relative to Redis — a database round-trip on every authenticated request instead of a cache lookup — but it is the cost G-5 already decided was acceptable for idempotency keys on the same request path, and introducing Redis for sessions alone would still be the new infrastructure component G-5 rejects. CSRF: `SameSite=Lax` plus a double-submit token, cookie **`fathom_csrf`** (readable by JavaScript, unlike the session cookie) echoed on header **`X-Fathom-CSRF`**, required and matched on every state-changing gateway-owned operation, checked in the middleware order of §8.6 immediately after authentication. **[amendment, closes `51-operator-console.md` UI-OQ-1]** Neither name was previously stated; both are needed before a console can construct the header.
 
 ### 8.2 How pass-through routes are constructed
 
@@ -1646,7 +1689,7 @@ Four tiers per 09 §4.7 — unit, integration, contract, conformance — plus th
 | `test_d32_purge_is_truncate_and_rebuild` | The declared purge procedure of §4.7 executes end to end and leaves no trace of the purged `proposal_id` in any column of any table | 4 |
 | `test_d32_gateway_publishes_nothing` | `PUBLISHES == frozenset()`; no `outbox` table at migration head; no Kafka producer constructed anywhere in the service | 5 |
 | `test_d32_stale_projection_cannot_cause_a_wrong_adjudication` | Poison a row (`baseline_epoch` low, `status='proposed'`, `authority_class` wrong, `valid_until` future), then adjudicate through the gateway against a stub owner enforcing 03 §7.2's re-validation; assert the owner rejects and the gateway forwards the rejection unaltered | 5 |
-| `test_d32_no_domain_readmodel_other_than_the_queue` | The migration head's table set equals exactly `{proposal_queue, inbox, idempotency_keys, queue_rebuild_watermark, alembic_version}` | 5 |
+| `test_d32_no_domain_readmodel_other_than_the_queue` | **[AMENDMENT]** The migration head's table set equals exactly `{proposal_queue, inbox, idempotency_keys, queue_rebuild_watermark, agent_session, agent_turn, agent_run, alembic_version}` — three more than originally asserted, all gateway-own-orchestration bookkeeping (§8.1.1), never a domain read model | 5 |
 | `test_no_cross_level_read_path` | Exactly one database credential, one consumer group, one ACL grant; no configuration key accepts more than one level (§7.4) | 3 |
 
 The last of these is the guard with the longest reach: it makes "the gateway holds no other read model" a CI failure rather than a code-review judgement, so a future agent adding an innocuous-looking `asset_cache` table to fix a latency problem trips D32 immediately.
@@ -1928,7 +1971,7 @@ Two edges need attention:
 
 1. **Do not project a proposal's `payload`, `evidence[]`, `rationale`, `adjudication_note`, or `llm_version` into the gateway's store.** Not "temporarily", not "just the first evidence ref", not "just a truncated rationale for the list view". The whole of D32-R1 is that the gateway holds routing metadata and the owner holds content. *(**D32**; §2.3, §2.4)*
 2. **Do not add a column to `proposal_queue` without amending `PROJECTED_COLUMNS` in the same commit, with the D32 justification in the commit message.** The allowlist test failing is the design working. *(**D32**; §2.4)*
-3. **Do not build a read model of any other domain aggregate.** No asset cache, no prediction cache, no configuration mirror, no readiness snapshot. The migration head's table set is asserted in CI, and a tenth table is a D32 regression whatever it is called. *(**D32**; §9.3, §10.1)*
+3. **Do not build a read model of any other domain aggregate.** No asset cache, no prediction cache, no configuration mirror, no readiness snapshot. The migration head's table set is asserted in CI. **[AMENDMENT — clarified.]** This forbids a **domain** read model — a cache of a fact another sub-application owns. It does not forbid the gateway's own bookkeeping about its own orchestration activity: `idempotency_keys` and `queue_rebuild_watermark` were already exceptions of exactly this kind, and `agent_session`/`agent_turn`/`agent_run` (§8.1.1) are the same kind again — a table appearing in the asserted set for a reason stated here is not a regression; an *unstated* table is. *(**D32**; §9.3, §10.1)*
 4. **Do not cache a fragment response, a composed view, or a proposal detail response.** A response cache is a read model with no schema, no rebuild path, and no purge path — D32 and D15 at once. *(**D32**, **D15**; §3.5)*
 5. **Do not subscribe the broker client to a pattern.** Not `^fathom\..*\.proposal\.v1$`, not any other regex. The list is explicit; the pattern is a CI assertion. A pattern subscription reintroduces C38 *and* discloses the names of topics above the deployment's classification level, which is D13's existence leak one level up. *(**C38**, **D13**; §4.2, §2.5)*
 6. **Do not subscribe to a topic above the deployment's declared classification level, and do not add a second level to a deployment.** Segregation is one deployment per level. A single deployment filtering by label is post-filtering, which D13 and 09 DO-NOT 22 prohibit, and it makes the gateway the classification enforcement point. *(**D13**, **D32**; §2.5, §7.1)*
@@ -2044,7 +2087,7 @@ Two edges need attention:
 
 - [ ] JWKS validation with an algorithm **allowlist**; `alg: none` and all HMAC families rejected.
 - [ ] `auth/clock.py` is the only wall-clock reader; the import-linter contract confining it is in place and CI-enforced.
-- [ ] Two-hop RFC 8693 exchange with `act` nesting and `may_act`; the full §10.3 authority suite green.
+- [ ] **[AMENDMENT — corrected.]** ~~Two-hop RFC 8693 exchange with `act` nesting and `may_act`~~ — superseded by §5.3's "one exchange, forwarded unchanged" model; there is no second exchange and no `may_act`. The full §10.3 authority suite green.
 - [ ] `test_d12_no_service_identity_fallback` green — no upstream request on a delegated path carries the gateway's own workload token.
 - [ ] `test_d12_accountable_owner_required` and `test_d12_autonomous_state_change_refused` green *(03 §8.3, D12)*.
 - [ ] Domino Endpoint proxy: audit written **before** the response; caller's token never forwarded; static token exists only as the gateway's projected secret *(D12, 02 §4.3)*.

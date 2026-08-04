@@ -6,14 +6,14 @@
 | **Review date** | 4 August 2026 |
 | **Scope reviewed** | Documents 01–04 at the state following the rev-4 tool-surface amendment |
 | **Method** | Two independent adversarial review passes: one for internal consistency and verifiable defects, one for design flaws with concrete failure scenarios |
-| **Result** | 51 consistency findings (C1–C51), 37 design findings (D1–D37) |
+| **Result** | 51 consistency findings (C1–C51), 42 design findings (D1–D42) — **[AMENDMENT]** this row originally read "37 design findings (D1–D37)"; D38–D42 were added during Wave 1–3 and Wave 5 build-framework authoring (§2.8, §2.9) and this row was never updated to match |
 | **Classification** | Internal |
 
 ---
 
 ## 1. Purpose and how to use this register
 
-This register exists because the volume and severity of findings exceed what can be silently absorbed into revisions. Several findings invalidate decisions already approved at Phase 1 and Phase 2, and eleven require a program decision rather than an editorial fix.
+This register exists because the volume and severity of findings exceed what can be silently absorbed into revisions. Several findings invalidate decisions already approved at Phase 1 and Phase 2, and **[AMENDMENT — corrected from "eleven"]** fifteen require a program decision rather than an editorial fix, including four (D38, D39, D41, D42) added after this line was first written.
 
 Dispositions are:
 
