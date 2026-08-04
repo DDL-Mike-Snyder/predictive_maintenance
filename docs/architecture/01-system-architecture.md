@@ -60,7 +60,7 @@
 | **HM&E** | Hull, Mechanical & Electrical — the non-combat-systems engineering plant |
 | **ICAS** | Integrated Condition Assessment System — existing Navy shipboard condition monitoring |
 | **IETM** | Interactive Electronic Technical Manual — the digital technical manual used by maintainers |
-| **IL4 / IL5 / IL6** | DoD Impact Levels — cloud security categorizations governing where data may be hosted |
+| **IL4 / IL5 / IL6** | DoD Impact Levels, governing where data may be hosted. **Redefined 2 July 2025:** IL4 expanded to cover both Moderate and High confidentiality and integrity and is now the level for CUI; **CUI is no longer part of IL5**, which became "Unclassified National Security System / National Security Information"; IL6 remains up to SECRET. Impact Levels are a DoD construct and are not classification levels |
 | **NAVSUP** | Naval Supply Systems Command |
 | **NIIN / NSN** | National Item Identification Number / National Stock Number — the part identifier |
 | **NOFORN / FOUO** | Handling caveats: Not Releasable to Foreign Nationals; For Official Use Only |
@@ -605,6 +605,10 @@ The demonstration is cloud-only. The following seams are structural, inexpensive
 ### Air-gapped enclave
 
 Domino's credentials in this area are strong and constitute a primary argument for the platform: production operation at IL5 in AWS GovCloud, two operational IL6 environments, an operational air-gapped deployment at a national intelligence agency, an active Top Secret facility clearance, and OpenShift support for on-premises Kubernetes.
+
+**The target impact level is an open decision, and it is now the program's most consequential accreditation question.** The 2 July 2025 redefinition removed CUI from IL5. If the platform handles CUI and is not a National Security System, the correct level is **IL4 at high confidentiality and integrity** — materially cheaper than IL5. If it is an NSS, IL5 applies and the control set is heavier than previously assumed, requiring FedRAMP High plus the CNSSI 1253 Appendix D NSS overlays. Resolving this requires a **written authorizing-official determination of NSS status**, which also resolves the separate applicability question for federal AI policy. One memo settles both, and it should be obtained early rather than discovered at assessment.
+
+**Ship-to-shore synchronization between two same-level enclaves is not a cross-domain problem**, and this should be stated explicitly in the system security plan. Cross-domain policy scopes itself to interconnection between *different security domains*, and Impact Levels are a DoD construct rather than classification levels — so two unclassified enclaves at the same level are one security domain. This is ordinary enclave interconnection: boundary routing, connection-process approval, validated transport encryption, port registration. Programs routinely and expensively mis-scope same-level replication as a cross-domain solution, which would put a human reviewer in the synchronization path. Crossing *classification* levels is a genuine cross-domain problem and a different design.
 
 Program obligations follow:
 

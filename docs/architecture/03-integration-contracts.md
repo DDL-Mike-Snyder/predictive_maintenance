@@ -234,7 +234,36 @@ EventEnvelope {
 
 **Baseline epoch and the antecedent rule.** Each asset's configuration carries a monotonically increasing `baseline_epoch`. Any event whose correctness depends on configuration carries the epoch it was computed under. A consumer that receives an event with an epoch ahead of its own configuration read model **must block that event until the antecedent configuration event is applied**, resolved via `causation_id` or by reading `changed_since` from the Registry. This supplies the cross-topic causal ordering that per-asset partitioning does not `[D3, D4]`.
 
-**Clock discipline.** `recorded_at` is the producing node's clock and is authoritative only within that node. Conflict policies that compare timestamps across nodes (§11) additionally carry a node identifier and a synchronization-confidence flag; an edge node operating beyond its clock-drift bound marks its records accordingly and they are reconciled by sequence rather than timestamp `[D29]`.
+**Clock discipline. No wall clock ever arbitrates a merge.**
+
+This is stronger than a caution, and the reason is a mandated STIG behavior rather than a hypothetical. The Ubuntu 22.04 STIG rule **V-260520** requires `makestep 1 -1` — unlimited backward clock steps whenever the offset exceeds one second — and that step fires *precisely* when a disconnected node reconnects and begins draining its outbox. Two writes from one process can therefore carry inverted wall-clock timestamps. Compliance guarantees a non-monotonic clock at exactly the moment ordering matters most.
+
+Every event therefore carries:
+
+```
+clock {
+  monotonic_seq      # per-producer monotonically increasing sequence. THE ordering key
+  hlc                # hybrid logical clock: (physical, logical, node_id)
+  source_time        # producing node's wall clock at the domain event
+  ingest_time        # receiving node's wall clock at acceptance
+  sync_quality {     # the attestation that makes skew auditable rather than invisible
+    time_source          # gnss | usno_authenticated | upstream_ntp | holdover | unsynced
+    offset_ms            # last measured offset
+    dispersion_ms        # accumulated uncertainty — the published epsilon
+    seconds_since_sync
+    step_occurred        # true if a backward step landed since the last record
+  }
+}
+```
+
+Four rules follow:
+
+- **Ordering and deduplication use `(producer, monotonic_seq)` or the HLC.** Never `source_time`. Consumers apply idempotently on that key or on a content hash.
+- **Durations, timeouts, retry backoff, and lease expiry use a monotonic clock**, never the wall clock. A wall-clock backoff loop storms or hangs the instant a step lands — again, at reconnection.
+- **`dispersion_ms` is a published epsilon that grows while disconnected, and the application branches on it.** Small epsilon permits wall-clock-assisted presentation; epsilon exceeding the inter-write interval forces causal-only ordering and forbids any timestamp arbitration. A time service that declares itself untrusted is far safer than one confidently serving wrong time.
+- **`sync_quality` is retained permanently.** It converts "our timestamps drifted" from an audit finding into a bounded, documented condition, and it is the only way to re-derive true ordering after the fact. Without it that information is gone. Skew is indistinguishable from tampering to an assessor, and non-repudiation claims collapse if the time is contestable.
+
+**Time-service requirement.** DoD Zero Trust Overlays v1.1 select SC-45 and SC-45(1) as tailoring additions — neither is in the SP 800-53B Moderate or High baseline — and set audit time-stamp granularity at **1 millisecond**, comparison **at least daily**, and a **1 second** resync threshold. A hull disconnected for weeks cannot meet that from a shore path, so a local stratum-1 reference with holdover is a hardware requirement, not a configuration choice. The Kubernetes STIG contains no time-synchronization rules at all, so correctness is inherited entirely from the host OS STIG and a skewed node silently poisons every pod on it `[D29]`.
 
 ### 5.5 Schema governance
 
@@ -576,7 +605,9 @@ Per-aggregate policies are contracts between enterprise and edge instances, decl
 
 | Aggregate | Policy | Rationale |
 |---|---|---|
-| Telemetry samples and batches | Append-only; duplicate keys deduplicated | Immutable observations; duplication is a transport artifact |
+**No policy below compares wall-clock timestamps across nodes.** Where an earlier revision said "last-writer-wins," the winner is determined by `(producer, monotonic_seq)` or hybrid logical clock per §5.4, never by `source_time`. A mandated STIG clock step fires at reconnection, so timestamp arbitration would invert exactly when the outbox drains `[D29]`.
+
+| Telemetry samples and batches | Append-only; deduplicated on `(producer, monotonic_seq)` | Immutable observations; duplication is a transport artifact |
 | Health indicators | Recomputable; enterprise recomputation supersedes | Derived data |
 | Anomaly candidates | **Edge-generatable**; enterprise adds further candidates on reconnect | Afloat review requires a local candidate source `[D18]` |
 | Anomaly tags | Append-only; never overwritten or deleted; supersession recorded | Human judgments are evidence |
@@ -585,6 +616,7 @@ Per-aggregate policies are contracts between enterprise and edge instances, decl
 | Work orders and authorizations | Server-authoritative; edge submits requests | Maintenance authority does not fork |
 | Mission records | Edge-authoritative on creation; enterprise-authoritative thereafter | The ship knows the mission occurred |
 | Predictions | Enterprise-authoritative; edge holds a cache with an explicit staleness horizon, presented as degraded | Edge inference is a degraded mode and must display as such |
+| — | **Write authority is never bound to liveliness.** A disconnected hull retains authority over its own records | This is where the DDS ownership model is actively wrong for this design: DDS binds OWNERSHIP to LIVELINESS, so a dark ship would *lose* authority over the mission records it alone can produce. The opposite of what is required |
 | Requisitions | Server-authoritative; edge queues submissions | External legal effect |
 | Configuration baselines | Enterprise-authoritative; edge submits configuration-change proposals and may mint **provisional** installed-item identities | Two divergent views of what is installed is the most damaging available conflict |
 | Usage counters | Monotonic merge keyed on `(installed_item_id, counter_epoch)`; `usage_counter.reset` opens a new epoch; authoritative correction permitted with provenance and exempt from monotonicity | Keying on position rather than item would credit a new item with its predecessor's hours. Unqualified max-merge makes one sensor glitch permanent `[D9]` |
