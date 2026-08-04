@@ -268,6 +268,15 @@ CREATE TABLE failure_intel.causal_hypothesis (
     claimed_by             text,
     claimed_until          timestamptz,          -- MONOTONIC deadline in application code;
                                                   -- stored as wall-clock only for operator display
+    -- [AMENDMENT] row_version is the ETag source -- nothing else on this row
+    -- changes deterministically on every write, so adjudication_record.claim_etag
+    -- (below) had no column to be computed FROM. Bumped by exactly one on every
+    -- UPDATE that changes claim state, adjudication state, or the second
+    -- signature (a trigger, or the single write transaction each of those is
+    -- already required to be); ETag is str(row_version). Same mechanism 03 §7.2
+    -- rule 3 requires generically; stated concretely here because no document
+    -- gives one universal implementation and each owner must supply its own.
+    row_version            bigint NOT NULL DEFAULT 1,
     -- ── the second signature, for dual control at S3/S4 (§5.2). A second
     -- adjudicator otherwise has no way to see one is outstanding.
     second_signature_outstanding boolean NOT NULL DEFAULT false,
@@ -284,6 +293,16 @@ CREATE TABLE failure_intel.causal_hypothesis (
     -- §5.1: publication requires an adjudication record.
     CONSTRAINT published_has_adjudication CHECK (
         adjudication_state <> 'published' OR adjudication_record_id IS NOT NULL),
+    -- [AMENDMENT] §5.2's dual-control rule ("S3+ requires dual control") was
+    -- asserted in prose and enforced nowhere -- this CHECK only required AN
+    -- adjudication record, any record, regardless of strength_band. A single
+    -- adjudicator could publish an S3/S4 finding alone. Enforced here: at S3
+    -- or S4, second_signature_outstanding must be false at publication, i.e.
+    -- the second signature was actually obtained, not merely flagged pending.
+    CONSTRAINT dual_control_enforced_at_s3_plus CHECK (
+        adjudication_state <> 'published'
+        OR strength_band < 'S3'
+        OR second_signature_outstanding = false),
     -- §7.2: a repeat fingerprint must declare what is new.
     CONSTRAINT supersession_declares_novelty CHECK (
         (supersedes_hypothesis_id IS NULL) = (novelty_basis IS NULL)),
@@ -294,6 +313,15 @@ CREATE TABLE failure_intel.causal_hypothesis (
     CONSTRAINT claim_is_paired CHECK (
         (claimed_by IS NULL) = (claimed_until IS NULL))
 );
+
+-- [AMENDMENT] second_signature_outstanding's own lifecycle, previously
+-- unspecified ("no rule for who sets or clears it"): set true by the FIRST
+-- adjudication record at S3/S4 (decision='approve' with band_after >= S3),
+-- cleared false by a SECOND adjudication_record on the same hypothesis whose
+-- second_adjudicator is distinct from the first record's adjudicated_by. The
+-- API layer enforces the distinctness rule; dual_control_enforced_at_s3_plus
+-- above is the CHECK-level backstop that makes "cleared without a real second
+-- signer" unrepresentable at publication regardless of an application bug.
 
 CREATE UNIQUE INDEX ch_fingerprint_live ON failure_intel.causal_hypothesis (fingerprint)
     WHERE adjudication_state NOT IN ('superseded','withdrawn');
@@ -1094,7 +1122,9 @@ CREATE TABLE failure_intel.adjudication_record (
     adjudicated_at     timestamptz NOT NULL DEFAULT now(),
     second_adjudicator text,                       -- dual control
     second_adjudicated_at timestamptz,
-    claim_etag         text NOT NULL,              -- the lease this decision was made under
+    claim_etag         text NOT NULL,              -- [AMENDMENT] causal_hypothesis.row_version
+                                                    -- AT CLAIM TIME, stringified -- the lease
+                                                    -- this decision was made under
     note               text NOT NULL,              -- REQUIRED. A decision with no reason is not one
     evidence_reviewed  jsonb NOT NULL,             -- what was actually in front of the adjudicator
     classification     jsonb NOT NULL,
@@ -1106,7 +1136,7 @@ CREATE TABLE failure_intel.adjudication_record (
 );
 ```
 
-**Which authority class.** [03 §7.2.1](../architecture/03-integration-contracts.md) fixes the vocabulary — `maintainer | planner | supply_officer | design_authority | fleet_authority` — and its minimum-authority table enumerates the six `Proposal` kinds of [03 §7.2](../architecture/03-integration-contracts.md). **It has no row for a causal finding, a feature admission, or a taxonomy extension.** That is a genuine gap, and this document does not invent a class to fill it. The interim assignment, recorded as **OD-5** (§13):
+**Which authority class.** [03 §7.2.1](../architecture/03-integration-contracts.md) fixes the vocabulary — **[AMENDMENT]** `maintainer | planner | supply_officer | design_authority | fleet_authority | security_officer` (six, not the five originally stated here — `security_officer` was added by amendment 03-1) — and its minimum-authority table enumerates the **eight** `Proposal` kinds of [03 §7.2](../architecture/03-integration-contracts.md) (not six — `purge`/`rewrap` were added by amendment 03-2). **It has no row for a causal finding, a feature admission, or a taxonomy extension.** That is a genuine gap, and this document does not invent a class to fill it. The interim assignment, recorded as **OD-5** (§13):
 
 | Act | Blast radius | Minimum authority (interim) | Dual control |
 |---|---|---|---|
@@ -1121,6 +1151,8 @@ CREATE TABLE failure_intel.adjudication_record (
 [03 §7.2.1](../architecture/03-integration-contracts.md) permits Phase 3 to *"add finer-grained roles within a class"* but not to remove the minimum.
 
 **OD-5 resolved.** `[amendment, closes 52-practitioner-apps.md §13 correction 17]` — the wireframe names "Reliability Engineer" as this document's adjudicating persona, but the six-member `AuthorityClass` enum (`31-auth.md` §2.4) has no such role and §13 item 12 forbids a seventh. The persona named on the sheet could not perform the sheet's primary action. Resolved exactly as anticipated above: **`reliability_engineer` is a Keycloak realm sub-role composited into `design_authority`** — it grants everything `design_authority` grants (so the authority-matrix check in `31-auth.md` §6.4 needs no change; a principal holding `reliability_engineer` satisfies any cell requiring `design_authority`) and exists purely so the identity block, the audit record, and the operator console can display the finer-grained role a Failure Intelligence adjudicator actually holds, per this table's use of it. Recorded as **realm role composition**, not a new `AuthorityClass` value — the enum stays six. Billet mapping (which humans hold `reliability_engineer` versus plain `design_authority`) is a personnel-source question, out of this document's scope. Sheet H's `RE` card and footnote need the corresponding correction, from *"review-only"* to *"adjudicates, via `reliability_engineer` composited into `design_authority`."*
+
+**[AMENDMENT] Where it actually surfaces, closing a gap the resolution above left open.** `fathom.identity.authority_classes[]` is filtered to the six canonical `AuthorityClass` values (`31-auth.md` §3.1 rule 3) — `reliability_engineer` is not one of them and would be silently dropped if that were the intended carrier, defeating the display purpose stated above before it ever reached a screen. It instead surfaces on **`fathom.identity.qualifications[]`** (`31-auth.md` §2.3), the identity block's existing free-text realm-sub-role list, unfiltered by the six-value enum and already present in every identity block for an unrelated reason (feeding `anomaly_tag.confirmed`'s reviewer-qualification field). `adjudication_record.authority_class` (currently a bare `text NOT NULL` with no `CHECK`) is written as `design_authority` regardless — the enum stays six there too — with `qualifications` consulted only for display, never for authorization.
 
 **Adjudication requires a claim.** `POST /hypotheses/{id}/claim` obtains a lease; adjudication requires `If-Match` on the claimed ETag and returns 412 otherwise. This is [03 §7.2](../architecture/03-integration-contracts.md)'s rule, applied here for the same reason: *"Without this the eventually-consistent queue permits two approvals."*
 
@@ -1660,7 +1692,7 @@ Recorded rather than resolved with an invented value. Each is a genuine judgment
 | **OD-2** | **`gate.fi_max_trimmed_fraction` and `gate.fi_max_balance_smd`** — the practical margins for propensity positivity and balance (§3.3 P4, P5) | Any propensity-handling method. The *form* of both tests is prescribed; the margin is not | **No defaults.** The service refuses to run a propensity-handling method until set, on [13 §16.4](13-synthetic-data-generator.md)'s pattern | Program, with engineering recommendation |
 | **OD-3** | **The `triggering_driver` vocabulary is not enumerated in [03 §6](../architecture/03-integration-contracts.md).** FI's driver-class mapping is currently derived from [13 §8.4](13-synthetic-data-generator.md)'s five generator values | A mapping built on a generator's vocabulary rather than a contract's. Every unmapped value degrades to `unknown`, which is safe but progressively useless | Fail-safe mapping with `driver_mapping_version` recorded on every projection row and census | Architecture + Scheduling |
 | **OD-4** | `strength.observation_multipliers` `[2, 4, 8]` and `strength.max_hull_dominance` — the A1 and A2 thresholds (§4.3) | Nothing hard; shipped values are versioned in `strength_rule_version` and auditable | Shipped as stated, flagged for SME review. The ratio *form* is the defensible part | Failure Intelligence + reliability SME |
-| **OD-5** | **The authority class for publishing a causal finding, arbitrating an attribution, and admitting a feature.** [03 §7.2.1](../architecture/03-integration-contracts.md)'s minimum-authority table has no row for any of them | A finer-grained `reliability_engineer` role within `design_authority`, and the correct dual-control scope | Interim assignment in §5.2: `design_authority`, dual control at S3+ and for all vocabulary change | Architecture + program |
+| **OD-5** | ~~**The authority class for publishing a causal finding, arbitrating an attribution, and admitting a feature.** [03 §7.2.1](../architecture/03-integration-contracts.md)'s minimum-authority table has no row for any of them~~ **[RESOLVED — this row was stale: §5.2 declared it resolved, this row still carried it as interim. `reliability_engineer` is settled as a realm sub-role composited into `design_authority`, surfaced via `fathom.identity.qualifications[]` (§5.2), not a new `AuthorityClass` value]** | Closed — no correction needed | **Resolved in §5.2.** `design_authority`, dual control at S3+ and for all vocabulary change | Resolved |
 | **OD-6** | The `review_due` interval for `monitored` (S2) features, and the ablation reporting cadence PdM owes (§5.4) | Nothing structural; the field is `NOT NULL` | Set per admission by the adjudicator until a standing interval exists | Program + PdM |
 | **OD-7** | **Whether a distinct `causal_finding.retracted` event is added to [03 §6](../architecture/03-integration-contracts.md)'s catalog** (§5.5) | Consumers must branch on `finding_class` inside a publication event to detect a withdrawal, which is easy to miss | Retraction expressed through `finding_class` on `causal_finding.published`. No undeclared producer event is added | Architecture |
 | **OD-8** | Add `fathom.reference-data.*` topics and their consumers to [03 §6](../architecture/03-integration-contracts.md)'s catalog (doc 12's OD-7) | FI's consumer-driven conformance tests for the taxonomy and proposal topics cannot be written | Consumed with locally documented expectations; tests deferred and named | Architecture |
