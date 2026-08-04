@@ -415,6 +415,14 @@ CREATE TABLE dissemination (
   materialized     boolean NOT NULL,   -- true if content, not just a reference, was stored
   purge_receipt_id uuid  NULL REFERENCES purge_receipt(receipt_id),
   purged_at        timestamptz NULL,
+  key_class        text  NOT NULL,     -- [AMENDMENT] the source record's key_class (§5.3),
+                                        -- carried on the export alongside sync_quality (§4.4).
+                                        -- Without it, GET /dissemination (§10.5) is a row-level
+                                        -- read with no column §10.6's dominance predicate can
+                                        -- filter on — an existence/topology oracle (which hull
+                                        -- holds a copy of which record) exempt from the
+                                        -- classification discipline every other read in this
+                                        -- service is held to
   PRIMARY KEY (source_event_id, holder_slug, holder_node, holder_store)
 );
 ```
@@ -1177,7 +1185,7 @@ Base path `/api/v1/audit/` (document 03 §4, document 09 §7.1). Every operation
 | `GET /lineage/{record_id}` | required | none | **Forward** closure: inputs, versions, computation references. *"Sufficient to trace any operator-visible figure to its sources"* (obligation 9). Depth-limited, cursor-paginated |
 | `GET /lineage/{record_id}/dependents` | required | none | **Reverse** closure: what this contaminated. The purge-closure query |
 | `POST /lineage/closures` | required | none | Compute-only. A closure over a selector set, with per-store holder resolution from the dissemination ledger. This is what phase 3 of §6.2 calls |
-| `GET /dissemination?source_event_id=&holder_slug=&purge_id=&cursor=` | required | none | **[AMENDMENT — closes `51-operator-console.md` §22 row 67, blocking Sheet 11's "who holds a copy" box.]** §4.6 defines the dissemination-ledger table and calls it *"the single most important addition this document makes to the platform,"* but its only prior exposure was `POST /lineage/closures`, compute-only with no cache key — a mutation-shaped operation standing in for a read. This is the direct, cursor-paginated read: every holder row for a source event or an in-progress purge, with `holder_slug`, `holder_node`, `holder_store`, `applied_at`, and `materialized` |
+| `GET /dissemination?source_event_id=&holder_slug=&purge_id=&cursor=` | required | none | **[AMENDMENT — closes `51-operator-console.md` §22 row 67, blocking Sheet 11's "who holds a copy" box.]** §4.6 defines the dissemination-ledger table and calls it *"the single most important addition this document makes to the platform,"* but its only prior exposure was `POST /lineage/closures`, compute-only with no cache key — a mutation-shaped operation standing in for a read. This is the direct, cursor-paginated read: every holder row for a source event or an in-progress purge, with `holder_slug`, `holder_node`, `holder_store`, `applied_at`, and `materialized`. **[AMENDMENT]** §10.6's dominance predicate applies here like every other read: filtered on the row's `key_class` (§4.6) against the caller's clearance, inside the query, never post-hoc. Without it this operation is a row-level existence/topology oracle exempt from the discipline every other read in this service is held to — which hull holds a copy of which record, and (via `?purge_id=`) the exact closure set a purge determined needed spilling. An undominated row is never returned, never counted, and never advances the cursor |
 
 `GET /lineage/{record_id}` is the operation an operator's "why does this figure say 0.31?" ultimately resolves to, and it is why obligation 9 is a *contract* term rather than an aspiration: it is externally observable, and the conformance suite asserts that a published derived value's inputs are retrievable. `GET /dissemination` is its purge-side counterpart: the operation "who still holds a copy" resolves to, read-only and cheap enough for an operator console to poll while a purge is in flight.
 
@@ -1217,7 +1225,7 @@ The last row is easy to overlook in an audit service and is a real leak: "how ma
 
 | Operation | `x-sub` | `x-side-effects` | Notes |
 |---|---|---|---|
-| `GET /effectiveness/warning-lead-time-coverage?scope=&id=&horizon_days=&stratum=` | required | none | Computes `27-fleet-status.md` §7.5's formula exactly — audit is already positioned to, since amendment 03-5 makes it a universal consumer of `risk_flag_transition`'s `changed_since` feed and of `maintenance_action.recorded`, the two streams the formula joins on `installed_item_id`. Response carries the coverage fraction **and** every disclosure §7.5 requires: the lead-time distribution (p10/p50/p90), the covered and uncovered counts, the chance reference and flag rate, and the achievable-ceiling fraction. `scope`/`id` per document 03 §5.4's vocabulary (`asset`, `tycom`, `fleet`); `stratum` selects `reference_class` and methodology version, per §7.5's rule that this figure is always stratified |
+| `GET /effectiveness/warning-lead-time-coverage?scope=&id=&horizon_days=&stratum=` | required | none | Computes `27-fleet-status.md` §7.5's formula exactly — audit is already positioned to, since amendment 03-5 makes it a universal consumer of `risk_flag_transition`'s `changed_since` feed and of `maintenance_action.recorded`, the two streams the formula joins on `installed_item_id`. Response carries the coverage fraction **and** every disclosure §7.5 requires: the lead-time distribution (p10/p50/p90), the covered and uncovered counts, the chance reference and flag rate, and the achievable-ceiling fraction. `scope`/`id` per document 03 §5.4's vocabulary (`asset`, `tycom`, `fleet`); `stratum` selects `reference_class` and methodology version, per §7.5's rule that this figure is always stratified. **[AMENDMENT]** §10.6's last row applies to this response exactly as it does to every other rollup this service serves — a stratified fraction over a population from which compartmented members were excluded is the same one-subtraction magnitude channel `27-fleet-status.md` §3.4 identified and solved for readiness. The response therefore also carries `restricted_contributors_present` (boolean) and, when true, `excluded_count` — never a description, a system, or a magnitude beyond the count — following `27-fleet-status.md` §3.4's exclusion-by-default policy verbatim rather than restating it differently here |
 
 **Why here rather than a new platform service.** Audit already receives every event this computation needs (the universal-consumer amendment), already exports evaluation figures externally (`evaluation_export.completed`, §11.1), and already carries the aggregation-is-a-classification-event discipline of §10.6 that this figure needs too — a coverage rate computed over a mixed-classification population is exactly the aggregation channel §10.6's last row warns about, and `restricted_contributors_present` applies to this response the same way it applies to every other rollup this service serves. A dedicated effectiveness-analytics service was the alternative `27-fleet-status.md` §7.3 left open; this amendment takes the smaller step of using the component already positioned to answer, rather than adding an eighth platform-service inventory row for one metric.
 
@@ -1374,6 +1382,8 @@ Companion cases, each required:
 | `test_purge_requires_dual_control_and_if_match` | Single adjudicator → refused; missing `If-Match` → `428`; concurrent adjudication → `412` (D16) |
 | `test_agent_principal_cannot_propose_or_adjudicate_purge` | `accountable_autonomous` and any `agent_id` refused (§6.1, D14) |
 | `test_purge_resumable_at_every_injection_point` | Document 11 §11.1's matrix over the purge state machine: never half-applied, always resumable, key destruction only after every prior phase is durable |
+| `test_dissemination_dominance_filters_undominated_rows` | **[AMENDMENT]** A `GET /dissemination` row whose `key_class` the caller's clearance does not dominate is never returned, never counted, and never advances the cursor (§10.5, §10.6) |
+| `test_warning_lead_time_coverage_discloses_restricted_contributors` | **[AMENDMENT]** `GET /effectiveness/warning-lead-time-coverage` sets `restricted_contributors_present` and `excluded_count` when the population includes compartmented members, and the coverage fraction excludes them rather than silently renormalizing (§10.7, §10.6 last row) |
 
 ### 12.3 Tombstone tests
 
@@ -1562,6 +1572,7 @@ Each item carries the finding or citation that makes it a defect rather than a p
 - [ ] `attestation` stores the whole signed `clock` block byte-identically; `attestation_index` is a projection only; `Infinity` round-trips. *(§4.4, §8.3)*
 - [ ] Provenance edges are written for all seven `edge_kind` values, and an `event_ingest` for a derived aggregate with zero `label_inheritance` edges is **admitted and flagged**, never dropped. *(§4.5; obligation 9)*
 - [ ] The dissemination ledger records `materialized` correctly, and rebuilds via `ChangedSinceRebuilder` produce ledger rows. *(§4.6; amendment 11-1)*
+- [ ] `GET /dissemination` filters on `key_class` dominance, never post-hoc; `GET /effectiveness/warning-lead-time-coverage` discloses `restricted_contributors_present`/`excluded_count`. *(§10.5–§10.7; `test_dissemination_dominance_filters_undominated_rows`, `test_warning_lead_time_coverage_discloses_restricted_contributors`)*
 
 ### 15.2 Key hierarchy
 
@@ -1632,7 +1643,7 @@ Every item is a change this document's design requires in a document upstream of
 
 | # | Section | Edit |
 |---|---|---|
-| **11-1** | §10.5 | The inbox must export a **dissemination record** per apply — `(source_event_id, holder_slug, holder_node, holder_store, applied_at, materialized)` — alongside the existing `sync_quality` export, **and `ChangedSinceRebuilder` must do the same for every rebuild**. §4.6 explains why the rebuild path is the one that resurrects purged content. |
+| **11-1** | §10.5 | The inbox must export a **dissemination record** per apply — `(source_event_id, holder_slug, holder_node, holder_store, applied_at, materialized, key_class)` — alongside the existing `sync_quality` export, **and `ChangedSinceRebuilder` must do the same for every rebuild**. §4.6 explains why the rebuild path is the one that resurrects purged content. |
 | **11-2** | §9.3 | Add a **priority class 0-R** above provisional identity: remediation commands and purge receipts. A spillage remediation outranks a data-quality concern. |
 | **11-3** | §9.1 | `on_breach` currently names `EXPLICIT_READ_ONLY` as *"the only permitted value."* Add `ALERT_AND_DEGRADE`, permitted **only** for the audit store, because refusing audit writes stops the accountability record for every service on the hull and no document-08 control requires it. |
 | **11-4** | §10.1, §13 OQ-10 | **Answered here:** Audit accepts a per-event attestation at full event volume (§4.4) — monthly range partitions, no domain payload, class-day purge groups, `Infinity`-capable dispersion, partitions transferred to object storage under AU-4(1) and never dropped. The absolute sizing is blocked on a per-topic event rate the capacity model does not yet contain (§17 OQ-3). Also confirm that `purge_by_selector` accepts a coordinator-issued `remediation_id` and returns a **signed** receipt per §6.4. |

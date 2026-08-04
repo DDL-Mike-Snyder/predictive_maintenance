@@ -107,7 +107,7 @@ Two further rows changed state and matter to this document:
 | 06 — Stock & Requisition | `/supply`, `/supply/parts/:niin` **+ one child route [EXTENDS 50 §4.2]** | **Partially.** Stock, allowance, lead time, reservation set yes; `requisition.state`'s enum is **undefined in the corpus** (§13, §22 row 12) |
 | 07 — Bounded Review Queue | `/pma` **+ `/pma/reviews/:reviewId` replacing [50 §4.2]'s `/pma/missions/:missionId`** | **Partially.** Candidate, evidence, actions, history yes; `Tags confirmed` and the mission-scoped route are `[GAP]`s (§14, §22 rows 13–14) |
 | 10 — Unified Adjudication Queue | `/adjudication`, `/adjudication/:proposalId` | **Mostly.** List, filters, sort, claim yes; **`adjudicate` has no specified request body** (§15, §22 row 16). **[AMENDMENT]** The `authority_class` filter enum omitting `security_officer` (§22 row 15) is now resolved — `30-gateway.md` §4.5 added it |
-| 11 — Remediation & Purge Queue | `/audit/remediations`, `/audit/remediations/:proposalId` | **Partially.** Queue, panel, receipt yes; **the queue row cannot represent a three-signature purge**, `Store` has no field, and the dissemination ledger has no read operation (§16, §22 rows 17–19) |
+| 11 — Remediation & Purge Queue | `/audit/remediations`, `/audit/remediations/:proposalId` | **Partially.** Queue, panel, receipt yes; **the queue row cannot represent a three-signature purge** and `Store` has no field (§16, §22 rows 17–19). **[AMENDMENT]** The dissemination ledger's missing read operation (row 67) is resolved |
 
 **Nine of twelve screens are partially wired, and that is the finding this document exists to produce.** Every partial is a named `[GAP]` with a §17 rendering and a §22 row. None is papered over with a plausible-looking number, because [30 §3.4](30-gateway.md) states the governing rule for all of them: *"The UI must render the gap; it must not render zero."*
 
@@ -1900,13 +1900,13 @@ Three rules specific to a purge proposal, from [32 §6.1]:
 
 `[ESTABLISHED HERE]`: the column header becomes **`Closure`** and renders three states — `not yet enumerated (claim to compute)` for `proposed`; the sealed store list from query 3 for `claimed` and later; and `aborted — closure grew` where applicable. WF's drawn value is the phase-3-and-later state, and labelling the column `Closure` makes the empty case legible instead of looking like missing data.
 
-### 16.6 Box 4 — the dissemination ledger, which has no read operation
+### 16.6 Box 4 — the dissemination ledger
 
-[32 §4.6](32-audit.md) defines the `dissemination` table — `source_event_id`, `holder_slug`, `holder_node` (`'enterprise' | 'edge:<asset_id>'`), `holder_store`, `applied_at`, **`materialized`**, `purge_receipt_id`, `purged_at` — and calls it *"the single most important addition this document makes to the platform."*
+[32 §4.6](32-audit.md) defines the `dissemination` table — `source_event_id`, `holder_slug`, `holder_node` (`'enterprise' | 'edge:<asset_id>'`), `holder_store`, `applied_at`, **`materialized`**, `purge_receipt_id`, `purged_at`, `key_class` — and calls it *"the single most important addition this document makes to the platform."*
 
-**No operation exposes it.** [32 §10.4]'s provenance surface is `GET /lineage/{record_id}`, `GET /lineage/{record_id}/dependents`, and `POST /lineage/closures` — the last *"[c]ompute-only. A closure over a selector set, with per-store holder resolution from the dissemination ledger."* There is **no `GET /dissemination`**, and a compute-only `POST` is a poor fit for a screen box: it is a mutation-shaped read that TanStack Query would treat as a mutation and that has no cache key of its own. §22 row 67.
+**[AMENDMENT — §22 row 67 resolved.]** This section previously found no operation exposed the ledger: [32 §10.4]'s provenance surface had only `GET /lineage/{record_id}`, `GET /lineage/{record_id}/dependents`, and a compute-only `POST /lineage/closures` — a poor fit for a screen box, being mutation-shaped with no cache key. `32-audit.md` §10.5 now adds `GET /dissemination?source_event_id=&holder_slug=&purge_id=&cursor=`, cursor-paginated and filtered on `key_class` dominance per §10.6 (never post-hoc — an undominated row is never returned, counted, or advances the cursor).
 
-`[ESTABLISHED HERE]`, the interim, and it is the correct source for this box anyway: **box 4 renders from query 3, `GET /purges/{id}`**, which [32 §10.5] states carries *"State machine, sealed closure, per-store receipts, **pending nodes**."* That is exactly WF's three columns plus the pending state:
+Box 4 continues to render from query 3, `GET /purges/{id}` [32 §10.5], which conveniently already carries *"State machine, sealed closure, per-store receipts, **pending nodes**"* in the one call this screen already makes — the newly-available `GET /dissemination` is the general-purpose read `51`'s own audit trail and any future consumer needing dissemination data outside an in-flight purge would use, not a required replacement for this box's existing source. That is exactly WF's three columns plus the pending state:
 
 | WF column | Field | Rendering |
 |---|---|---|
@@ -2306,7 +2306,7 @@ One file per route in `tests/routes/`, each rendering the route inside a real `A
 
 **Governance**
 
-- [ ] Corrections **1–68** of §22 each filed against their document with an owner. **Rows 4, 16, 17, 21, 59, and 67 block a complete `apps/web`** and are recorded as blocking. **Rows 15 and 19 are resolved.**
+- [ ] Corrections **1–68** of §22 each filed against their document with an owner. **Rows 4, 16, 17, 21, and 59 block a complete `apps/web`** and are recorded as blocking. **Rows 15, 19, and 67 are resolved.**
 - [ ] Open questions **UI-OQ-51-1 … UI-OQ-51-6** and the five inherited from [50 §14] recorded in the README as local resolutions where a screen had to proceed *(09 §8.7)*
 - [ ] Every deviation from [50](50-ui-design-system.md) carries an ADR under `docs/adr/` and appears in §22 *(09 §8.7)*
 - [ ] No `[ESTABLISHED HERE]` convention of [50](50-ui-design-system.md) has been silently varied *(09 §8.7)*
@@ -2315,7 +2315,7 @@ One file per route in `tests/routes/`, each rendering the route inside a real `A
 
 ## 22. Corrections to source documents
 
-Found while wiring every screen field by field, following [09 §11](09-monorepo-and-conventions.md)'s convention and [26 §13](26-supply.md)'s table shape. Each is a **defect in the cited document or in the approved wireframe**, not a decision of this one. **None is applied here.** **Rows 4, 16, 17, 21, 59, and 67 block a complete `apps/web`. Rows 15 and 19 are resolved** — see their rows below.
+Found while wiring every screen field by field, following [09 §11](09-monorepo-and-conventions.md)'s convention and [26 §13](26-supply.md)'s table shape. Each is a **defect in the cited document or in the approved wireframe**, not a decision of this one. **None is applied here.** **Rows 4, 16, 17, 21, and 59 block a complete `apps/web`. Rows 15, 19, and 67 are resolved** — see their rows below.
 
 | # | Document | Defect | Correction | Status |
 |---|---|---|---|---|
@@ -2385,7 +2385,7 @@ Found while wiring every screen field by field, following [09 §11](09-monorepo-
 | 64 | **30 §4.5, §4.6** | `POST /proposals/{proposal_id}/claim` has **no described request body** — not even an explicit statement that it takes none | State that the body is empty, or specify it | Interim in §15.7 (none sent). Flagged |
 | 65 | **WF sheet 11 box 2 row 1** | `security_officer — 1 of 1` for an item-scope purge. **[03 §7.2.1] and [32 §6.1] require `security_officer` + dual control at item/asset scope — two of two, not one of one** | Redraw as `1 of 2` | **Applied in §16.4.** The wireframe needs the edit |
 | 66 | **WF sheet 11 box 2; 32 §6.2** | The `Store` column shows a store list for a `proposed` purge. **The store set is the sealed closure, written at phase 3 (ENUMERATE), which follows phase 2 (CONTAIN) on claim** — a `proposed` purge has no `purge_id` and no closure | Relabel the column `Closure` with a `not yet enumerated` state | **Applied in §16.5.** The wireframe needs the edit |
-| 67 | **32 §4.6, §10.4** | The **dissemination ledger has no read operation.** §4.6 defines the table and calls it *"the single most important addition this document makes to the platform"*; §10.4's only exposure is `POST /lineage/closures`, **compute-only**, which is a mutation-shaped read with no cache key. WF sheet 11 box 4 is titled `Dissemination ledger — who holds a copy` | Add `GET /dissemination?…` cursor-paginated, or state that `GET /purges/{id}`'s holder list is the operator-facing surface | **Blocking** sheet 11 box 4 as drawn. Interim in §16.6 (`GET /purges/{id}`, which carries holders, receipts, and pending nodes). Flagged |
+| 67 | **32 §4.6, §10.4** | ~~The **dissemination ledger has no read operation.**~~ **[RESOLVED.]** `32-audit.md` §10.5 added `GET /dissemination?source_event_id=&holder_slug=&purge_id=&cursor=`, cursor-paginated, filtered on `key_class` dominance per §10.6 | Closed — no correction needed | **Resolved.** Sheet 11 box 4 continues to render from `GET /purges/{id}` (§16.6) as the more convenient single-call source; `GET /dissemination` is available as the general-purpose read |
 | 68 | **WF sheets 01, 01B** | The suppressed-score case of [27 §3.9] — `score: null` with `suppression_reason` `all_contributors_restricted` or `no_contributors`, at HTTP **200** — **is drawn on neither sheet**, and it is the case where rendering `100` *"presents a fully compartmented, possibly failed asset as perfectly ready."* [50 §13 row 12] filed this and it is **still open** | Draw both null-score states on both sheets | Specified in §17.3; the wireframe needs the edit |
 
 ---
