@@ -1704,6 +1704,7 @@ Base path `/api/v1/design-advisory/`. Every operation declares `x-substitution` 
 | `GET /dependencies?niin=&depth=&relation=&as_of=&changed_since=&limit=&cursor=` | required | `none` | ✔ | 04 §10, neighbourhood |
 | `GET /dependencies/{niin}/impact?max_depth=&as_of=&persist=` | required | `none` | ✔ | 04 §10, §4.5. Naming carve-out |
 | `GET /impact-snapshots/{id}` | required | `none` | ✔ | Reproducibility of a cited traversal |
+| `GET /cost-estimates/{id}` | required | `none` | ✔ | **[amendment, closes `30-gateway.md` §3.2's `redesign_case_detail` cost-estimate fragment, which had no operation to resolve `redesign_case.cost_estimate_id` by]** Method, assumptions, `is_lower_bound`, and the two-stage state |
 | `GET /test-records?niin=&test_kind=&record_status=&changed_since=&limit=&cursor=` | required | `none` | ✔ | 04 §10 |
 | `GET /test-records/{id}` | required | `none` | ✔ | |
 | `GET /test-coverage?niin=` | required | `none` | ✔ | `test_coverage_v`, **absence rows included**. Naming carve-out (query projection) |
@@ -1711,7 +1712,7 @@ Base path `/api/v1/design-advisory/`. Every operation declares `x-substitution` 
 | `GET /design-scenarios/{id}` | required | `none` | ✔ | |
 | `POST /design-scenarios` | required | `state-changing` | ✗ | Publishes `design_change.projected` |
 | `POST /proposals` | required | **`proposal-only`** | ✔ | §6.4. `kind=redesign_case` only |
-| `GET /proposals?status=&changed_since=&limit=&cursor=` | required | `none` | ✔ | |
+| `GET /proposals?status=&case_id=&changed_since=&limit=&cursor=` | required | `none` | ✔ | **`case_id` added** `[amendment, closes 52-practitioner-apps.md §13 correction 18]` — filters on `payload.case_id` (§6.2's `RedesignCaseProposalPayload`), this service's own domain object, not the gateway's opaque queue projection. Without it, a review surface reached by `case_id` (the practitioner app's Sheet 09, or the console's `redesign_case_detail` drill-down) has no way to find the live proposal it must adjudicate — `redesign_case.published_via_proposal_id` is set only *after* publication, which is exactly when adjudication is already over |
 | `POST /proposals/{id}/claim` | required | `state-changing` | ✗ | 03 §7.2 rule 3 |
 | `POST /proposals/{id}/adjudicate` | required | `state-changing` | ✗ | `If-Match` required; `design_authority` |
 | `POST /test-records/bulk` | required | `state-changing` | ✗ | Bulk, idempotent, fenced (03 §4, `[D10/C7]`). `X-Backfill` honoured |

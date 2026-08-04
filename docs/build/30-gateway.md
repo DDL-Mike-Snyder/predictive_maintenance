@@ -429,9 +429,48 @@ The registry, with every budget cited:
 | `asset_detail` | `/views/asset/{asset_id}` | 1500 ms | 06 §7 | `asset` (registry · **required** · 0); `configuration_baseline` (registry · **required** · 0); `readiness` (fleet-status · optional · 0); `predictions` (pdm · optional · 0); `open_work` (maintenance · optional · 0); `parts_position` (supply · optional · 0); `open_proposals` (**local read model** · optional · 0); `installed_items` (registry · optional · **1**) |
 | `installed_item_detail` | `/views/installed-item/{installed_item_id}` | 1500 ms | 06 §7 | `installed_item` (registry · **required** · 0); `prediction` (pdm · optional · 0); `health_indicators` (telemetry · optional · 0); `usage_counters` (telemetry · optional · 0); `maintenance_history` (maintenance · optional · 0); `failure_modes` (failure-intel · optional · 0) |
 | `explanation_decomposition` | `/views/explanation/{prediction_id}` | 4000 ms | 06 §7 *"< 4 s for explanation decomposition"* | `prediction` (pdm · **required** · 0); `contributing_factors` (pdm · **required** · 0); `feature_observations` (telemetry · optional · **1**); `causal_findings` (failure-intel · optional · 1); `procedure_references` (knowledge-retrieval · optional · 1) |
-| `redesign_case_detail` **[AMENDMENT]** | `/views/redesign-case/{case_id}` | 4000 ms, **[NOT SOURCED — see note]** | No figure exists in 06 §7 for this view; `explanation_decomposition`'s budget is borrowed by analogy (same order of composition: a multi-hop dependency/causal chain, not a single-slug lookup) | `redesign_case` (design-advisory · **required** · 0); `dossier` (design-advisory · **required** · 0); `impact_snapshot` (design-advisory · optional · 0); `cost_estimate` (design-advisory · optional · 0); `causal_findings` (failure-intel · optional · **1**) |
+| `redesign_case_detail` **[AMENDMENT]** | `/views/redesign-case/{case_id}` | 4000 ms, **[NOT SOURCED — see note]** | No figure exists in 06 §7 for this view; `explanation_decomposition`'s budget is borrowed by analogy (same order of composition: a multi-hop dependency/causal chain, not a single-slug lookup) | `redesign_case` (design-advisory · **required** · 0); `dossier` (design-advisory · **required** · 0); `impact_snapshot` (design-advisory · optional · 0); `cost_estimate` (design-advisory · optional · 0); `gate_decision` (design-advisory · optional · 0); `causal_findings` (failure-intel · optional · **1**) |
 
 **`redesign_case_detail` closes `42-redesign-case-builder.md` §18 item 13**: *"An adjudicator opening a `redesign_case` from the queue has no composed drill-down, though the case's value is entirely in its evidence chain."* `28-design-advisory.md` §2's claim that this composition *"is composed by the gateway"* had no implementation until this row. The budget is flagged rather than asserted as settled — `42`'s own §18 item 20 separately records that 06 §6 has no adjudication-effort figure for a `redesign_case` at all, so this view's timing budget shares that same open dependency rather than resolving it. **Phase 1's `causal_findings` fragment is the drill-down into Failure Intelligence** the same document's §18 item 13 describes as absent from every existing `ViewSpec` fragment list.
+
+**The `gate_decision` fragment was added by a later amendment** `[closes 52-practitioner-apps.md §13 correction 7, blocking]` — the wireframe's cost box draws the two-stage gate, and `28-design-advisory.md` §5.5's `failed_conditions`/`remedy` are the actionable part of a gate failure; without this fragment, rendering the gate region required a second client call this view exists to avoid.
+
+**Every fragment's `operation_id`, enumerated — `[amendment, closes 51-operator-console.md §22 row 21, blocking]`.** The field has existed in `Fragment`'s definition (§3.2) since this document's original authoring — *"the upstream `operationId` (09 §7.3); resolved against its committed spec"* — and no fragment's value was ever given, so no consumer of this table could derive a response shape from this document alone. Cross-checked against each cited sub-application's own API-surface table:
+
+| View | Fragment | `operation_id` |
+|---|---|---|
+| `fleet_overview` | `readiness_rollup` | `GET /readiness?scope=fleet` (`27-fleet-status.md` §10.1) |
+| | `asset_status` | `GET /assets?...` (`20-registry.md` §9.1, list form) |
+| | `open_casrep_risk` | `GET /risk-flags?severity=&horizon_days=` (`27-fleet-status.md`) |
+| | `availability_windows` | `GET /availabilities?asset_id=` (`24-scheduling.md` §9.1) |
+| | `proposal_counts` | none — the local `proposal_queue` read model (§9.3), not an upstream call |
+| `asset_detail` | `asset` | `GET /assets/{asset_id}` (`20-registry.md` §9.1) |
+| | `configuration_baseline` | `GET /assets/{asset_id}/configuration` (`20-registry.md` §9.1) |
+| | `readiness` | `GET /readiness?scope=asset&asset_id=` (`27-fleet-status.md` §10.1) |
+| | `predictions` | `GET /predictions?asset_id=` (`22-pdm.md` §10) |
+| | `open_work` | `GET /work-orders?asset_id=&status=open` (`24-scheduling.md` §9.1) |
+| | `parts_position` | `GET /availability?asset_id=` (`26-supply.md` §7) |
+| | `open_proposals` | none — the local read model, same as `proposal_counts` above |
+| | `installed_items` | `GET /assets/{asset_id}/installed-items` (`20-registry.md` §9.1) |
+| `installed_item_detail` | `installed_item` | `GET /installed-items/{installed_item_id}` (`20-registry.md` §9.1) |
+| | `prediction` | `GET /predictions?installed_item_id=` (`22-pdm.md` §10) |
+| | `health_indicators` | `GET /health-indicators?installed_item_id=&from=&to=&as_of=&as_known_at=` (`21-telemetry.md` §9.1) |
+| | `usage_counters` | `GET /usage-counters?installed_item_id=&as_of=` (`21-telemetry.md` §9.1) |
+| | `maintenance_history` | `GET /maintenance-history?installed_item_id=&niin=` (`24-scheduling.md` §9.1, amended) |
+| | `failure_modes` | `GET /failure-modes?equipment_class=&taxonomy_version=` (`25-failure-intelligence.md` §8.1) — resolved from the installed item's `equipment_family`, itself read off its `PartRef`. **[VERIFY]**: this fragment may be better served by `GET /attributions?installed_item_id=` (attributed findings, item-scoped) than by the class-level annotation surface; the two answer different questions and the wireframe's box (04 §3's per-item view) reads as the latter |
+| `explanation_decomposition` | `prediction` | `GET /predictions/{id}` (`22-pdm.md` §10) |
+| | `contributing_factors` | `GET /predictions/{id}/provenance` (`22-pdm.md` §10) |
+| | `feature_observations` | `GET /health-indicators?installed_item_id=&from=&to=` (`21-telemetry.md` §9.1), windowed to the prediction's observation window |
+| | `causal_findings` | `GET /attributions?installed_item_id=&mode_lineage_id=` (`25-failure-intelligence.md` §8.1) |
+| | `procedure_references` | `POST /retrievals` (`35-knowledge-retrieval.md` §8, `mode=asset_scoped`) |
+| `redesign_case_detail` | `redesign_case` | `GET /redesign-cases/{id}` (`28-design-advisory.md` §9.1) |
+| | `dossier` | `GET /dossiers/{id}` (`28-design-advisory.md` §9.1) |
+| | `impact_snapshot` | `GET /impact-snapshots/{id}` (`28-design-advisory.md` §9.1) |
+| | `cost_estimate` | `GET /cost-estimates/{id}` (`28-design-advisory.md` §9.1, added by amendment alongside this row — no such operation existed until this reconciliation pass) |
+| | `gate_decision` | `GET /redesign-candidates/{id}/gate-decisions` (`28-design-advisory.md` §9.1, full append-only history — the fragment takes the most recent row) |
+| | `causal_findings` | `GET /attributions?niin=` (`25-failure-intelligence.md` §8.1) |
+
+One row above is itself a new, smaller correction rather than a clean answer — `failure_modes`'s `[VERIFY]` — recorded here rather than papered over with a confident-sounding wrong answer. `cost_estimate`'s missing read operation was found and closed in the same pass (`28-design-advisory.md` §9.1, `GET /cost-estimates/{id}`).
 
 Four properties of the table are load-bearing:
 
@@ -834,6 +873,8 @@ Response, per row, is exactly the `PROJECTED_COLUMNS` allowlist rendered as wire
       "claimed_until": null,
       "adjudicated_by": null,
       "second_adjudicator": null,
+      "counter_signature_by": null,
+      "counter_signature_at": null,
       "confidence": 0.71,
       "evidence_count": 4,
       "non_program_evidence_only": false,
@@ -860,6 +901,12 @@ Response, per row, is exactly the `PROJECTED_COLUMNS` allowlist rendered as wire
 ```
 
 `queue_freshness` is mandatory on every list and summary response. Three of its members exist for specific findings: `lag_seconds`/`stale` make 03 §5.2's *"consumer staleness is observable"* visible to the human rather than only to `/metrics` (§4.7); `classification_level` and `completeness: "level_scoped"` implement 06 §5 rule 3's *"a low-side rollup never presents itself as complete"* for the queue.
+
+**`subject`'s members, enumerated by `scope` — `[amendment, closes 51-operator-console.md §22 row 16, blocking]`.** The row above showed `subject: {}` only because its example is `scope: fleet` (03 §3.3's singleton exception). For every other scope, `subject` carries exactly the one canonical identifier 03 §5.4's envelope rule names for that scope — the same mapping `10-shared-packages.md` §4's `SCOPE_SUBJECT_FIELD` fixes for events, reused here rather than re-derived: `asset_id` (asset), `system_id` (system), `installed_item_id` (installed_item), `niin` (niin), `class_id` (class), `mission_id` (mission), `tycom_id` (tycom), none (fleet). **The provisional/confirmed pair** §4.3 rule 4 requires — *"carries both the provisional and the confirmed identifier when they differ"* — is named explicitly: `subject.provisional_id` and `subject.confirmed_id`, both present only when `subject_provisional: true` and they differ; otherwise `subject` carries the single confirmed identifier under its scope's field name as shown above.
+
+**`POST /proposals/{proposal_id}/adjudicate`'s request body — `[amendment, closes 51-operator-console.md §22 row 17, blocking]`.** `{decision: "approve" | "reject", note}`. `note` is required on `reject` and optional on `approve`, matching every owning sub-application's own adjudication rule (03 §7.2's re-validation notwithstanding — this is the human's stated reason, not a re-validation input). The gateway does not invent a richer body: it is a **verbatim pass-through** to the owner's own `PATCH`/`POST .../adjudicate` operation (03 §10's substitution discipline — the gateway must not diverge from what a substituted owner actually accepts), and every owner's adjudication operation accepts exactly this shape, `decision` and `note`, regardless of `kind`. A `second_adjudicate` action (the second signature at class/fleet scope) uses the identical body on the identical path — the owner distinguishes first from second signature by whether `adjudicated_by` is already set, not by a different request shape.
+
+**`POST /proposals/{proposal_id}/claim`'s request body is empty** — `[amendment, closes 51-operator-console.md §22 row 64]`. No fields; the lease is minted from the authenticated caller and the operation's own `Idempotency-Key`.
 
 #### `GET /proposals/summary` — depth by bucket · `x-side-effects: none`
 
@@ -1374,7 +1421,7 @@ That the "change required" column is almost empty is the point of §2.5, and it 
 
 | Surface | Paths | Nature |
 |---|---|---|
-| **Pass-through** | `/api/v1/{slug}/…` for the nine sub-applications plus `tool-server`, `knowledge-retrieval`, `notification`, `reference-data` | The upstream's own contract, proxied. The gateway adds authentication, rate limiting, correlation, and audit; it changes nothing else |
+| **Pass-through** | `/api/v1/{slug}/…` for the nine sub-applications plus `tool-server`, `knowledge-retrieval`, `notification`, `reference-data`, and `auth`'s two advisory-only operations (`POST /authority-checks`, `GET /principals/{sub}`) | The upstream's own contract, proxied. The gateway adds authentication, rate limiting, correlation, and audit; it changes nothing else. **[amendment, closes `52-practitioner-apps.md` §13 correction 6, blocking]** `auth` was previously entirely absent from the pass-through set, so `31-auth.md` §8's two browser-facing advisory operations were unreachable from any browser client — `apps/web` included. Both remain non-authoritative (§8.1.2's identity operation is the one that matters for presentation logic); this addition only lets a client *ask* before it acts, per `31-auth.md` §8's own stated purpose |
 | **Gateway-owned** | `/api/v1/gateway/…` | The queue (§4.5), the composed views (§3.2), the Domino Endpoint proxy (§5.6), the agent-invocation surface (§8.1.1, **[AMENDMENT]**), session identity and sign-out (§8.1.2, **[AMENDMENT]**), health |
 
 The pass-through surface is why 03 §4 requires slug-namespaced base paths: *"This prevents collision at the single gateway ingress `[C25]`."* C25 records three sub-applications defining operations under `/assets/{id}` with no namespacing; the convention is what makes one ingress possible, and the gateway is the component that would break without it.
@@ -1415,10 +1462,10 @@ The pass-through surface is why 03 §4 requires slug-namespaced base paths: *"Th
 
 | Operation | `x-side-effects` | `x-substitution` | `x-agent-eligible` | Notes |
 |---|---|---|---|---|
-| `GET /api/v1/gateway/session` | `none` | `internal` | **false** | Returns the session's identity block (`fathom.identity`, byte-identical to §3.2's token shape) and its six `authority_classes`, read from the session cookie's server-side session store — never from a token the browser holds, because it holds none. `404` if no session |
-| `POST /api/v1/gateway/session/logout` | `state-changing` | `internal` | **false** | Destroys the server-side session and its cookie. **RP-initiated logout** at the identity provider is triggered server-side in the same call, per `31-auth.md` §2's Keycloak binding — there is no client-side `end_session_endpoint` redirect, because the browser holds no `id_token` to present to one |
+| `GET /api/v1/gateway/session` | `none` | `internal` | **false** | Returns the session's identity block (`fathom.identity`, byte-identical to §3.2's token shape) and its six `authority_classes`, read from the session cookie's server-side session store — never from a token the browser holds, because it holds none. `404` if no session. **[amendment, closes `52-practitioner-apps.md` §13 correction 3]** Where no session cookie is present but a valid `X-Fathom-Caller-Authorization` header is (§5.8's practitioner extension), resolves the identity block from that credential's Domino-linked `sub` instead — same response shape, different source, so `apps/practitioner`'s co-resident host can call this operation exactly as `apps/web` does |
+| `POST /api/v1/gateway/session/logout` | `state-changing` | `internal` | **false** | Destroys the server-side session and its cookie. **RP-initiated logout** at the identity provider is triggered server-side in the same call, per `31-auth.md` §2's Keycloak binding — there is no client-side `end_session_endpoint` redirect, because the browser holds no `id_token` to present to one. Not applicable to `apps/practitioner`, which has no session cookie to destroy (§4.7 of `52-practitioner-apps.md`) |
 
-**The session store and cookie, stated because §1.3 of `31-auth.md` deferred them to this wave:** an opaque session identifier in an `HttpOnly`, `Secure`, `SameSite=Lax` cookie, keyed against a server-side store (Redis, TTL-bound to the underlying token's remaining life) holding the actual tokens. CSRF: `SameSite=Lax` plus a double-submit token on every state-changing gateway-owned operation, checked in the middleware order of §8.6 immediately after authentication.
+**The session store and cookie, stated because §1.3 of `31-auth.md` deferred them to this wave:** an opaque session identifier in a cookie named **`fathom_session`** — `HttpOnly`, `Secure`, `SameSite=Lax` — keyed against a server-side store (Redis, TTL-bound to the underlying token's remaining life) holding the actual tokens. CSRF: `SameSite=Lax` plus a double-submit token, cookie **`fathom_csrf`** (readable by JavaScript, unlike the session cookie) echoed on header **`X-Fathom-CSRF`**, required and matched on every state-changing gateway-owned operation, checked in the middleware order of §8.6 immediately after authentication. **[amendment, closes `51-operator-console.md` UI-OQ-1]** Neither name was previously stated; both are needed before a console can construct the header.
 
 ### 8.2 How pass-through routes are constructed
 

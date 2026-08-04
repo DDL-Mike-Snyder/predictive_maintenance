@@ -667,7 +667,7 @@ def select(ranked: list[Ranked], cap: int) -> tuple[list[Ranked], list[Ranked]]:
 
 | Obligation | Mechanism |
 |---|---|
-| **One round trip for the whole set** | `GET /reviews/{id}/candidates?include=evidence_manifest` returns all `cap` candidates with their evidence manifests and pre-signed object URLs in one response. Default page size equals `candidate_cap`, so cursor pagination exists (03 §4) but is never exercised at the cap |
+| **One round trip for the whole set** | `GET /reviews/{id}/candidates?include=evidence_manifest` returns all `cap` candidates with their evidence manifests in one response, each object referenced by `GET /evidence-packages/{id}/objects/{key}` (§3.7's amendment — proxied through this service, never a pre-signed direct-to-bucket URL). Default page size equals `candidate_cap`, so cursor pagination exists (03 §4) but is never exercised at the cap |
 | **No cross-service fetch during review** | Evidence is materialised at stage 9, before the review opens. A reviewer request never fans out to Telemetry |
 | **Pre-signed URLs outlive the review** | Object URLs are issued with an expiry of at least the review budget plus margin, so the twelfth candidate's plot does not 403 at minute nine |
 | **Prefetch of the next review** | `GET /reviews/next?reviewer=` returns the next claimable review, already `open` and materialised, so a reviewer finishing one review does not wait for another to assemble. A singular query projection: enumerated in `x-naming-carve-outs` with a reason (09 §5.1, C23) |
@@ -701,7 +701,8 @@ Base path `/api/v1/pma/`. Every operation carries `x-substitution` and `x-side-e
 | `POST /reviews/{id}/adjudications` | Bulk sequential adjudication (§3.6) | `internal` | `state-changing` | no |
 | `GET /reviews/next?reviewer=` | Prefetch. Singular carve-out | `internal` | `none` | no |
 | `GET /candidates?changed_since=&cursor=` | Candidate change feed (internal rebuild) | `internal` | `none` | no |
-| `GET /evidence-packages/{id}` , `GET /evidence-packages/{id}/objects` | Manifest and pre-signed object URLs | `internal` | `none` | no |
+| `GET /evidence-packages/{id}` | Manifest: `object_manifest`, `content_hash`, `bucket` | `internal` | `none` | no |
+| `GET /evidence-packages/{id}/objects/{key}` | **[amendment, closes `51-operator-console.md` §22 row 59, blocking]** Streams the object's bytes through this service, proxied by the gateway's existing pass-through — **not** a pre-signed direct-to-bucket URL. No document declared whether an operator's browser can reach the `fathom-pma-evidence` bucket's endpoint, and 03 §4's single-ingress principle (*"prevents collision at the single gateway ingress"*) argues against opening a second one for object storage specifically. This operation keeps evidence access inside the one ingress the rest of the contract already relies on; `GET /evidence-packages/{id}/objects` (plural, no key) is retired — it was never more than the pre-signed-URL shape this replaces | `internal` | `none` | no |
 | `POST /tags/bulk` | Backfill of historical labels; `X-Backfill: true`; fenced on `baseline_epoch` (03 §4, §5.3) | `internal` | `state-changing` | no |
 | `GET /quality-metrics?window=&scope_node=` | **Precision and canary recall jointly** (§5.5). ABAC-restricted | `internal` | `none` | **no** |
 | `GET /admission-control?scope_node=` | Gate state, backlog, threshold, basis. Singular carve-out | `internal` | `none` | no |
