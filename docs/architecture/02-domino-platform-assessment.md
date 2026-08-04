@@ -5,7 +5,7 @@
 | **Purpose** | Establish, from primary sources, which components of the FATHOM architecture Domino can host today; document the specific basis for each platform-boundary decision; and specify the Domino capability changes that would permit Domino to serve as the foundation for the entire program |
 | **Companion document** | [01 — Phase 1 System Architecture](01-system-architecture.md) |
 | **Research date** | 4 August 2026 |
-| **Domino versions assessed** | Self-managed 6.2.3 (June 2026); Domino Cloud Release 90 (July 2026) |
+| **Domino versions assessed** | Self-managed 6.2.3 GA (June 2026), with 6.3.0 release material reviewed where it bears on findings; Domino Cloud Release 90 (July 2026) |
 | **Classification** | **Internal only.** Cites unreleased roadmap material, unsigned product requirements documents, and candid internal engineering discussion. Not for external or customer distribution |
 
 ---
@@ -130,6 +130,7 @@ Validated on EKS, AKS, GKE, and OpenShift. OpenShift support materially eases on
 | Availability | Weak for always-on use | Domino Cloud service-level agreement is 99%. Platform maintenance restarts application pods. Node consolidation evicts them; one customer defect reported "most Apps get shutdown overnight" |
 | Output persistence | Not supported | "File changes inside an App container are not saved to the project repository" |
 | Per-project caps | GA | Ten applications per project and four active application runs per project, by default |
+| **Extensions** | GA, **Domino Cloud only** | Surfaces an application natively inside the Domino interface at one of five mount points, passing page context. Admin-created only. Requires extended identity propagation on the backing application — "the only hard requirement." Absent from the self-managed 6.2 documentation tree, which matters because the program's production target is self-managed OpenShift and air-gapped enclaves. **Consequence for the architecture:** Extensions are the preferred practitioner-surface mechanism where available, and Domino Apps are the portable fallback that document 04 specifies |
 
 ### 4.2 Agents
 
@@ -171,7 +172,7 @@ These properties are compatible with governed, moderate-volume, interactive infe
 
 Shipped: bundles, policies, evidence notebooks, approval stages, and gates enforced as infrastructure proxies, with current gate actions covering application and endpoint creation, parameterized by hardware tier or data plane.
 
-In design for 6.3.0: a governance tab on application, agent, and extension detail views; a unified `Deploy` gate replacing per-asset gates. The relevant product requirements document is unsigned and carries an explicit fallback to the current bundle model should the transition prove too large for the release.
+Targeted for 6.3.0 per an unsigned product requirements document, with status unconfirmed against the 6.3 release retrospective: a governance tab on application, agent, and extension detail views; a unified `Deploy` gate replacing per-asset gates. The document carries an explicit fallback to the current bundle model should the transition prove too large for the release.
 
 Four limitations are recorded in Domino's own governance vision refresh and are material to a Navy authorization-to-operate narrative:
 
@@ -242,7 +243,7 @@ This distinction should be verified with Domino's compliance function before any
 | Component | Plane | Specific documented basis |
 |---|---|---|
 | Model training, feature pipelines, retraining | Intelligence | Jobs and Flows are purpose-built for this and execute on remote data planes by default. No alternative offers comparable reproducibility |
-| Model registry, lineage, promotion governance | Intelligence | GA, with tier-weighted gating achievable within current gate expressiveness |
+| Model registry, lineage, promotion governance | Intelligence | GA for registry and lineage. **Tier-weighted promotion gating is not expressible today** (§4.4, request D12); approximated through hardware-tier and data-plane proxies |
 | Tier 0–3 fleet scoring | Intelligence, batch | Scheduled Jobs and Flows carry none of the Endpoint serving constraints. Fleet risk does not change second to second |
 | Interactive tier-3 inference | Intelligence, Endpoint | Acceptable at low volume with bounded payloads. Traffic splitting is an Endpoint-only capability of genuine value for model rollout |
 | Self-hosted language models | Intelligence | GA, in-VPC or on-premises, OpenAI-compatible, air-gappable. A principal argument for the platform |
@@ -362,7 +363,7 @@ No Domino predictive-maintenance or CBM+ accelerator, reference architecture, or
 ## 9. Caveats on this assessment
 
 - **Several decisive documents are days old and unsigned.** The structured-data, authentication-overhaul, applications SDLC, and governance product requirements documents were all modified between 21 July and 3 August 2026, and none carries executive sign-off. Items characterized here as in design may move within one release cycle — though several have also remained in Phase-1 status for months.
-- **Internal documentation quality is uneven.** No consolidated limits or quotas table exists for Endpoints; figures in this assessment were assembled from runbooks and individual tickets, several drawn from sections self-labeled as stale. Three internal configuration-key naming inconsistencies were identified and left unresolved. Public documentation contains at least two internal contradictions, on application autoscaling and on idle suspension.
+- **Internal documentation quality is uneven.** No consolidated limits or quotas table exists for Endpoints; figures in this assessment were assembled from runbooks and individual tickets, several drawn from sections self-labeled as stale. Three internal configuration-key naming inconsistencies were identified and left unresolved. Public documentation contains at least two internal contradictions: on **idle suspension**, where the product documentation states applications run until explicitly stopped while marketing claims auto-suspend and the interface exposes a Suspended state; and on **application autoscaling**, where the autoscaling page documents HPA v2 with multiple replicas while a separate performance-tuning page in the same documentation tree states that applications do not scale horizontally. The autoscaling page is the current one.
 - **Absence of documentation is reported as absence of documentation.** Where this assessment states that no mechanism was found, that is a statement about the documentary record, not a proof of impossibility. The §7 questions exist to convert those gaps into answers.
 - **Capability changes rapidly.** All findings are as of 4 August 2026 against self-managed 6.2.3 and Cloud Release 90, and should be re-verified before any commitment rests on them.
 

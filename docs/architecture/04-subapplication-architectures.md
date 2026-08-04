@@ -11,25 +11,32 @@
 
 ## 1. How to read this document
 
-Each sub-application is described against a fixed template: purpose, ownership boundary, core aggregates, API surface, internal components, data stores, plane placement, key design decisions with rationale, substitution posture, and the questions Phase 3 must resolve.
+Each sub-application is described against a fixed template: purpose, ownership boundary, core aggregates, key design decisions with rationale, API surface, events published and consumed, internal components, data stores, plane placement, substitution posture, and the questions Phase 3 must resolve.
+
+**Four conventions apply throughout, and document 03 governs each of them.**
+
+- **API operations are shown relative to the sub-application base path** `/api/v{major}/{slug}/`, with slugs from document 03 §3.1. The prefix is omitted here for readability and is not optional in implementation.
+- **The "Substitution" column** abbreviates the `x-substitution` annotation: "Required" is `required`, "Internal" is `internal` (document 03 §4.1).
+- **Every operation additionally carries `x-side-effects`** (`none`, `proposal-only`, or `state-changing`), which is what determines agent eligibility. Compute-only `POST` operations such as scenario analysis and package planning are `none` and are agent-eligible.
+- **Naming.** Where an operation below appears singular or action-shaped, it falls under the singleton and sub-resource-action carve-outs in document 03 §4 and must be enumerated in the sub-application's specification.
 
 The contracts in document 03 are binding. Where this document describes an API operation or event, document 03 governs its form. Where the two conflict, document 03 prevails and this document is in error.
 
-Sub-applications are presented in dependency order, which is also the recommended Phase 3 sequence (§12).
+Sub-applications are presented in dependency order. **The recommended Phase 3 sequence in §12 differs**, because it weights de-risking value as well as dependency — Post-Mission Analysis is advanced to fourth to test the labeling assumption early. Document 01 §5 carries the only stable numeric identifiers; the ordering in this document and in §12 are sequences, not identities.
 
 ### Dependency structure
 
 ```mermaid
 graph TB
-    REG[1. Asset & Configuration Registry]
-    TEL[2. Condition & Telemetry]
-    PDM[3. Predictive Maintenance]
-    FS[4. Fleet Status & Readiness]
-    SCH[5. Maintenance & Scheduling]
-    SUP[6. Supply Chain & Inventory]
-    PMA[7. Post-Mission Analysis]
-    FI[8. Failure Intelligence]
-    DES[9. Test & Design Advisory]
+    REG[Asset & Configuration Registry]
+    TEL[Condition & Telemetry]
+    PDM[Predictive Maintenance]
+    FS[Fleet Status & Readiness]
+    SCH[Maintenance Execution & Scheduling]
+    SUP[Supply Chain & Inventory]
+    PMA[Post-Mission Analysis]
+    FI[Failure Intelligence]
+    DES[System Test & Design Advisory]
 
     REG --> TEL
     REG --> PDM
@@ -98,7 +105,8 @@ Two cycles are present and both are intentional: Scheduling and Supply negotiate
 | `POST /assets/{id}/configuration-changes` | Required |
 | `POST /assets`, `PATCH /assets/{id}`, class and template administration | Internal |
 
-**Events published:** `asset.registered`, `asset.status_changed`, `configuration.baseline_changed`, `equipment.installed`, `equipment.removed`, `allowance.updated`.
+**Events published:** `asset.registered`, `asset.status_changed`, `configuration.baseline_changed`, `installed_item.installed`, `installed_item.removed`, `allowance.updated`.
+**Events consumed:** `work_order.opened`, `maintenance_action.recorded`, `work_package.approved`. Executed maintenance is what causes configuration change, so the Registry consumes rather than polls it.
 
 **Internal components:** configuration resolver (template plus deviations plus bitemporal query), baseline snapshot generator, allowance importer, hierarchy validator, read-model publisher.
 
@@ -159,14 +167,16 @@ Long-term candidate for federation with CDMD-OA. The substitution boundary is fa
 |---|---|
 | `GET /assets/{id}/channels`, `GET /channels/{id}` | Required |
 | `GET /health-indicators?equipment_id=&from=&to=&as_of=` | Required |
-| `GET /features?equipment_id=&feature_set=&as_of=` | Required |
+| `GET /features?installed_item_id=&feature_set=&as_of=&as_known_at=` | Required |
 | `GET /usage-counters?equipment_id=` | Required |
 | `GET /missions`, `GET /missions/{id}`, `GET /missions/{id}/telemetry` | Required |
 | `POST /ingest/telemetry`, `POST /ingest/usage` | Required |
+| `POST /ingest/indicators`, `POST /ingest/detections` (Domino Job write-back) | Required |
 | `GET /anomalies?mission_id=` | Required |
 | Channel registry administration, indicator definition management | Internal |
 
-**Events published:** `telemetry.batch_ingested`, `health_indicator.computed`, `usage_counter.updated`, `mission.completed`, `anomaly.detected`.
+**Events published:** `telemetry.batch_ingested`, `health_indicator.computed`, `usage_counter.updated`, `usage_counter.reset`, `mission.completed`, `anomaly.detected`.
+**Events consumed:** `asset.registered`, `installed_item.installed`, `installed_item.removed`, `configuration.baseline_changed`. Counters and indicators attach to installed items, so item lifecycle events are a correctness dependency: a replacement opens a new counter epoch rather than continuing the prior item's accumulation.
 
 **Internal components:** ingest adapters per domain profile, channel mapper, quality assessor, indicator computation engine, counter accumulator, mission boundary detector, unsupervised detector ensemble, retention and rollup manager, point-in-time feature server.
 
@@ -231,13 +241,16 @@ Unlikely to be substituted, as it is tightly coupled to program-specific channel
 | `GET /predictions/{id}`, `GET /predictions/{id}/provenance` | Required |
 | `GET /criticality?niin=&equipment_id=` | Required |
 | `GET /scoring-runs`, `GET /scoring-runs/{id}` | Required |
-| `POST /scoring-runs` (on-demand re-score) | Required |
+| `POST /scoring-runs` (on-demand re-score; `x-side-effects: none`) | Required |
+| `POST /scoring-runs/{id}/predictions` (bulk, idempotent, baseline-epoch fenced) | Required |
 | `POST /what-if` (interactive tier-3 scenario) | Required |
 | `GET /calibration?tier=&family=` | Required |
 | Model binding administration, label set inspection, tier policy management | Internal |
 
-**Events published:** `prediction.updated`, `prediction.invalidated`, `criticality_tier.assigned`, `model_version.promoted`.
-**Events consumed:** all Registry events, all Telemetry events, `maintenance_action.recorded`, `deferral.recorded`, `anomaly_tag.confirmed`, `causal_finding.published`, `causal_feature_set.updated`, `design_change.projected`.
+**Events published:** `prediction.updated`, `prediction.invalidated`, `criticality_tier.assigned`, `model_binding.activated`.
+**Events consumed:** `asset.registered`, `asset.status_changed`, `configuration.baseline_changed`, `installed_item.installed`, `installed_item.removed`, `telemetry.batch_ingested`, `health_indicator.computed`, `usage_counter.updated`, `usage_counter.reset`, `maintenance_action.recorded`, `deferral.recorded`, `anomaly_tag.confirmed`, `causal_finding.published`, `failure_mode.attributed`, `causal_feature_set.updated`, `design_change.projected`.
+
+Enumerated rather than wildcarded. Rev 1 subscribed to "all Registry events, all Telemetry events," which cannot be conformance-tested and silently auto-subscribes to any future event a producer adds.
 
 **Internal components:** criticality scorer, tier assignment engine, label constructor with censoring, scoring orchestrator, calibration engine, prediction store with lifecycle management, invalidation processor, provenance recorder, local read models.
 
@@ -268,7 +281,7 @@ Core program capability. Not a substitution candidate. The contract is nonethele
 
 **Owns:** readiness scoring methodology, rollup computation, risk thresholds and hysteresis, the fleet read model, and the explanation graph behind every displayed figure.
 
-**Does not own:** any source fact. This sub-application is derived-data only and is authoritative for nothing except its own methodology.
+**Does not own:** any *observed* fact. This sub-application is derived-data only. It is authoritative for its own methodology and for the `RiskFlag` assertions that methodology produces, and for nothing else.
 
 ### Core aggregates
 
@@ -299,13 +312,15 @@ Core program capability. Not a substitution candidate. The contract is nonethele
 | Methodology configuration | Internal |
 
 **Events published:** `readiness.recomputed`, `casrep_risk.raised`, `casrep_risk.cleared`.
-**Events consumed:** predictions, work orders and deferrals, parts availability and shortfalls, configuration changes, asset status, redesign cases, mission reviews.
+**Events consumed:** `asset.registered`, `asset.status_changed`, `configuration.baseline_changed`, `health_indicator.computed`, `anomaly.detected`, `prediction.updated`, `prediction.invalidated`, `criticality_tier.assigned`, `model_binding.activated`, `work_candidate.created`, `work_order.opened`, `deferral.recorded`, `work_package.proposed`, `work_package.approved`, `part_availability.changed`, `requisition.status_changed`, `allowance_shortfall.detected`, `mission_review.completed`, `causal_finding.published`, `redesign_candidate.created`, `redesign_case.published`.
+
+This is the largest consumed set in the system, which follows from Fleet Status being derived-data only. Rev 1 expressed it as prose categories, which made it impossible to determine whether a declared dependency in document 03 §6 was satisfied.
 
 **Internal components:** rollup engine, scoring methodology evaluator, explanation graph builder, threshold and hysteresis manager, read-model projector.
 
 **Data stores:** PostgreSQL, holding a read model and no source-of-truth data. Fully rebuildable.
 
-**Plane placement:** Sustainment Plane entirely. The Readiness Narrative agent, which consumes this sub-application's API, runs in Domino.
+**Plane placement:** Sustainment Plane entirely. The Readiness Narrative agent, which consumes this sub-application's API, runs in Domino subject to the machine-to-machine authentication dependency in document 01 §8.7.
 
 ### Substitution posture
 
@@ -326,7 +341,7 @@ Not a substitution candidate, though it is the sub-application most likely to be
 
 ### Ownership boundary
 
-**Owns:** work candidates, work orders, deferrals, PMS periodicity records, availability definitions, work packages, the scheduling optimizer, and executed maintenance history.
+**Owns:** work candidates, work orders, deferrals, PMS periodicity records, availability definitions, work packages, the scheduling optimizer, executed maintenance history, and proposals targeting this sub-application.
 
 **Does not own:** predictions, parts availability, or configuration — though it triggers configuration change on completion.
 
@@ -340,6 +355,9 @@ Not a substitution candidate, though it is the sub-application most likely to be
 | `Deferral` | Deliberate postponement with accepted risk and revised window |
 | `Availability` | A maintenance period with dates, executing activity, and capacity |
 | `WorkPackage` | A candidate set planned into one availability, with constraint satisfaction evidence |
+| `MaintenanceActionRecord` | **Edge-authoritative, append-only.** What the ship did, separable from what was authorized (document 03 §11) |
+| `ReservationSet` | A transactional multi-NIIN reservation held against Supply, with expiry |
+| `Proposal` | Agent-originated work candidates and interval changes awaiting adjudication. Schema fixed by document 03 §7.2 |
 
 ### Key design decisions
 
@@ -371,13 +389,13 @@ Not a substitution candidate, though it is the sub-application most likely to be
 | Optimizer configuration, PMS catalog administration | Internal |
 
 **Events published:** `work_candidate.created`, `work_order.opened`, `maintenance_action.recorded`, `deferral.recorded`, `work_package.proposed`, `work_package.approved`, plus proposal events.
-**Events consumed:** `prediction.updated`, `prediction.invalidated`, `casrep_risk.raised`, `part_availability.changed`, `requisition.status_changed`, `asset.status_changed`, `causal_finding.published`.
+**Events consumed:** `prediction.updated`, `prediction.invalidated`, `criticality_tier.assigned`, `casrep_risk.raised`, `casrep_risk.cleared`, `part_availability.changed`, `requisition.status_changed`, `allowance_shortfall.detected`, `allowance.updated`, `reservation_set.confirmed`, `reservation_set.released`, `asset.status_changed`, `configuration.baseline_changed`, `usage_counter.updated`, `usage_counter.reset`, `causal_finding.published`.
 
 **Internal components:** candidate generator per driver, candidate merger, scheduling optimizer, constraint evaluator, explanation generator, work order state machine, action capture with findings coding, deferral manager, proposal handler.
 
 **Data stores:** PostgreSQL. Optimizer runs persist inputs, solution, and explanation for audit and reproducibility.
 
-**Plane placement:** service and optimizer on the Sustainment Plane. The optimizer is a constraint solver rather than a model, and belongs with the domain service. The Work-Package Planner agent runs in Domino and calls this sub-application's API.
+**Plane placement:** service and optimizer on the Sustainment Plane. The optimizer is a constraint solver rather than a model, and belongs with the domain service. The Work-Package Planner agent runs in Domino, subject to document 01 §8.7, and calls this sub-application's API. Its planning operation is `x-side-effects: none` and therefore agent-eligible.
 
 ### Substitution posture
 
@@ -399,7 +417,7 @@ Medium-term candidate for federation with 3-M and OMMS-NG, which are authoritati
 
 ### Ownership boundary
 
-**Owns:** stock positions, allowance positions against COSAL and APL, requisitions and their documentary lifecycle, reservations, in-transit visibility, and predicted demand.
+**Owns:** stock positions, allowance positions against COSAL and APL, requisitions and their documentary lifecycle, reservations and reservation sets, in-transit visibility, predicted demand, and proposals targeting this sub-application.
 
 **Does not own:** the parts catalog or allowance documents themselves (Registry), work orders, or predictions.
 
@@ -413,6 +431,8 @@ Medium-term candidate for federation with 3-M and OMMS-NG, which are authoritati
 | `Reservation` | Stock committed to a work order or work package |
 | `InTransitItem` | Materiel in motion with location and estimated arrival |
 | `DemandForecast` | Predicted consumption derived from predictions and planned work |
+| `ReservationSet` | A transactional multi-NIIN reservation with expiry and explicit release. Per-NIIN reservation without atomicity leaves orphans when one line fails |
+| `Proposal` | Agent-originated requisitions and expedites awaiting adjudication. Schema fixed by document 03 §7.2 |
 
 ### Key design decisions
 
@@ -432,20 +452,22 @@ Medium-term candidate for federation with 3-M and OMMS-NG, which are authoritati
 | `GET /allowance-position?asset_id=&niin=` | Required |
 | `GET /requisitions?asset_id=&niin=&status=` | Required |
 | `GET /requisitions/{id}` | Required |
-| `POST /reservations`, `DELETE /reservations/{id}` | Required |
+| `POST /reservation-sets` (transactional multi-NIIN, TTL), `DELETE /reservation-sets/{id}` | Required |
+| `GET /lead-times?niin=&location=` | Required |
+| `GET /interchangeable-groups?niin=` | Required |
 | `GET /shortfalls?asset_id=` | Required |
 | `GET /demand-forecast?niin=&horizon_days=` | Required |
 | `POST /proposals` (agent-originated requisitions and expedites) | Required |
 | Stock adjustment, document creation, catalog synchronization | Internal |
 
-**Events published:** `part_availability.changed`, `requisition.status_changed`, `allowance_shortfall.detected`, plus proposal events.
-**Events consumed:** `work_candidate.created`, `work_order.opened`, `work_package.approved`, `maintenance_action.recorded`, `prediction.updated`, `equipment.installed`, `equipment.removed`, `allowance.updated`.
+**Events published:** `part_availability.changed`, `requisition.status_changed`, `allowance_shortfall.detected`, `reservation_set.confirmed`, `reservation_set.released`, plus proposal events.
+**Events consumed:** `work_candidate.created`, `work_order.opened`, `work_package.proposed`, `work_package.approved`, `maintenance_action.recorded`, `prediction.updated`, `prediction.invalidated`, `casrep_risk.raised`, `installed_item.installed`, `installed_item.removed`, `allowance.updated`, `configuration.baseline_changed`.
 
 **Internal components:** stock ledger, allowance evaluator, requisition state machine, reservation manager, in-transit tracker, demand forecaster, shortfall detector, proposal handler.
 
 **Data stores:** PostgreSQL.
 
-**Plane placement:** Sustainment Plane. Demand forecasting executes as a scheduled Domino Job, since it is a modeling activity, writing results back through this sub-application's API. The Supply Expediter agent runs in Domino.
+**Plane placement:** Sustainment Plane. Demand forecasting executes as a scheduled Domino Job, since it is a modeling activity, writing results back through this sub-application's API. The Supply Expediter agent runs in Domino, subject to document 01 §8.7.
 
 ### Substitution posture
 
@@ -467,7 +489,9 @@ The primary substitution candidate and the reference case for the protocol in do
 
 ### Ownership boundary
 
-**Owns:** the review workflow and its state, candidate anomaly queues, the anomaly taxonomy, confirmed and rejected tags with reviewer provenance, and evidence packages.
+**Owns:** the review workflow and its state, candidate anomaly queues, **taxonomy assignments** against the Reference Data vocabulary, confirmed and rejected tags with reviewer provenance, evidence packages, and proposals targeting this sub-application.
+
+**Does not own the taxonomy itself.** Reference Data is the single owner of the unified vocabulary (document 03 §14); this sub-application owns the assignment of terms to observations.
 
 **Does not own:** telemetry, automated detections (Condition & Telemetry), causal interpretation (Failure Intelligence), or predictions.
 
@@ -479,7 +503,8 @@ The primary substitution candidate and the reference case for the protocol in do
 | `AnomalyCandidate` | A proposed anomaly awaiting adjudication, from a detector or an agent |
 | `AnomalyTag` | A confirmed anomaly: window, taxonomy classification, reviewer, evidence |
 | `TagRejection` | A rejected candidate with reason. Retained as a negative label |
-| `EvidencePackage` | The immutable telemetry window and context supporting a candidate |
+| `EvidencePackage` | The immutable telemetry window and context supporting a candidate. Materialised into PMA's own object store at review open, from Telemetry's replay source via its API |
+| `Proposal` | Agent-originated anomaly candidates awaiting adjudication. Schema fixed by document 03 §7.2 |
 
 ### Key design decisions
 
@@ -512,11 +537,13 @@ The primary substitution candidate and the reference case for the protocol in do
 **Events published:** `mission_review.opened`, `anomaly_tag.confirmed`, `anomaly_tag.rejected`, `mission_review.completed`, plus proposal events.
 **Events consumed:** `mission.completed`, `anomaly.detected`, `telemetry.batch_ingested`, `configuration.baseline_changed`, `maintenance_action.recorded`.
 
+`maintenance_action.recorded` is consumed so that a review can present what was subsequently found and repaired alongside the candidate window — the single most useful context a reviewer can have, and the basis for retrospective tag quality assessment.
+
 **Internal components:** review orchestrator, candidate ranker, evidence package assembler, taxonomy service, tag store with provenance, proposal handler, edge sync adapter.
 
 **Data stores:** PostgreSQL for reviews, tags, and taxonomy. Object storage for evidence packages, which are immutable once a review opens so that a tag's basis cannot change after the fact.
 
-**Plane placement:** service and workflow on the Sustainment Plane, including the afloat profile. The PMA Pre-Screener agent runs in Domino and submits candidates as proposals.
+**Plane placement:** service and workflow on the Sustainment Plane, including the afloat profile. The PMA Pre-Screener agent runs in Domino for enterprise candidate generation, subject to document 01 §8.7, and submits candidates as proposals. **A reduced pre-screener and the detector ensemble are additionally edge-resident**, because afloat there would otherwise be no candidate source and review would degrade to the open-ended authoring this design rejects.
 
 ### Substitution posture
 
@@ -577,7 +604,9 @@ Core program capability, not a substitution candidate. The tag stream is the pro
 | Discovery run management, taxonomy administration | Internal |
 
 **Events published:** `causal_finding.published`, `failure_mode.attributed`, `causal_feature_set.updated`.
-**Events consumed:** `anomaly_tag.confirmed`, `anomaly_tag.rejected`, `maintenance_action.recorded`, `telemetry.batch_ingested`, `equipment.removed`, `configuration.baseline_changed`, `prediction.updated`.
+**Events consumed:** `anomaly_tag.confirmed`, `anomaly_tag.rejected`, `mission.completed`, `maintenance_action.recorded`, `telemetry.batch_ingested`, `installed_item.removed`, `configuration.baseline_changed`, `prediction.updated`.
+
+`prediction.updated` is consumed for one purpose only: to record which population received model-assigned intervention, so that comparative population analysis can condition on treatment assignment. It is never used as evidence for a causal finding.
 
 **Internal components:** discovery orchestrator, method adapters, evidence assembler, strength scorer, adjudication workflow, taxonomy service, feature-set publisher.
 
@@ -606,7 +635,7 @@ Core program capability. Not a substitution candidate.
 
 ### Ownership boundary
 
-**Owns:** test and qualification data, component failure-mode dossiers, the design dependency graph, redesign candidates and cases, and cost estimates.
+**Owns:** test and qualification data, component failure-mode dossiers, the design dependency graph, redesign candidates and cases, cost estimates, and proposals targeting this sub-application.
 
 **Does not own:** causal findings (Failure Intelligence), maintenance history (Scheduling), predictions (PdM), or design authority itself.
 
@@ -620,6 +649,7 @@ Core program capability. Not a substitution candidate.
 | `RedesignCandidate` | A component flagged for redesign consideration, with driver evidence and priority |
 | `RedesignCase` | The complete business case: scope, dependency impact, cost estimate, projected benefit, recommendation |
 | `CostEstimate` | A costed redesign scope with method, assumptions, and confidence |
+| `Proposal` | Agent-assembled redesign cases awaiting adjudication. Schema fixed by document 03 §7.2 |
 
 ### Key design decisions
 
@@ -648,7 +678,7 @@ Core program capability. Not a substitution candidate.
 | Test data ingest, dependency graph administration, cost model configuration | Internal |
 
 **Events published:** `redesign_candidate.created`, `redesign_case.published`, `design_change.projected`, plus proposal events.
-**Events consumed:** `causal_finding.published`, `failure_mode.attributed`, `maintenance_action.recorded`, `equipment.removed`, `prediction.updated`, `part_availability.changed`.
+**Events consumed:** `causal_finding.published`, `failure_mode.attributed`, `maintenance_action.recorded`, `installed_item.removed`, `prediction.updated`, `prediction.invalidated`, `part_availability.changed`.
 
 **Internal components:** dossier assembler, candidate identifier, dependency graph service, impact analyzer, parametric cost estimator, detailed cost roll-up engine, case builder, proposal handler.
 
@@ -696,6 +726,12 @@ Two requirements dominate the design:
 - **Classification enforcement at query time.** Filtering must occur within the query rather than by removing results afterward, because post-filtering leaks the existence of records the requester is not cleared to know about.
 
 Structured facts are never served from this component. Agents obtain current state from sub-application APIs and obtain procedural and narrative knowledge here, and the distinction is enforced in the tool manifests.
+
+### Identity & Authorization
+
+**Substantial Phase 3 design required.** OIDC federated with Domino's Keycloak so one identity spans both planes, which is the prerequisite for delegated agent authority. ABAC over classification, caveats, compartments, unit, billet, and qualification. Two authority classes per document 03 §8.3: delegated for interactive agents, accountable-autonomous for event-triggered and scheduled ones. CAC and PIV substitution is an identity-provider change, not an application change.
+
+**Agent runtime placement.** Agents are Domino-hosted per document 01 §8.7, subject to the machine-to-machine authentication dependency. Under the contingency the orchestration runtime relocates to this plane and only inference, tracing, and evaluation remain in Domino.
 
 ### Audit & Provenance
 
