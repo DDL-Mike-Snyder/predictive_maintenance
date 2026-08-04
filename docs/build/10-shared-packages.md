@@ -1488,19 +1488,36 @@ class EventEnvelope(FathomModel):
 
     # --- ordering, per §5.4 rule 1 -------------------------------------
     @property
-    def dedup_key(self) -> tuple[str, int]:
-        """`(producer.slug, clock.monotonic_seq)` — document 03 §5.4 rule 1.
+    def dedup_key(self) -> tuple[str, str, int]:
+        """`(producer.slug, producer_node, clock.monotonic_seq)` — document 03
+        §5.4 rule 1.  **[AMENDMENT — corrected.]** This property previously
+        returned the 2-tuple `(producer.slug, monotonic_seq)`, contradicting
+        `producer_node`'s own docstring immediately above (§5.4): "Ordering and
+        deduplication use `(producer, producer_node, monotonic_seq)` — NEVER
+        `(producer, monotonic_seq)` alone" — a live self-contradiction inside
+        one section. Without `producer_node`, a sub-application running an
+        edge profile as two independent instances of the same slug mints two
+        colliding `monotonic_seq` sequences, and the dedup key silently drops
+        an event from whichever instance loses the collision.
 
         `producer` carries "slug from §3.1, plus version", but the ORDERING key
         uses the slug alone: including the producer version would reset the
         sequence at every deployment and break deduplication across a rolling
         upgrade.  Flagged as OQ-5.
         """
-        return (str(self.producer.slug), self.clock.monotonic_seq)
+        return (str(self.producer.slug), self.producer_node, self.clock.monotonic_seq)
 
     def precedes(self, other: "EventEnvelope") -> bool:
-        """Causal ordering per document 03 §5.4 rule 1.  Never `source_time`."""
-        if self.producer.slug == other.producer.slug:
+        """Causal ordering per document 03 §5.4 rule 1.  Never `source_time`.
+
+        [AMENDMENT] Same fix as `dedup_key`: same-producer comparison must
+        also match on `producer_node` — two nodes of the same producer slug
+        have independent `monotonic_seq` sequences that are not comparable to
+        each other, only the HLC is."""
+        if (
+            self.producer.slug == other.producer.slug
+            and self.producer_node == other.producer_node
+        ):
             return self.clock.monotonic_seq < other.clock.monotonic_seq
         return self.clock.hlc < other.clock.hlc
 
@@ -2005,6 +2022,26 @@ class FailurePrediction(FathomModel):
                 "publishes at reference_class='class_estimate' with a population "
                 f"hazard rate, not at {self.reference_class.value!r}"
             )
+        # [AMENDMENT] closes 27-fleet-status.md's OD-4 amendment ask, the half
+        # this gate previously left unenforced: below the floor, p_failure
+        # MUST be null ("no calibrated probability") and population_hazard_rate
+        # MUST be populated. The reference_class check above did not imply
+        # this — a non-null p_failure at reference_class='class_estimate'
+        # below the floor passed silently until now.
+        if n < CALIBRATION_POPULATION_FLOOR:
+            if self.p_failure is not None:
+                raise ValueError(
+                    f"calibration_population={n} is below the document 06 §3 "
+                    f"gate of {CALIBRATION_POPULATION_FLOOR}: p_failure MUST be "
+                    "null ('no calibrated probability'), not "
+                    f"{self.p_failure!r} (document 03 §7.1; 27-fleet-status.md OD-4)"
+                )
+            if self.population_hazard_rate is None:
+                raise ValueError(
+                    f"calibration_population={n} is below the document 06 §3 "
+                    "gate: population_hazard_rate is REQUIRED when p_failure is "
+                    "null (document 03 §7.1; 27-fleet-status.md OD-4)"
+                )
         return self
 
     # --- consumer helpers ----------------------------------------------
@@ -4321,10 +4358,10 @@ format to be as published and as stable as the OpenAPI document.
 from __future__ import annotations
 
 import re
-from typing import Any, Self
+from typing import Any, Literal, Self
 
 from fathom_schemas._base import FathomModel, NonEmptyStr
-from fathom_schemas.slugs import SubAppSlug
+from fathom_schemas.slugs import PlatformServiceSlug, SubAppSlug
 from pydantic import Field, model_validator
 
 MANIFEST_NAME_RE = re.compile(r"^[a-z][a-z0-9]*(-[a-z0-9]+)*$")
@@ -5192,7 +5229,7 @@ Per the rule that nothing may be invented, each item below is a gap this package
 | **OQ-7** | §6 says proposals are published *"using the §8.2 schema"*, but the Proposal schema is §7.2; §8.2 is the manifest structure. | Read as §7.2. Editorial. |
 | **OQ-8** | §7.1's `contributing_factors` gives no vocabulary for `attribution_method`, no scale for `stability`, no sign convention for `contribution`, and **no value for the stability threshold below which factors are suppressed from display**. | `attribution_method` typed as a string; `is_displayable(threshold)` requires the caller to supply the threshold. **The threshold is a program decision**, and it directly governs what a maintainer sees. |
 | **OQ-9** | §7.1's `sharpness` — *"dispersion relative to the reference-class base rate"* — has no range, direction, or units. Higher is presumably sharper, but that is an inference. | Unbounded float, no validator. Needs a definition before any consumer can threshold it. |
-| **OQ-10** | §7.1 lists `p_failure` unconditionally, but document 06 §3 says that below the n≥50 calibration gate the prediction publishes *"with a population hazard rate and **no calibrated probability**."* Those cannot both hold. | **`p_failure` required** (03 is binding); the gate validator rejects a sub-floor prediction that is not `class_estimate`. If document 06's reading is correct, `p_failure` must become nullable — a **major** schema change. Reconcile before Phase 3. |
+| **OQ-10** | ~~§7.1 lists `p_failure` unconditionally, but document 06 §3 says that below the n≥50 calibration gate the prediction publishes *"with a population hazard rate and **no calibrated probability**."* Those cannot both hold.~~ **[RESOLVED — document 06's reading adopted.]** `p_failure` is now `float \| None` (§7.1 above) — nullable below the calibration gate, matching *"no calibrated probability"* rather than requiring one | **Closed.** `p_failure: float \| None`, applied as the major schema change this row anticipated |
 | **OQ-11** | Document 01 §11's monorepo layout says `services/asset-registry`; §3.1's slug is `registry`. | **`registry`.** Document 01 tranche-2 fix. |
 | **OQ-12** | §7.2 makes dual control mandatory for *"any kind with external legal effect"* without enumerating which kinds those are. | `{requisition}`, derived from §11's conflict table and §10's shadow-mode text. Should be enumerated in §7.2. |
 | **OQ-13** | ~~§7.2's `authority_class` cites *"§9.3"* for its vocabulary. **Document 03 §9 is "Untrusted content" and has no §9.3.** §8.3's authority classes are *agent* classes (Delegated / Accountable autonomous), not *adjudication* authority classes. **The vocabulary of `authority_class` is undefined.**~~ **[CLOSED — amendment A-1, §4.6b.]** Document 03 §7.2.1 (amendment 03-1) now defines the vocabulary — six organizational roles. `AuthorityClass` (§4.6b) is that enum; `Proposal.authority_class` (§4.7) is retyped to it | **Closed.** §4.6b's `AuthorityClass` enum now makes D16's *"authority-versus-blast-radius check"* implementable — no longer a blocker for Phase 3. |
@@ -5452,7 +5489,7 @@ This section **extends** the shared Definition of Done template in [`docs/build/
 
 ### 13.4 Cross-cutting
 
-- [ ] Every open question OQ-1 … OQ-21 is filed as a tracked item against document 03 or document 04, with an owner. **OQ-10 (`p_failure` nullability) is a blocker for Phase 3 detailed design** — a potential major schema change. **OQ-13 (undefined `authority_class` vocabulary) is closed** (§4.6b, amendment A-1) and is no longer a blocker.
+- [ ] Every open question OQ-1 … OQ-21 is filed as a tracked item against document 03 or document 04, with an owner. **OQ-10 (`p_failure` nullability) is closed** — `p_failure: float \| None` applied — **and OQ-13 (undefined `authority_class` vocabulary) is closed** (§4.6b, amendment A-1). Neither remains a blocker for Phase 3 detailed design.
 - [ ] The nine sub-application build-framework documents reference this document for shared types and do not restate any schema.
 - [ ] `packages/canonical-schemas` is published to the internal registry with a semver tag; the nine services reference it by range per §9.3, with committed lockfiles.
 - [ ] The `schema-lag`, `check_dependency_ranges`, and `check_major_adoption` gates are live in CI.

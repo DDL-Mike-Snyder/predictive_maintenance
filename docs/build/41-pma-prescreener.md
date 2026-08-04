@@ -564,7 +564,7 @@ Four disciplines on this data, all inherited and all easy to violate in a ration
 | Any `audit` operation | 32 §14 item 9: **no audit operation is ever `x-agent-eligible`** — it is a D13 aggregation channel and a D14 amplifier |
 | Any `auth` operation | 31 §8: *"no operation on `auth` is ever `x-agent-eligible`."* The run-initiator calls `auth`; the agent does not |
 | `POST /notification/notifications/{id}/acknowledge` | 33 DO-NOT-4: never agent-eligible, permanently |
-| Anything on `tool-server` | 34 §8.1: the tool server is not a tool, and `ToolManifest.target.slug` is typed `SubAppSlug`, so a manifest naming it is unrepresentable |
+| Anything on `tool-server` | 34 §8.1: the tool server is not a tool, and `ToolManifest.target.slug` is typed `ToolTargetSlug` (10 §7.2) — **[AMENDMENT]** widened to admit `knowledge-retrieval`/`reference-data`, but `tool-server` remains deliberately excluded — so a manifest naming it is unrepresentable |
 
 ### 4.9 The invocation path, and the gates every call passes
 
