@@ -502,6 +502,7 @@ PMA maintains four read models, each rebuilt from `changed_since` reads and neve
 | `rm_mission` | `mission.completed`, `telemetry.batch_ingested` | Review creation trigger; data-completeness gating |
 | `rm_detection` | `anomaly.detected` | Candidate creation (§3.1) |
 | `rm_maintenance_context` | `maintenance_action.recorded` | Review context and retrospective tag-quality assessment |
+| `rm_configuration`'s `channel_registry_version` **[AMENDMENT — this service is a declared 03 §6 consumer (04 §8) but never implemented the handler]** | `channel_mapping.version_published` | Bumps the cached `channel_registry_version` (21 §3.1.6) so review evidence materialized after a mapping change resolves channels under the current mapping, not a stale cached one |
 
 **`maintenance_action.recorded` is consumed for review context, and this is confirmed in the 03 §6 catalog** — the row lists `pma` among its consumers alongside `pdm`, `failure-intel`, `registry`, `supply`, and `design-advisory`. Document 04 §8 gives the reason: it lets a review "present what was subsequently found and repaired alongside the candidate window — the single most useful context a reviewer can have."
 

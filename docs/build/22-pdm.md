@@ -1258,6 +1258,7 @@ Topics `fathom.pdm.<aggregate>.v1`, partition key `asset_id` for asset-scoped ev
 | `installed_item.identity_resolved` **[AMENDMENT — this service is a declared 03 §6 consumer (04 §4) but never implemented the handler]** | `resolution: superseded` — re-key open segments, predictions, and criticality assessments from `provisional_id` to `canonical_id`; `confirmed` — no-op |
 | `telemetry.batch_ingested` | Feature availability and completeness; the tier-2 data-availability ceiling |
 | `health_indicator.computed` | Features, with **definition version and definition-time** — the bitemporal bound (`[D22]`) |
+| `channel_mapping.version_published` **[AMENDMENT — this service is a declared 03 §6 consumer (04 §4) but never implemented the handler]** | The direct, cheaper path this event exists for (21 §3.1.6): bumps the locally-cached `channel_registry_version` so a subsequent feature computation reads the new mapping without waiting on a `changed_since` poll. No prediction is invalidated by a mapping change alone — only by the `health_indicator.computed` recompute it triggers upstream, which carries its own `recomputation_reason: channel_mapping_change` |
 | `usage_counter.updated` | Usage covariates and the tier-1 ceiling condition; `counter_epoch` tracked |
 | `usage_counter.reset` | Breaks the usage clock: the item drops to the tier-0 ceiling until reconciled (`[D9]`) |
 | `maintenance_action.recorded` | **The label stream.** `failure_indicator`, `triggering_driver`, `triggering_prediction_id`, `policy_version` → §4.2's censoring classification |

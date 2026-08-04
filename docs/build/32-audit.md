@@ -1280,7 +1280,7 @@ All on audit's own topics, `fathom.audit.<aggregate>.v1`, through audit's own ou
 
 ### 11.2 Consumed — the broad subscription, and the catalog problem it creates
 
-Audit consumes **all 40 catalogued domain event types across the nine sub-applications, plus `proposal.created`, `proposal.adjudicated`, and `proposal.expired` on each of the nine `fathom.<slug>.proposal.v1` topics.** Every one is enumerated explicitly in `src/fathom_audit/events/catalog.py` as `CONSUMES`.
+Audit consumes **all 42 catalogued domain event types across the nine sub-applications** **[AMENDMENT — was 40; `installed_item.identity_resolved` (OQ-5) and `channel_mapping.version_published` were added to the catalog since]**, **plus `proposal.created`, `proposal.adjudicated`, and `proposal.expired` on each of the ten `fathom.<slug>.proposal.v1` topics** **[AMENDMENT — was nine; `fathom.audit.proposal.v1` is now a tenth, for audit's own purge/rewrap proposals, §6.1]**. Every one is enumerated explicitly in `src/fathom_audit/events/catalog.py` as `CONSUMES`.
 
 **Two constraints collide here, and the collision must be resolved rather than finessed.**
 
@@ -1486,7 +1486,7 @@ events:
   publishes: [fathom.audit.remediation.v1, fathom.audit.integrity.v1,
               fathom.audit.attestation.v1, fathom.audit.evaluation_export.v1,
               fathom.audit.proposal.v1]
-  consumes: [ ... all 40 domain event types + 9 proposal topics, enumerated ... ]
+  consumes: [ ... all 42 domain event types + 10 proposal topics, enumerated ... ]  # [AMENDMENT] was 40+9
 
 autoscaling:
   mode: keda                            # broadest consumer; reconnection bursts [D28]
@@ -1628,7 +1628,7 @@ Each item carries the finding or citation that makes it a defect rather than a p
 
 ### 15.5 Events, API, tests, deployment
 
-- [ ] All forty-nine consumed event types enumerated explicitly; no wildcard; `catalog.py` = `values.yaml` = document 03 §6 after amendment 03-5; `tools/check_event_catalog.py` exits 0. *(§11.2; **C38**, C3–C5)*
+- [ ] All fifty-two consumed event types enumerated explicitly **[AMENDMENT — was forty-nine (40+9); now 42+10, §11.2]**; no wildcard; `catalog.py` = `values.yaml` = document 03 §6 after amendment 03-5; `tools/check_event_catalog.py` exits 0. *(§11.2; **C38**, C3–C5)*
 - [ ] Consumer-driven tests contributed to all nine producers' suites, asserting the four envelope properties. *(§11.2; 03 §10)*
 - [ ] Audit's published events registered in document 03 §6 (amendment 03-4) and in `asyncapi.yaml` with no drift. *(§11.1)*
 - [ ] No operation is `x-agent-eligible`; static gate §12.5.5 green; contract test asserts it. *(§14 item 9)*

@@ -395,12 +395,12 @@ Justification: a second version counter would have to be kept consistent with th
 
 Document 04 §3 states: *"A mapping change is a versioned event, because it changes the meaning of historical data."*
 
-**Document 03 §6's Telemetry catalog contains six events, and none of them is a channel-mapping event.** Publishing a seventh would violate document 09 §8.2's Definition of Done (`events/catalog.py` must equal document 03 §6's rows for this slug) and document 13 §14.2's rule that *"every emitted type must exist in the 03 §6 event catalog."* So:
+**[AMENDMENT — closes OQ-2; see §14's register entry below, which this section previously contradicted.]** Document 03 §6's Telemetry catalog now carries seven events: the original six, plus `channel_mapping.version_published` (consumers `pdm`, `pma`, `audit`), added against this exact finding. Publishing it is consistent with document 09 §8.2's Definition of Done (`events/catalog.py` equals document 03 §6's rows for this slug) and document 13 §14.2's rule that *"every emitted type must exist in the 03 §6 event catalog"* — the catalog now names it, so this service subscribes... this service **publishes** it. So:
 
 1. **A mapping change is recorded as a versioned entity and advances `knowledge_seq`.** That satisfies the substance of 04 §3's requirement — the change is versioned and history's meaning is traceable.
-2. **It is surfaced to consumers through `GET /channels?changed_since=` and `GET /channel-mappings?changed_since=`** (03 §4's mandatory snapshot/change-feed reads).
-3. **Its downstream consequence is announced through `health_indicator.computed`**, which carries a bumped `channel_registry_version` and `recomputation_reason: channel_mapping_change`. Adding those two fields to the payload is an additive optional change requiring no version bump (03 principle 5).
-4. **No new topic and no new event type is created.** Recorded as **OQ-2** in §13: document 03 §6 should gain a `channel_mapping.version_published` row with consumers `pdm` and `pma`, or document 04 §3's sentence should be read as satisfied by (1)–(3). This document does not decide it unilaterally.
+2. **It is surfaced to consumers through `GET /channels?changed_since=` and `GET /channel-mappings?changed_since=`** (03 §4's mandatory snapshot/change-feed reads) — for any consumer that doesn't subscribe to the event below.
+3. **Its downstream consequence is announced through `health_indicator.computed`**, which carries a bumped `channel_registry_version` and `recomputation_reason: channel_mapping_change`. This remains correct and is not superseded by (4) — a consumer already reacting to registry-version bumps needs nothing new.
+4. **`channel_mapping.version_published` is now published**, on `fathom.telemetry.channel_mapping.v1` — carrying `channel_id`/`binding_id`/`mapping_id` (whichever changed), the new version, `channel_registry_version`, and effective date, exactly as 03 §6's row specifies. This is the cheaper, direct path for `pdm` and `pma`, which already react to registry-version bumps and no longer need to poll `changed_since` to learn why.
 
 ### 3.2 `TelemetryBatch`
 
@@ -1751,7 +1751,7 @@ Document 03 §5.4 is explicit that `mission_id` is *"required when scope=mission
 
 Per document 03 §5.5 and document 10 §4, every payload schema lives in `packages/canonical-schemas` and registers with the schema registry; this service cannot publish an unregistered payload.
 
-**The edge instance publishes all six event types.** That is the direct consequence of §2.2: two deployment instances of one slug, distinguished only by `producer_node`, each with its own sequence space. `events/catalog.py`'s `PUBLISHES` is identical in both profiles, which is what document 09 §8.2's reconciliation against document 03 §6 requires.
+**The edge instance publishes all seven event types** **[AMENDMENT — was six; `channel_mapping.version_published` closes OQ-2, §3.1.6]**. That is the direct consequence of §2.2: two deployment instances of one slug, distinguished only by `producer_node`, each with its own sequence space. `events/catalog.py`'s `PUBLISHES` is identical in both profiles, which is what document 09 §8.2's reconciliation against document 03 §6 requires.
 
 ### 8.3 Consumed events, and the correctness dependency each carries
 
@@ -2479,7 +2479,7 @@ The shared Definition of Done in [09 §8](09-monorepo-and-conventions.md#8-the-s
 
 - [ ] `producer_node` is `enterprise` or `edge:<asset_id>` per document 03 §5.4's literal form, on every envelope, from a single `Final` constant; `assetId` is startup-fatal when absent on the edge profile.
 - [ ] Dedup and ordering use `(producer_slug, producer_node, monotonic_seq)` everywhere; `test_d29_producer_node_prevents_sequence_collision` fails if `producer_node` is removed from the index.
-- [ ] All six document 03 §6 event types published from **both** profiles, with `events/catalog.py` `PUBLISHES`/`CONSUMES` equal to `helm/values.yaml` equal to document 03 §6's Telemetry rows in both profiles. `python tools/check_event_catalog.py` exits 0.
+- [ ] All seven document 03 §6 event types published from **both** profiles **[AMENDMENT — was six]**, with `events/catalog.py` `PUBLISHES`/`CONSUMES` equal to `helm/values.yaml` equal to document 03 §6's Telemetry rows in both profiles. `python tools/check_event_catalog.py` exits 0.
 - [ ] No topic compacted; the reasoning for each recorded in the README (§8.2(c)).
 - [ ] Twelve conflict policies declared or explicitly defaulted; the registry's startup enumeration passes; **every divergence budget exceeds 42 days**.
 - [ ] Every test in §10.5 and §10.6 green, including `test_d18_enterprise_adds_candidates_never_replaces`, `test_d9_reset_opens_new_epoch_and_carries_forward`, and `test_d29_burst_ingest_across_backward_step_preserves_order`.
