@@ -655,6 +655,7 @@ Core program capability. Not a substitution candidate.
 | `RedesignCandidate` | A component flagged for redesign consideration, with driver evidence and priority |
 | `RedesignCase` | The complete business case: scope, dependency impact, cost estimate, projected benefit, recommendation |
 | `CostEstimate` | A costed redesign scope with method, assumptions, and confidence |
+| `DesignScenario` | A projected forward-reliability scenario underlying one `design_change.projected` publication. First-class, separately stored and separately topiced from `RedesignCase` — publishing a projection as a side effect of a case would share the case's topic and storage, defeating the "strictly segregated" requirement below (`28-design-advisory.md` §16 item 6) |
 | `Proposal` | Agent-assembled redesign cases awaiting adjudication. Schema fixed by document 03 §7.2 |
 
 ### Key design decisions

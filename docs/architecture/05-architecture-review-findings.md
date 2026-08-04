@@ -118,6 +118,10 @@ Writing an executable specification against the corrected contracts surfaced def
 
 **The decision.** Candidate production sourcing mechanisms, none yet evaluated: a curated gold set of historically confirmed anomalies replayed as regression canaries; a periodic SME-authored synthetic-injection set maintained outside the generator; or accepting that production recall can only be *estimated* via the double-blind re-review sampling document 06 §6 already specifies, with canary-based measurement understood as a demonstration-only validation of the mechanism rather than a fielded capability. This is a document 06 §9-style question — what the demonstration's mechanism implies the enterprise must supply to keep working after fielding — and belongs in that section's Tier B program-requirements framing once decided.
 
+| ID | Sev | Finding | Disposition |
+|---|---|---|---|
+| **D40** | MED | **`design_change.projected` contaminating operational predictions was an unreviewed path.** Document 04 §10 required the event and required it "strictly segregated" from operational predictions; document 04 §4 listed the segregation mechanism as an open Phase 3 question. Neither review pass produced a finding on it — the risk that a forward-looking design scenario leaks into and biases live PdM predictions survived both adversarial passes undetected, flagged only when Design Advisory's build-framework agent (`docs/build/28`) went to implement the producer side and found no aggregate, no topic, and no consumer obligation actually specified for it | **FIX — applied.** Producer-side mechanism specified in `28-design-advisory.md` §7.2 (separately topiced, separately stored); consumer obligation stated as binding requirement DA→PDM-1 in the same document's §7.4, to be reflected in `docs/build/22-pdm.md`; `DesignScenario` added to document 04 §10's aggregate table as the first-class aggregate the event publishes from |
+
 ---
 
 ## 3. Consistency findings
