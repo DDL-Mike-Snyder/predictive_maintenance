@@ -63,7 +63,7 @@ Document 03 §6 was read in full. **Six event rows declare `notification` as a c
 | 3 | `casrep_risk.cleared` | `fleet-status` | `notification`, `maintenance` | `installed item`, cause of clearance |
 | 4 | `mission_review.opened` | `pma` | `notification` | `mission_id`, `asset`, candidate set, **`assigned reviewer`**, candidate origin |
 | 5 | `redesign_candidate.created` | `design-advisory` | `fleet-status`, `notification` | `NIIN`, driver evidence, affected population, **`preliminary priority`** |
-| 6 | `proposal.created` | every sub-application, per 03 §6's proposal convention on `fathom.<slug>.proposal.v1` | `gateway`, `notification` | `authority_class`, `blast_radius`, `requires_dual_control`, `valid_until`, `target_sub_app`, `kind` |
+| 6 | `proposal.created` | every sub-application, per 03 §6's proposal convention on `fathom.<slug>.proposal.v1` — **and `audit`**, on `fathom.audit.proposal.v1`, for `purge`/`rewrap` (03 §6: *"exactly as any other proposal-accepting sub-application's topic does"*) | `gateway`, `notification` | `authority_class`, `blast_radius`, `requires_dual_control`, `valid_until`, `target_sub_app`, `kind` |
 
 **Nothing else in document 03 §6 names `notification` as a consumer.** In particular, and contrary to what a reader working from an earlier revision or from document 04 §11's prose might expect:
 
@@ -78,7 +78,7 @@ Document 03 §6 was read in full. **Six event rows declare `notification` as a c
 
 ### 2.2 Urgency and routing implication, per declared event
 
-Urgency classes are defined in §4. Routing roles are document 03 §7.2.1's `AuthorityClass` vocabulary verbatim — `maintainer` | `planner` | `supply_officer` | `design_authority` | `fleet_authority` — plus exactly one non-adjudicating addition, `watch_station`, which §5.4 justifies and **OD-3** asks to have confirmed.
+Urgency classes are defined in §4. Routing roles are document 03 §7.2.1's `AuthorityClass` vocabulary verbatim — `maintainer` | `planner` | `supply_officer` | `design_authority` | `fleet_authority` | `security_officer` — plus exactly one non-adjudicating addition, `watch_station`, which §5.4 justifies and **OD-3** asks to have confirmed. **[AMENDMENT]** `security_officer` (amendment 03-1) was missing here and from every restatement of this vocabulary below — the omission meant `purge`/`rewrap` proposals, whose `authority_class` is `security_officer` exclusively (03 §7.2.1), had no representable recipient role at all.
 
 | Event | Urgency | Routed to | Basis and routing logic |
 |---|---|---|---|
@@ -742,7 +742,7 @@ Acknowledgement is the assertion that a human saw this. An agent acknowledging o
 `DEFERRED` and `DELIVERED` are distinct outcomes with distinct metrics, and no code path or dashboard sums them. A delivery-rate panel that counts queued items reads green while nobody has been told anything. *(§6.1)*
 
 **DO-NOT-6 — Do not subscribe to an event document 03 §6 does not declare `notification` a consumer of, and do not use a wildcard subscription.**
-Six declared rows (§2.1). Handlers for undeclared triggers ship disabled and are enabled by catalog amendment plus a values change, reviewed against `tools/check_event_catalog.py`. `fathom.*.proposal.v1` is expanded to an explicit per-slug list. *(C38, 09 DO-NOT-14)*
+Six declared rows (§2.1). Handlers for undeclared triggers ship disabled and are enabled by catalog amendment plus a values change, reviewed against `tools/check_event_catalog.py`. `fathom.*.proposal.v1` is expanded to an explicit per-slug list — the nine `SubAppSlug` topics **plus `fathom.audit.proposal.v1`**, the same named platform-service exception `30-gateway.md` §4.1 makes, added here because `purge`/`rewrap` proposals are otherwise silently unrouted to any recipient. *(C38, 09 DO-NOT-14)*
 
 **DO-NOT-7 — Do not deliver a `replay: true` event, and do not let backfill notify.**
 Document 03 §5.3 names notifications first among the live side effects replay must not fire, and document 01 §12 repeats it. Record and suppress. Conversely, **do not treat an edge drain as a replay**: a six-week-old maintenance action is a first emission of a real fact and must fire its normal effects ashore. *(`[D30]`, document 11 §9.3a)*

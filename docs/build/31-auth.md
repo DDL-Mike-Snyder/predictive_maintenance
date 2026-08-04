@@ -173,14 +173,14 @@ class AuthorityClass(StrEnum):
 
 ### 2.5 One name, two meanings — resolved
 
-Document 09 §5.5 says: *"The principal carries an `authority_class` of `delegated` or `accountable-autonomous`."* Document 03 §7.2.1 says `authority_class` is one of five organizational roles. **These are two different fields with one name**, and a service that reads `principal.authority_class` expecting one will silently get the other.
+Document 09 §5.5 says: *"The principal carries an `authority_class` of `delegated` or `accountable-autonomous`."* Document 03 §7.2.1 says `authority_class` is one of six organizational roles (§2.4 — five plus `security_officer`, amendment 03-1). **These are two different fields with one name**, and a service that reads `principal.authority_class` expecting one will silently get the other.
 
 **[ESTABLISHED HERE] — the resolution, binding on `packages/py-common`:**
 
 | Concept | Claim / field name | Vocabulary | Governs |
 |---|---|---|---|
 | Which credential an agent calls with | `fathom.agent.authority` | `delegated` \| `accountable_autonomous` | 03 §8.3 |
-| Which organizational role may adjudicate | `fathom.identity.authority_classes[]` (principal) and `Proposal.authority_class` (resource) | 03 §7.2.1's five values | 03 §7.2.1, D16 |
+| Which organizational role may adjudicate | `fathom.identity.authority_classes[]` (principal) and `Proposal.authority_class` (resource) | 03 §7.2.1's six values (§2.4) | 03 §7.2.1, D16 |
 
 Note also the spelling correction: 03 §8.3 renders the second agent class as *"Accountable autonomous"* in prose; document 09 §5.5 writes `accountable-autonomous` with a hyphen. The wire value is **`accountable_autonomous`**, `snake_case`, because 03 §4 fixes `snake_case` for JSON field *and* enumeration values elsewhere and a mixed convention here would be its own defect. Recorded as amendment **A-2** in §14.
 
@@ -1367,7 +1367,7 @@ Four tiers per document 09 §4.7, plus the shared conformance suite at `packages
 | T-4 | **Federation identity parity.** The same human authenticating directly and through Domino's brokered flow | Identical `sub` and identical `fathom.identity` block. This is document 01 §5's *"one identity spans both planes"*, made checkable |
 | T-5 | **Delegated reach equals user reach.** Replay a decision corpus with a user token and with a delegated token derived from it | Identical decisions and obligations. 01 §8.5's *"cannot read what the maintainer cannot read"* |
 | T-6 | **No agent adjudicates.** Both agent classes, against `adjudicate` and `second_adjudicate` | `403 …:agent-may-not-adjudicate`, regardless of `authority_classes` |
-| T-7 | **Authority matrix exhaustiveness.** Property test over the full cross-product of 03 §7.2.1's `kind` × `blast_radius` × the five classes | Every cell's allow/deny matches the table exactly; an uncovered cell **fails**; `not_applicable` cells deny; `any_of` cells accept either class; **no implicit hierarchy** — `fleet_authority` is denied on `anomaly_tag` |
+| T-7 | **Authority matrix exhaustiveness.** Property test over the full cross-product of 03 §7.2.1's `kind` × `blast_radius` × **the six classes** (`security_officer` included — **[AMENDMENT]** this test previously iterated only the pre-amendment-03-1 five, which meant every `purge`/`rewrap` cell, the only cells `security_officer` appears in, was untested by the corpus's own exhaustiveness check) | Every cell's allow/deny matches the table exactly; an uncovered cell **fails**; `not_applicable` cells deny; `any_of` cells accept either class; **no implicit hierarchy** — `fleet_authority` is denied on `anomaly_tag`; `purge`/`rewrap`'s dual-control and counter-signature cells (§6.4) are exercised, not merely present |
 | T-8 | **Dual control.** Class and fleet scope, and external-legal-effect kinds | Required; second adjudicator must differ from the first; the second signature is checked against the matrix's `second_signature_any_of` (same-role `any_of` by default, `counter_signature_class` for `purge`/`rewrap`) for **every** kind requiring dual control, not `interval_change` alone |
 | T-9 | **Re-validation.** Adjudicate a proposal whose `blast_radius` was corrected after creation | `authority_class_field_stale` denial — 03 §7.2's *"[r]e-validation at approval is mandatory"* |
 | T-10 | **Classification.** Level dominance, missing compartment, unmet dissemination control, unauthorized CUI category, retired `FOUO` marking, above-deployment-level | Each denied with its own reason string |
@@ -1481,7 +1481,7 @@ Each is a **defect or gap in the cited document**, not a decision of this one. I
 
 | # | Document | Issue | Required change | Status |
 |---|---|---|---|---|
-| **A-1** | **10 §7.2 / `packages/canonical-schemas`** | `Proposal.authority_class` is typed `NonEmptyStr` with **OQ-13** recorded as *"the most consequential gap in the package"* because the vocabulary was undefined. Document 03 §7.2.1 now defines it | Add `fathom_schemas/authority.py` with the `AuthorityClass` enum (§2.4); retype the field; **close OQ-13** and remove it from document 10 §11's blocker list | **Specified in §2.4.** Document 10 needs the edit |
+| **A-1** | **10 §7.2 / `packages/canonical-schemas`** | `Proposal.authority_class` is typed `NonEmptyStr` with **OQ-13** recorded as *"the most consequential gap in the package"* because the vocabulary was undefined. Document 03 §7.2.1 now defines it | Add `fathom_schemas/authority.py` with the `AuthorityClass` enum (§2.4); retype the field; **close OQ-13** and remove it from document 10 §11's blocker list | **Applied.** `10-shared-packages.md` §4.6b adds the module, §4.7 retypes the field, and OQ-13 is closed |
 | **A-2** | **09 §5.5** | Says the principal carries *"an `authority_class` of `delegated` or `accountable-autonomous`"* — collides by name with 03 §7.2.1's vocabulary, and hyphenates a value that must be `snake_case` on the wire | Rename to `fathom.agent.authority`; wire value `accountable_autonomous` | **Applied in §2.5.** Document 09 needs the edit |
 | **A-3** | **03 §7.2 / §7.2.1** | `Proposal.authority_class` is **singular**, but three §7.2.1 cells accept **two** classes (*"`maintainer` or `planner`"*) and one is two-stage (*"then Registry confirmation"*). A single value cannot express an alternative set | Either rename to `authority_class_any_of[]`, or state explicitly that the field records the cell's first value and that the policy is authoritative | **Interim implemented** in §6.4 (`authority_class_field_stale` validates membership in `any_of`). Flagged |
 | **A-4** | **09 §4.4.2** | The sanctioned-edge table has no `<sub-application> → gateway` edge. The Domino Endpoint proxy (§5) requires it, for one operation | Add the edge, scoped to `POST /api/v1/gateway/domino/endpoint-invocations`, with the §5.2 justification. **ADR required** | Not applied. **Blocks the proxy's NetworkPolicy** |

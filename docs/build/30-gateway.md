@@ -186,6 +186,9 @@ CREATE TABLE proposal_queue (
   claimed_until              timestamptz NULL,
   adjudicated_by             text        NULL,
   second_adjudicator         text        NULL,                     -- dual control [D16]
+  counter_signature_by       text        NULL,                     -- [AMENDMENT] a THIRD,
+  counter_signature_at       timestamptz NULL,                     --   additional signatory (03 §7.2);
+                                                                    --   see PROJECTED_COLUMNS below
 
   -- ── ranking and adjudicator warnings: scalars and booleans, never prose ──
   confidence                 double precision NOT NULL,            -- 03 §7.2
@@ -222,10 +225,15 @@ CREATE TABLE proposal_queue (
            AND source_topic = 'fathom.' || producer_slug || '.proposal.v1'),
 
   -- 03 §7.2 rule 4, mirrored so a malformed upstream row cannot enter the queue
-  -- looking adjudicable-by-one-signature.
+  -- looking adjudicable-by-one-signature. [AMENDMENT] Originally omitted
+  -- purge/rewrap: 31-auth.md §6.4's generated authority_matrix.json sets
+  -- dual_control:true on those kinds' item AND asset cells, not only
+  -- class/fleet — the same gap 10-shared-packages.md's
+  -- _dual_control_required_at_scope validator independently had, fixed there
+  -- in the same pass.
   CONSTRAINT proposal_queue_dual_control_at_scope
     CHECK (requires_dual_control OR (blast_radius NOT IN ('class', 'fleet')
-                                     AND kind <> 'requisition')),
+                                     AND kind NOT IN ('requisition', 'purge', 'rewrap'))),
 
   -- 03 §5.4: exactly one scope identifier, matching `scope`; scope='fleet'
   -- requires none — the one singleton scope [C11].
@@ -274,6 +282,7 @@ PROJECTED_COLUMNS: frozenset[str] = frozenset({
     "class_id", "mission_id", "subject_provisional",
     "status", "valid_until", "baseline_id", "baseline_epoch",
     "claimed_by", "claimed_until", "adjudicated_by", "second_adjudicator",
+    "counter_signature_by", "counter_signature_at",   # [AMENDMENT] 03 §7.2
     "confidence", "evidence_count", "non_program_evidence_only",
     "agent_id", "agent_version", "trace_ref",
     "classification",
@@ -655,24 +664,44 @@ through its own contract, so 03 §15 obligation 2 ("emit an event for every stat
 change reachable through its contract") is satisfied vacuously.  See build 30 §9.2.
 """
 
+AUDIT_PROPOSAL_TOPIC: str = "fathom.audit.proposal.v1"
+"""[AMENDMENT] `audit` is a PLATFORM slug, not a member of `SubAppSlug` (the nine
+DOMAIN slugs) — but 03 §6 line "Audit's purge/rewrap-kind proposals follow the
+generic [proposal] convention... exactly as any other proposal-accepting
+sub-application's topic does" makes `audit` a tenth, explicitly-named producer
+under that same convention, and 03 §6's convention table names `gateway` as a
+consumer regardless of which slug publishes.  `CONSUMES` below previously
+enumerated only the nine `SubAppSlug` topics, silently excluding this one — the
+consequence was that `purge`/`rewrap` proposals, the only kind whose
+`authority_class` is `security_officer`, could never reach the queue at all
+(§9.1's Security Officer card and 51-operator-console.md's Sheet 11 are built
+against a topic the gateway never subscribed to). Named as a constant, not
+folded into a loop, because it is a single fixed exception, not a pattern."""
+
 CONSUMES: frozenset[str] = frozenset(
     proposal_topic(slug) for slug in SubAppSlug
-)
-"""The nine proposal topics, ENUMERATED — not a pattern.  See build 30 §4.2 for
-why this is an explicit list and not the librdkafka regex form, and §7.1 for how
-the enumeration is confined to this deployment's classification level.
+) | {AUDIT_PROPOSAL_TOPIC}
+"""The nine domain proposal topics plus `audit`'s — TEN, ENUMERATED, not a
+pattern.  See build 30 §4.2 for why this is an explicit list and not the
+librdkafka regex form, and §7.1 for how the enumeration is confined to this
+deployment's classification level.
 """
 
 CONSUMED_EVENT_TYPES: frozenset[str] = frozenset({
     f"fathom.{slug}.proposal.{verb}"
     for slug in SubAppSlug
     for verb in ("created", "adjudicated", "expired")
+} | {
+    f"fathom.audit.proposal.{verb}"
+    for verb in ("created", "adjudicated", "expired")
 })
-"""03 §6 "Proposals — a convention" lists three events on the proposal aggregate.
-NOTE the catalog defect at §14 item 1: 03 §6 names `gateway` as a consumer of
-`proposal.created` and `proposal.expired` but NOT of `proposal.adjudicated` — which
-would leave every approved proposal in the queue as pending forever.  The gateway
-consumes all three; document 03 §6's consumer column needs the correction.
+"""03 §6 "Proposals — a convention" lists three events on the proposal aggregate,
+for every producer under the convention — the nine sub-applications AND `audit`
+(see `AUDIT_PROPOSAL_TOPIC` above). NOTE the catalog defect at §14 item 1: 03 §6
+names `gateway` as a consumer of `proposal.created` and `proposal.expired` but
+NOT of `proposal.adjudicated` — which would leave every approved proposal in the
+queue as pending forever.  The gateway consumes all three; document 03 §6's
+consumer column needs the correction.
 """
 ```
 
@@ -693,7 +722,7 @@ CONSUMER_CONFIG = {
     # topics nor creates them.
 }
 
-consumer.subscribe(sorted(CONSUMES))     # an explicit LIST of nine topic names
+consumer.subscribe(sorted(CONSUMES))     # an explicit LIST of ten topic names
 ```
 
 ### 4.2 The pattern, C38, and why the list is explicit
@@ -703,7 +732,7 @@ Two constraints appear to conflict, and reconciling them is a required piece of 
 - **03 §6 and 04 §11** say the queue is built *"by consuming the `fathom.*.proposal.v1` topic pattern"*, and `packages/canonical-schemas` ships `PROPOSAL_TOPIC_PATTERN` for exactly that (10 §4.5).
 - **C38** is a FIX finding against wildcard subscriptions — *"which cannot be conformance-tested and auto-subscribe to future events"* — and 09 §8.2 makes it a Definition-of-Done item: *"No wildcard subscriptions. Every consumed event type is named explicitly."* 09 §9.2 item 14 repeats it as a DO-NOT.
 
-> **DECISION G-1.** The gateway subscribes to an **explicitly enumerated list of nine topic names**. `PROPOSAL_TOPIC_PATTERN` is used in **exactly one place**: a CI assertion that the enumerated list equals the pattern's expansion over the canonical slug table. The broker client is never handed a `^`-prefixed pattern.
+> **DECISION G-1.** The gateway subscribes to an **explicitly enumerated list of ten topic names**. `PROPOSAL_TOPIC_PATTERN` is used in **exactly one place**: a CI assertion that the enumerated list equals the pattern's expansion over the canonical slug table, plus the one named platform-service exception. The broker client is never handed a `^`-prefixed pattern.
 
 This satisfies both, and the reason it is not a fudge is that the "pattern" here is closed on every axis but one:
 
@@ -711,9 +740,9 @@ This satisfies both, and the reason it is not a fudge is that the "pattern" here
 |---|---|---|
 | Aggregate token | No — fixed at `proposal` | Not a wildcard over aggregates |
 | Major version | No — fixed at `v1` | A `v2` proposal topic is a deliberate, reviewed subscription change, not an auto-subscription |
-| Slug | Yes — but over a **closed, enumerated table** of nine (03 §3.1) | Expansion is a nine-element list, knowable at build time |
+| Slug | Yes — but over a **closed, enumerated table** of nine (03 §3.1) **plus one named platform-service exception, `audit`** (`AUDIT_PROPOSAL_TOPIC` above — 03 §6 makes `audit` a tenth producer under the same proposal convention, for `purge`/`rewrap`) | Expansion is a ten-element list, knowable at build time |
 
-C38's two named defects therefore cannot occur. *"Cannot be conformance-tested"*: the gateway contributes a consumer-driven conformance test to each of the nine producers' suites (§10.4), which is possible only because the nine are named. *"Auto-subscribe to future events"*: a tenth sub-application requires a row in 03 §3.1, which changes `SubAppSlug` in `packages/canonical-schemas` (10 §4.2), which changes `CONSUMES`, which changes `helm/values.yaml`, and CI job 6 fails until all four agree.
+C38's two named defects therefore cannot occur. *"Cannot be conformance-tested"*: the gateway contributes a consumer-driven conformance test to each of the ten producers' suites (§10.4), which is possible only because all ten are named. *"Auto-subscribe to future events"*: an eleventh producer requires either a row in 03 §3.1 (changing `SubAppSlug`, `CONSUMES`, and `helm/values.yaml` together) or an explicit second named exception alongside `AUDIT_PROPOSAL_TOPIC` — either way CI job 6 fails until all four agree.
 
 The CI assertion:
 
@@ -724,16 +753,22 @@ import re
 from fathom_schemas.slugs import SubAppSlug
 from fathom_schemas.topics import PROPOSAL_TOPIC_PATTERN
 
-from fathom_gateway.events.catalog import CONSUMES
+from fathom_gateway.events.catalog import AUDIT_PROPOSAL_TOPIC, CONSUMES
 
 
 def test_g1_enumerated_list_equals_pattern_expansion() -> None:
     """DECISION G-1 (build 30 §4.2).  Reconciles 03 §6's "topic pattern" with
     C38's prohibition on wildcard subscriptions: the pattern is the SPECIFICATION
-    and the list is the IMPLEMENTATION, and CI holds them equal."""
-    expansion = {f"fathom.{slug}.proposal.v1" for slug in SubAppSlug}
+    and the list is the IMPLEMENTATION, and CI holds them equal.
+
+    [AMENDMENT] Previously asserted CONSUMES == the nine-slug expansion exactly,
+    len == 9 — silently correct-looking while excluding fathom.audit.proposal.v1,
+    the only topic carrying purge/rewrap proposals. audit is a PlatformServiceSlug,
+    not a SubAppSlug, so it is added as a named exception rather than folded into
+    the slug expansion, which stays a pattern match over a closed enumeration."""
+    expansion = {f"fathom.{slug}.proposal.v1" for slug in SubAppSlug} | {AUDIT_PROPOSAL_TOPIC}
     assert CONSUMES == expansion
-    assert len(CONSUMES) == 9
+    assert len(CONSUMES) == 10
 
     pattern = re.compile(PROPOSAL_TOPIC_PATTERN)
     for topic in CONSUMES:
@@ -750,7 +785,7 @@ def test_d32_no_broker_pattern_subscription(subscribed_topics: list[str]) -> Non
     assert not any(t.startswith("^") for t in subscribed_topics)
 ```
 
-A third reason for the explicit list, which is operational rather than architectural: a librdkafka pattern subscription requires cluster-wide metadata describe rights. Under D32-R2 the gateway's Kafka ACL grant is exactly nine topics at one level, and `describe` is denied above it — so a pattern subscription would not merely leak, it would fail. The ACL is the enforcement; the code matches it.
+A third reason for the explicit list, which is operational rather than architectural: a librdkafka pattern subscription requires cluster-wide metadata describe rights. Under D32-R2 the gateway's Kafka ACL grant is exactly ten topics at one level, and `describe` is denied above it — so a pattern subscription would not merely leak, it would fail. The ACL is the enforcement; the code matches it.
 
 ### 4.3 The projector
 
@@ -788,6 +823,11 @@ EVENT_HANDLERS: dict[str, Handler] = {
     **{f"fathom.{s}.proposal.created":     project_created     for s in SubAppSlug},
     **{f"fathom.{s}.proposal.adjudicated": project_adjudicated for s in SubAppSlug},
     **{f"fathom.{s}.proposal.expired":     project_expired     for s in SubAppSlug},
+    # [AMENDMENT] audit's purge/rewrap proposals, on AUDIT_PROPOSAL_TOPIC above —
+    # the same three handlers, keyed on the platform-service exception.
+    "fathom.audit.proposal.created":     project_created,
+    "fathom.audit.proposal.adjudicated": project_adjudicated,
+    "fathom.audit.proposal.expired":     project_expired,
 }
 ```
 
@@ -801,7 +841,7 @@ Five projector rules, each with its finding:
 
 4. **Provisional identity is resolved on read, not rewritten on projection.** A `configuration_change` proposal submitted at the edge (03 §7.2.1) may carry a provisionally-minted `installed_item_id` (03 §3.3, 11 §8). 11 §1.1 makes the alias resolver active in *"every read model"*, and 11 §12 item 13 forbids rewriting records published under a provisional identity. So: `subject_provisional` is stored, the alias resolver runs at query time, and the queue response carries both the provisional and the confirmed identifier when they differ.
 
-5. **A malformed or cross-domain event is quarantined and alarmed, never projected.** A row failing `proposal_queue_owner_is_producer` means a sub-application published a proposal targeted at a neighbour — a 03 principle 3 / C32 violation. A row failing `proposal_queue_dual_control_at_scope` means an upstream constructed a class- or fleet-scoped proposal without dual control, which is 03 §7.2 rule 4. Both are upstream contract violations. The projector writes the inbox row with `processed_at` NULL and `last_error` set, increments `fathom_gateway_projection_rejections_total{reason,producer}`, logs at ERROR, and **does not** advance to a state where the event is suppressed — so remediating the upstream and redelivering works.
+5. **A malformed or cross-domain event is quarantined and alarmed, never projected.** A row failing `proposal_queue_owner_is_producer` means a sub-application published a proposal targeted at a neighbour — a 03 principle 3 / C32 violation. A row failing `proposal_queue_dual_control_at_scope` means an upstream constructed a class- or fleet-scoped proposal (or a `purge`/`rewrap` proposal at any scope) without dual control, which is 03 §7.2 rule 4. Both are upstream contract violations. The projector writes the inbox row with `processed_at` NULL and `last_error` set, increments `fathom_gateway_projection_rejections_total{reason,producer}`, logs at ERROR, and **does not** advance to a state where the event is suppressed — so remediating the upstream and redelivering works.
 
 ### 4.4 Ordering, cursors, and why there is no global "oldest first"
 
@@ -971,7 +1011,8 @@ CREATE TABLE queue_rebuild_watermark (
 ```
 
 ```
-for slug in SubAppSlug:                       # the nine, 03 §3.1 / 10 §4.2
+for slug in (*SubAppSlug, "audit"):            # the nine, 03 §3.1 / 10 §4.2, plus
+                                                # the AUDIT_PROPOSAL_TOPIC exception (§4.1)
     GET /api/v1/{slug}/proposals?changed_since=<watermark>&cursor=<cursor>
     upsert each row into proposal_queue, projecting ONLY PROJECTED_COLUMNS
     advance the watermark and cursor in the same transaction as the upserts
@@ -979,7 +1020,7 @@ for slug in SubAppSlug:                       # the nine, 03 §3.1 / 10 §4.2
 
 The projection function is the **same** function the event path uses — one `project(proposal) -> ProposalQueueRow` — so the two paths cannot diverge and the allowlist is enforced once. This is what makes `test_d32_read_model_rebuild_with_bus_down` a meaningful equality assertion rather than a comparison of two implementations.
 
-Note the reciprocal obligation this places on the nine: each must expose `GET /proposals?changed_since=&cursor=` because the gateway is a declared consumer that projects the aggregate (03 §4, obligation 5). The gateway contributes the consumer-driven conformance test that proves it (§10.4), which is how the obligation becomes enforceable rather than aspirational.
+Note the reciprocal obligation this places on the nine, **and on `audit`**: each must expose `GET /proposals?changed_since=&cursor=` because the gateway is a declared consumer that projects the aggregate (03 §4, obligation 5). **[AMENDMENT]** `audit`'s own build document (`32-audit.md`) declared `GET /records?changed_since=&cursor=` for its audit-record aggregate but no equivalent for the `Proposal` aggregate its `POST /proposals` operation creates — closed there by adding `GET /proposals?changed_since=&cursor=` alongside it. The gateway contributes the consumer-driven conformance test that proves it for all ten (§10.4), which is how the obligation becomes enforceable rather than aspirational.
 
 **Purge.** Document 03 §13 item 2 requires *"a declared purge protocol covering every store, including Domino-side traces and gateway-held read models, with an owner and a tested procedure."* This document declares it:
 
@@ -1406,7 +1447,7 @@ The gateway is **not** an accredited guard, and 03 §5.1 and §12 permit cross-l
 | Property | Demonstration (03 §12, 06 §5) | Production (03 §12, 06 §5) | Change required |
 |---|---|---|---|
 | Levels | One, `U` | One deployment per level and compartment set | **Helm values only.** No code |
-| Topics subscribed | Nine, at `U` | Nine per level, enumerated per deployment | `SubAppSlug` × the deployment's level; the enumeration mechanism is unchanged |
+| Topics subscribed | Ten, at `U` | Ten per level, enumerated per deployment | `SubAppSlug` × the deployment's level, plus `audit`'s exception topic; the enumeration mechanism is unchanged |
 | Read-model content | Metadata at `U` | Metadata at one level per store | Unchanged |
 | Cross-level flow | None | None — an accredited guard, which is not the gateway | Unchanged |
 | Aggregation | `level_scoped` | `level_scoped` | Unchanged |
@@ -1585,7 +1626,7 @@ Four tiers per 09 §4.7 — unit, integration, contract, conformance — plus th
 | `test_d32_queue_response_contains_no_free_text` | The `GET /proposals` response body, for a proposal with a long rationale and excerpts, contains no field whose value is unbounded free text — the injection-surface half of property 1 (§2.3, D14) | 1, 2 |
 | `test_d32_subscription_confined_to_declared_level` | With proposal topics registered at two levels, `deploymentLevel=U`: the subscription set equals the enumerated `U` list; a proposal published on an above-level topic is **never** projected and appears in **no** queue response | 3 |
 | `test_d32_no_broker_pattern_subscription` | No argument passed to `Consumer.subscribe()` begins with `^` (§4.2) | 3 |
-| `test_g1_enumerated_list_equals_pattern_expansion` | `CONSUMES` equals `PROPOSAL_TOPIC_PATTERN` expanded over `SubAppSlug`, and has nine members (§4.2) | 3 |
+| `test_g1_enumerated_list_equals_pattern_expansion` | `CONSUMES` equals `PROPOSAL_TOPIC_PATTERN` expanded over `SubAppSlug` plus `AUDIT_PROPOSAL_TOPIC`, and has ten members (§4.2) | 3 |
 | `test_d32_read_model_rebuild_with_bus_down` | Project N proposals; snapshot; `TRUNCATE proposal_queue`; **stop Redpanda**; rebuild from `changed_since` against stub owners; assert the result is identical to the snapshot modulo `projection_seq` | 4 |
 | `test_d32_purge_is_truncate_and_rebuild` | The declared purge procedure of §4.7 executes end to end and leaves no trace of the purged `proposal_id` in any column of any table | 4 |
 | `test_d32_gateway_publishes_nothing` | `PUBLISHES == frozenset()`; no `outbox` table at migration head; no Kafka producer constructed anywhere in the service | 5 |
@@ -1643,7 +1684,7 @@ The last of these is the guard with the longest reach: it makes "the gateway hol
 
 **The gateway's own suite** at `packages/contracts/conformance/gateway/`, collected unmodified per 09 §4.7. It covers the queue contract, the pass-through transparency properties of §8.4, and cursor stability across a rebuild.
 
-**Nine consumer-driven contributions**, at `packages/contracts/conformance/<slug>/consumers/gateway/`. This is a Definition-of-Done obligation, not an optional extra: 09 §4.7 states that *"a consumer that declares a dependency in document 03 §6 and contributes no test has an unmet Definition-of-Done item."* The gateway declares nine. Each contribution asserts, against that sub-application's implementation or a substituting partner's:
+**Ten consumer-driven contributions**, at `packages/contracts/conformance/<slug>/consumers/gateway/`. This is a Definition-of-Done obligation, not an optional extra: 09 §4.7 states that *"a consumer that declares a dependency in document 03 §6 and contributes no test has an unmet Definition-of-Done item."* The gateway declares ten — the nine sub-applications plus `audit` (§4.1). Each contribution asserts, against that sub-application's implementation or a substituting partner's:
 
 1. `fathom.<slug>.proposal.v1` exists, carries the full 03 §5.4 envelope with `producer_node` and the complete `clock` block, and partitions per 03 §5.1.
 2. A created proposal validates against `packages/canonical-schemas`' `Proposal`, with `authority_class` drawn from 03 §7.2.1's vocabulary and `blast_radius` from 03 §7.2's.
@@ -1653,7 +1694,7 @@ The last of these is the guard with the longest reach: it makes "the gateway hol
 6. `GET /proposals?changed_since=&cursor=` exists, is cursor-paginated, and returns the same fields the events carry — the §4.7 rebuild path, and 03 obligation 5 for this aggregate.
 7. `POST /proposals/{id}/claim` returns a lease and an `ETag`; adjudication without `If-Match` returns `428`; adjudication on a superseded `baseline_epoch` or an elapsed `valid_until` is **rejected** (03 §7.2 rule 2, D16).
 
-Item 7 deserves emphasis: it is the gateway, as the consumer that serves the queue, that makes D16's re-validation rule externally observable across all nine owners. Without it, "re-validation at approval is mandatory" is an obligation with no test anywhere in the system.
+Item 7 deserves emphasis: it is the gateway, as the consumer that serves the queue, that makes D16's re-validation rule externally observable across all ten owners. Without it, "re-validation at approval is mandatory" is an obligation with no test anywhere in the system.
 
 ### 10.5 Standard tiers
 
@@ -1704,7 +1745,7 @@ projector:
   autoscaling:
     mode: keda                     # 09 §2.4: "KEDA on consumer lag for event workers"
     minReplicas: 1
-    maxReplicas: 3                 # never exceeds total partitions across the nine topics
+    maxReplicas: 3                 # never exceeds total partitions across the ten topics
     kedaLagThreshold: 1000
 
 podSecurityContext:
@@ -1794,6 +1835,7 @@ events:
     - fathom.pma.proposal.v1
     - fathom.failure-intel.proposal.v1
     - fathom.design-advisory.proposal.v1
+    - fathom.audit.proposal.v1         # [AMENDMENT] the AUDIT_PROPOSAL_TOPIC exception, §4.1 — purge/rewrap
 
 # ---- network boundary (§11.3) ----------------------------------------------
 networkPolicy:
@@ -1841,7 +1883,7 @@ Migrations run once, as the chart's `pre-upgrade,pre-install` hook Job with `bac
 
 ### 11.3 NetworkPolicy
 
-The gateway's egress set is the widest in the system, and that is the design: 09 §4.4.2's sanctioned edge table lists `gateway → any of the nine, plus tool-server, knowledge-retrieval, notification` as permitted precisely because *"the gateway performs all view-model composition."* The breadth is what buys the nine sub-applications their narrowness — their permitted egress is `[auth, audit, reference-data]` and nothing more.
+The gateway's egress set is the widest in the system, and that is the design: 09 §4.4.2's sanctioned edge table lists `gateway → any of the nine, plus tool-server, knowledge-retrieval, notification, and audit` as permitted precisely because *"the gateway performs all view-model composition."* **[AMENDMENT]** `audit` was added to that row — the detail-fetch/adjudicate mechanism (§4.6) needs it for `purge`/`rewrap` rows exactly as it needs the nine for every other kind. The breadth is what buys the nine sub-applications their narrowness — their permitted egress is `[auth, audit, reference-data]` and nothing more.
 
 The helm-unittest assertion mandated by 09 §4.4.2 and 09 §8.6 applies unchanged and is not relaxed for the gateway: the rendered egress peer set must **equal** `values.networkPolicy.egress` exactly, with nothing extra and no wildcard.
 
@@ -1855,7 +1897,7 @@ Two edges need attention:
 | Prerequisite | Why | Source |
 |---|---|---|
 | **Host time synchronization per 03 §5.4** — SC-45/SC-45(1), 1 ms audit granularity, comparison at least daily, 1 s resync threshold | §5.2: JWT `exp`/`nbf` validation is wall-clock by RFC 7519 and has no application-level mitigation for host skew. A gateway on a skewed host mis-validates every token | 03 §5.4, D29 |
-| Kafka ACL granting the gateway's principal `read` and `describe` on exactly the nine topics at its declared level, and **denying `describe` above it** | §4.2, §7.1. The ACL, not the application, is what closes the topic-name enumeration leak | 03 §5.1, D13 |
+| Kafka ACL granting the gateway's principal `read` and `describe` on exactly the ten topics at its declared level, and **denying `describe` above it** | §4.2, §7.1. The ACL, not the application, is what closes the topic-name enumeration leak | 03 §5.1, D13 |
 | One CloudNativePG `Cluster` per gateway deployment | 03 §15.13; and under D32-R2 a per-level store means a per-level cluster | 03 §15.13, §2.5 |
 | `gateway-upstream-specs` and `gateway-upstream-limits` ConfigMaps rendered by the umbrella chart | Decisions G-3 and G-5 | §6.3, §8.2 |
 | `auth` implementing the RFC 8693 grant with `act` nesting and `may_act` | §5.3; OQ-1 | 03 §8.3 |
@@ -1936,16 +1978,16 @@ Two edges need attention:
 
 | 09 §8 item | Disposition |
 |---|---|
-| 8.1 `changed_since` read for every aggregate a declared consumer projects | **Not applicable — no consumer projects a gateway aggregate**, because the gateway owns none. The reciprocal obligation binds instead: the gateway **consumes** all nine sub-applications' `changed_since` reads for rebuild, and contributes the conformance test proving each exists (§4.7, §10.4) |
+| 8.1 `changed_since` read for every aggregate a declared consumer projects | **Not applicable — no consumer projects a gateway aggregate**, because the gateway owns none. The reciprocal obligation binds instead: the gateway **consumes** all ten producers' (the nine sub-applications plus `audit`) `changed_since` reads for rebuild, and contributes the conformance test proving each exists (§4.7, §10.4) |
 | 8.1 A bulk, idempotent, fenced write operation | **Not applicable** — the gateway receives no batch results. Batch scoring results are written **through** it to PdM's bulk ingest operation, which is PdM's operation (01 §3 correction 2, 09 §4.4.2) |
 | 8.2 Every state change reachable through the contract emits an event | **Satisfied vacuously.** The gateway effects no state change of its own; claim and adjudicate are the owner's, announced on the owner's topic (§9.2) |
 | 8.2 Envelope, `clock` block, topic naming, compaction key, schema registration, AsyncAPI | **Not applicable to publication** — `PUBLISHES` is empty, so `asyncapi.yaml` documents consumption only. All of it applies to **consumption**: the projector rejects any envelope missing `producer_node` or the full `clock` block (§4.3) |
-| 8.2 No wildcard subscriptions | **Satisfied by the enumerated nine-topic list**, with `PROPOSAL_TOPIC_PATTERN` used only as a CI assertion (§4.2, decision G-1, C38) |
+| 8.2 No wildcard subscriptions | **Satisfied by the enumerated ten-topic list** (the nine `SubAppSlug` plus `audit`'s exception), with `PROPOSAL_TOPIC_PATTERN` used only as a CI assertion (§4.2, decision G-1, C38) |
 | 8.3 Transactional outbox via `packages/py-sync` | **Not applicable — the gateway publishes no event.** 11 §1.1 scopes the outbox to *"every program-built service that publishes any event."* No `outbox` table exists, and `test_d32_gateway_publishes_nothing` asserts it (§9.2) |
 | 8.3 Antecedent / epoch-fencing rule | **Satisfied by not needing it, and the reason is D32.** Fencing requires a local configuration read model; the gateway holds none, and building one to fence with would be the D32 defect. `baseline_epoch` is projected as a **warning** and the authoritative staleness check is the owner's mandatory re-validation at adjudication (§4.3 rule 2, 03 §7.2, D16) |
 | 8.3 Conflict policy declared per aggregate | **Default accepted explicitly:** enterprise-authoritative, not edge-writable (03 §11). The gateway owns no aggregate; the proposal conflict policy — *"append-only; adjudication server-authoritative and claim-gated"* — is the **owner's**, and the gateway's projection is derived from it. Recorded in the README per 09 §8.3 |
 | 8.4 Provenance for every derived value published | **Satisfied vacuously** — nothing is published. The composed view's classification union is a response header computed with the shared `ClassificationLabel.union()` and carries `inherited_from` (§7.3) |
-| 8.5 Conformance suite | `packages/contracts/conformance/gateway/` **plus nine consumer-driven contributions** (§10.4) — the latter being a hard requirement under 09 §4.7, since the gateway declares nine dependencies in 03 §6 |
+| 8.5 Conformance suite | `packages/contracts/conformance/gateway/` **plus ten consumer-driven contributions** (§10.4) — the latter being a hard requirement under 09 §4.7, since the gateway declares ten dependencies in 03 §6 (the nine sub-applications plus `audit`) |
 
 ### 13.2 Gateway-specific items
 
@@ -1972,7 +2014,7 @@ Two edges need attention:
 
 **Queue (§4)**
 
-- [ ] `events/catalog.py` `CONSUMES` equals `helm/values.yaml` `events.consumes` equals the nine proposal topics; CI job 6 green *(09 §8.2)*.
+- [ ] `events/catalog.py` `CONSUMES` equals `helm/values.yaml` `events.consumes` equals the ten proposal topics (the nine `SubAppSlug` plus `audit`'s exception, §4.1); CI job 6 green *(09 §8.2)*.
 - [ ] The 11 §3.2 inbox comment template present **verbatim**, with the gateway-specific severity paragraph (§4.3).
 - [ ] Precedence on `(producer_slug, producer_node_id, monotonic_seq)`; `announced_recorded_at` stored and never compared.
 - [ ] Provisional-identity alias resolution active on read *(11 §1.1, §8)*.
@@ -2007,7 +2049,7 @@ Two edges need attention:
 - [ ] `failClosed` not overridable; `test_classification_fault_fails_closed` green. **No filtering, no redaction, anywhere.**
 - [ ] Union via the shared `ClassificationLabel.union()`, never a local implementation; never persisted; `test_classification_union_uses_shared_implementation` green.
 - [ ] `test_incomparable_distribution_statements_fault` green.
-- [ ] Kafka ACL granting exactly nine topics at one level, denying `describe` above it — verified against the deployed cluster, not only in the chart.
+- [ ] Kafka ACL granting exactly ten topics at one level, denying `describe` above it — verified against the deployed cluster, not only in the chart.
 
 **Surface and deployment (§8, §11)**
 

@@ -2051,6 +2051,39 @@ no enumeration on the field."""
 # argument rather than defaulting it.
 ```
 
+### 4.6b `AuthorityClass` — closing OQ-13
+
+**[AMENDMENT — closes OQ-13, per `31-auth.md` §2.4 amendment A-1.]** §4.7 originally typed `Proposal.authority_class` as `NonEmptyStr` and recorded OQ-13 as *"the most consequential gap in the package,"* because at the time this document was authored, document 03 §7.2 cited a nonexistent §9.3 for the vocabulary and no enum existed anywhere in the corpus. Document 03 §7.2.1 (added by amendment 03-1) now defines it — six organizational roles, distinct from the agent-authority classes of 03 §8.3 — and `31-auth.md` §2.4 supplies the enum verbatim:
+
+```python
+# src/fathom_schemas/authority.py                                      NEW MODULE
+from enum import StrEnum
+
+
+class AuthorityClass(StrEnum):
+    """Document 03 §7.2.1.  The organizational role permitted to ADJUDICATE a
+    proposal, given its `kind` and `blast_radius`.
+
+    DISTINCT from the agent authority classes of 03 §8.3, which govern which
+    CREDENTIAL an agent calls with — conflating them is the available
+    mistake; 31-auth.md §2.5 resolves the one-name-two-meanings collision
+    between this field and `fathom.agent.authority`.
+
+    Closed vocabulary.  Phase 3 may add finer-grained roles WITHIN a class
+    but may not remove the minimum this table establishes.  A seventh member
+    is a change to document 03, not to this file.
+    """
+
+    MAINTAINER = "maintainer"                 # Ship's Force Maintainer
+    PLANNER = "planner"                       # RMC / Availability Planner
+    SUPPLY_OFFICER = "supply_officer"         # Supply role, ship or RMC
+    DESIGN_AUTHORITY = "design_authority"     # PEO / Design Engineer
+    FLEET_AUTHORITY = "fleet_authority"       # TYCOM Readiness Officer
+    SECURITY_OFFICER = "security_officer"     # ISSM / ISSO
+```
+
+`Proposal.authority_class` (§4.7 below) is retyped from `NonEmptyStr` to `AuthorityClass` accordingly. **OQ-13 is closed** and removed from §11's blocker list.
+
 ### 4.7 `Proposal` — document 03 §7.2
 
 ```python
@@ -2087,6 +2120,7 @@ from uuid import UUID
 from pydantic import Field, model_validator
 
 from ._base import FathomModel, NonEmptyStr, UtcDateTime
+from .authority import AuthorityClass
 from .classification import ClassificationLabel
 from .envelope import EventSubject
 from .slugs import SubAppSlug
@@ -2204,6 +2238,21 @@ sequence, which names "requisition creation and reservation confirmation" as
 having "real-world effect".  Recorded as OQ-12: the set should be enumerated in
 document 03 §7.2 rather than inferred here."""
 
+ALWAYS_DUAL_CONTROL_KINDS: frozenset[ProposalKind] = frozenset(
+    {ProposalKind.PURGE, ProposalKind.REWRAP}
+)
+"""Kinds requiring dual control at EVERY blast radius, including item and
+asset — not merely at class/fleet scope.
+
+[AMENDMENT] `31-auth.md` §6.4's generated `authority_matrix.json` sets
+`dual_control: true` on `purge`'s and `rewrap`'s `item` and `asset` cells,
+same-role (two `security_officer`s), distinct from and in addition to the
+class/fleet cells' `fleet_authority` counter-signature.  This set is
+deliberately separate from `EXTERNAL_LEGAL_EFFECT_KINDS` above — the
+reasoning is data-destruction/re-encryption safety, not external legal
+effect — so the two are never merged into one bucket even though both feed
+`_dual_control_required_at_scope` below."""
+
 
 class Proposal(FathomModel):
     """Document 03 §7.2 `Proposal`.
@@ -2274,16 +2323,17 @@ class Proposal(FathomModel):
             "Provenance and correlated to the Domino trace by `trace_ref`."
         )
     )
-    authority_class: NonEmptyStr = Field(
+    authority_class: AuthorityClass = Field(
         description=(
             "Required authority to adjudicate  [D16].  Document 03 §7.2 cites "
             '"§9.3" for the vocabulary, but document 03 §9 is "Untrusted '
             'content" and has no §9.3; the agent authority classes are at §8.3 '
             "and are AGENT authority classes (Delegated / Accountable "
-            "autonomous), not ADJUDICATION authority classes.  The vocabulary "
-            "is therefore undefined in document 03 and this field is typed as an "
-            "opaque string, validated by the owning sub-application.  See OQ-13 "
-            "— this is the most consequential open question in this package."
+            "autonomous), not ADJUDICATION authority classes.  **[AMENDMENT — "
+            "closes OQ-13.]** The vocabulary was undefined in document 03 when "
+            "this field was first typed as an opaque string; document 03 "
+            "§7.2.1 (amendment 03-1) now defines it, and §4.6b's "
+            "`AuthorityClass` enum is that vocabulary."
         )
     )
     blast_radius: BlastRadius = Field(
@@ -2291,8 +2341,9 @@ class Proposal(FathomModel):
     )
     requires_dual_control: bool = Field(
         description=(
-            "True for class or fleet scope, and for any kind with external legal "
-            "effect.  Document 03 §7.2  [D16].  Enforced by "
+            "True for class or fleet scope, for any kind with external legal "
+            "effect, and for `purge`/`rewrap` at every scope including item and "
+            "asset.  Document 03 §7.2  [D16].  Enforced by "
             "`_dual_control_required_at_scope` below."
         )
     )
@@ -2323,6 +2374,22 @@ class Proposal(FathomModel):
     second_adjudicated_at: UtcDateTime | None = Field(
         default=None, description="Dual control.  Document 03 §7.2  [D16]."
     )
+    counter_signature_by: NonEmptyStr | None = Field(
+        default=None,
+        description=(
+            "[AMENDMENT] A THIRD, additional signatory, distinct from both "
+            "`second_adjudicator` above — required only where §6.4's authority "
+            "matrix names a `counter_signature_class` (purge/rewrap at class/"
+            "fleet scope: a `fleet_authority` counter-signature ON TOP OF dual "
+            "control's two `security_officer`s, never a substitute for the "
+            "second).  Document 03 §7.2.  Previously absent from this model "
+            "despite `31-auth.md` §6.4 requiring it and the gateway's queue "
+            "response already rendering it — a wire field with no schema."
+        ),
+    )
+    counter_signature_at: UtcDateTime | None = Field(
+        default=None, description="Counter-signature.  Document 03 §7.2."
+    )
     classification: ClassificationLabel = Field(
         description="Document 03 §7.2 and principle 7."
     )
@@ -2333,17 +2400,30 @@ class Proposal(FathomModel):
         """Document 03 §7.2: "requires_dual_control  # boolean; true for class or
         fleet scope, and for any kind with external legal effect", and rule 4:
         "Dual control is MANDATORY at class and fleet scope and for any kind
-        with external legal effect"  [D16]."""
+        with external legal effect"  [D16].
+
+        [AMENDMENT] A third, independent trigger was missing: `purge`/`rewrap`
+        require dual control at EVERY blast radius, per `31-auth.md` §6.4's
+        generated `authority_matrix.json`, which sets `dual_control: true` on
+        those kinds' `item` and `asset` cells too — not only class/fleet. This
+        validator previously mirrored only the blast-radius and external-legal-
+        effect triggers, so a `purge` or `rewrap` proposal at item/asset scope
+        with `requires_dual_control=False` passed validation here despite the
+        matrix requiring two `security_officer` signatures on it — the same
+        gap `30-gateway.md`'s `proposal_queue_dual_control_at_scope` CHECK had
+        independently, mirrored here so a malformed row is rejected at
+        construction, not merely at the gateway boundary."""
         mandatory = (
             self.blast_radius in (BlastRadius.CLASS, BlastRadius.FLEET)
             or self.kind in EXTERNAL_LEGAL_EFFECT_KINDS
+            or self.kind in ALWAYS_DUAL_CONTROL_KINDS
         )
         if mandatory and not self.requires_dual_control:
             raise ValueError(
                 f"blast_radius={self.blast_radius.value!r}, kind="
                 f"{self.kind.value!r}: dual control is mandatory at class and "
-                "fleet scope and for any kind with external legal effect "
-                "(document 03 §7.2 rule 4  [D16])"
+                "fleet scope, for any kind with external legal effect, and for "
+                "purge/rewrap at every scope (document 03 §7.2 rule 4  [D16])"
             )
         return self
 
@@ -5068,7 +5148,7 @@ Per the rule that nothing may be invented, each item below is a gap this package
 | **OQ-10** | §7.1 lists `p_failure` unconditionally, but document 06 §3 says that below the n≥50 calibration gate the prediction publishes *"with a population hazard rate and **no calibrated probability**."* Those cannot both hold. | **`p_failure` required** (03 is binding); the gate validator rejects a sub-floor prediction that is not `class_estimate`. If document 06's reading is correct, `p_failure` must become nullable — a **major** schema change. Reconcile before Phase 3. |
 | **OQ-11** | Document 01 §11's monorepo layout says `services/asset-registry`; §3.1's slug is `registry`. | **`registry`.** Document 01 tranche-2 fix. |
 | **OQ-12** | §7.2 makes dual control mandatory for *"any kind with external legal effect"* without enumerating which kinds those are. | `{requisition}`, derived from §11's conflict table and §10's shadow-mode text. Should be enumerated in §7.2. |
-| **OQ-13** | §7.2's `authority_class` cites *"§9.3"* for its vocabulary. **Document 03 §9 is "Untrusted content" and has no §9.3.** §8.3's authority classes are *agent* classes (Delegated / Accountable autonomous), not *adjudication* authority classes. **The vocabulary of `authority_class` is undefined.** | Typed as an opaque string, validated by the owning sub-application. **This is the most consequential gap in the package**: D16's *"authority-versus-blast-radius check"* cannot be implemented against an undefined vocabulary, and it is the control that stops an anomaly-tag adjudicator from suppressing a preventive task across a class. |
+| **OQ-13** | ~~§7.2's `authority_class` cites *"§9.3"* for its vocabulary. **Document 03 §9 is "Untrusted content" and has no §9.3.** §8.3's authority classes are *agent* classes (Delegated / Accountable autonomous), not *adjudication* authority classes. **The vocabulary of `authority_class` is undefined.**~~ **[CLOSED — amendment A-1, §4.6b.]** Document 03 §7.2.1 (amendment 03-1) now defines the vocabulary — six organizational roles. `AuthorityClass` (§4.6b) is that enum; `Proposal.authority_class` (§4.7) is retyped to it | **Closed.** §4.6b's `AuthorityClass` enum now makes D16's *"authority-versus-blast-radius check"* implementable — no longer a blocker for Phase 3. |
 | **OQ-14** | §7.2's `valid_until` comment reads *"expiry; absent means no expiry is permitted"* — ambiguous between "the field is mandatory" and "absence means never expires, which is forbidden". | **Field is mandatory.** Both readings forbid a non-expiring proposal; making it required is the enforceable one. |
 | **OQ-15** | §7.3's `cui_categories[]` gives three examples (SP-CTI, SP-NNPI, SP-EXPT) but the CUI Registry is externally maintained. Closed enum or open list? | **Open list of strings**, with the authoritative set served by Reference Data (§14). A closed enum would require a package release each time the CUI Registry changes. |
 | **OQ-16** | §7.3's `distribution_statement` is *"A..F or REL TO"*. Unioning `REL TO` with a lettered statement is not ordered by DoDI 5230.24 Table 1, so `ClassificationLabel.union` cannot mechanically resolve it. Also, `REL TO`, `DISPLAY ONLY`, and `FED ONLY` normally take an argument list (`REL TO USA, FVEY`) which §7.3 does not model. | `union` **raises** on that combination rather than guessing. The LDC-argument gap is a real modelling omission; it does not bind the unclassified demonstration but blocks any CUI handling. |
@@ -5325,7 +5405,7 @@ This section **extends** the shared Definition of Done template in [`docs/build/
 
 ### 13.4 Cross-cutting
 
-- [ ] Every open question OQ-1 … OQ-21 is filed as a tracked item against document 03 or document 04, with an owner. **OQ-13 (undefined `authority_class` vocabulary) and OQ-10 (`p_failure` nullability) are blockers for Phase 3 detailed design**, because the first prevents implementing D16's authority check and the second is a potential major schema change.
+- [ ] Every open question OQ-1 … OQ-21 is filed as a tracked item against document 03 or document 04, with an owner. **OQ-10 (`p_failure` nullability) is a blocker for Phase 3 detailed design** — a potential major schema change. **OQ-13 (undefined `authority_class` vocabulary) is closed** (§4.6b, amendment A-1) and is no longer a blocker.
 - [ ] The nine sub-application build-framework documents reference this document for shared types and do not restate any schema.
 - [ ] `packages/canonical-schemas` is published to the internal registry with a semver tag; the nine services reference it by range per §9.3, with committed lockfiles.
 - [ ] The `schema-lag`, `check_dependency_ranges`, and `check_major_adoption` gates are live in CI.

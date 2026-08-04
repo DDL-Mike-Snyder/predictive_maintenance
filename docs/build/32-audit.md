@@ -739,7 +739,7 @@ kind = anomaly_tag | work_candidate | requisition | interval_change
      | redesign_case | configuration_change | purge        # ← added [AMENDMENT 03-2]
 ```
 
-with `target_sub_app = audit`, published on `fathom.audit.proposal.v1` per document 03 §6's proposals convention, so the gateway's unified adjudication queue picks it up from the topic pattern with no gateway change.
+with `target_sub_app = audit`, published on `fathom.audit.proposal.v1` per document 03 §6's proposals convention. **[AMENDMENT — corrected.]** This previously claimed the gateway's unified adjudication queue picked this topic up *"with no gateway change"* — false: `30-gateway.md`'s `CONSUMES` was hardcoded to the nine `SubAppSlug` topics, which structurally excludes this one (`audit` is a platform slug, not a `SubAppSlug`), so Sheet 11's queue was empty by construction. `30-gateway.md` §4.1 now adds `fathom.audit.proposal.v1` as an explicitly-named tenth topic (`AUDIT_PROPOSAL_TOPIC`), and `09 §4.4.2`'s sanctioned-edge table now grants `gateway → audit` so the detail-fetch/adjudicate mechanism (`30-gateway.md` §4.6) can actually reach it. This *is* a gateway change — the claim above understated it.
 
 **Three hard constraints on purge proposals, beyond §7.2's:**
 
@@ -1186,6 +1186,8 @@ Base path `/api/v1/audit/` (document 03 §4, document 09 §7.1). Every operation
 | Operation | `x-sub` | `x-side-effects` | Notes |
 |---|---|---|---|
 | `POST /proposals` | required | state-changing | A `purge` (or `rewrap`) proposal per document 03 §7.2. `Idempotency-Key`. Rejects agent principals and `accountable_autonomous` |
+| `GET /proposals/{id}` | required | none | **[AMENDMENT]** Missing until now — the single-resource detail fetch every other proposal-accepting sub-application exposes, and the one `30-gateway.md` §4.6's `detail_fetch_path` resolves against. Returns the full `Proposal` object (`payload`, `evidence[]`, `rationale`), `ETag` set for the claim mechanism |
+| `GET /proposals?changed_since=&cursor=` | required | none | **[AMENDMENT]** Missing until now — the rebuild path `30-gateway.md` §4.3/§4.7 requires of every producer under 03 §4 obligation 5, now that the gateway's queue actually subscribes to this service's proposals (§6.1) |
 | `POST /proposals/{id}/claim` | required | state-changing | Lease. Triggers phase 2 containment (§6.2) |
 | `PATCH /proposals/{id}` | required | state-changing | Adjudication. `If-Match` required (D16, document 09 §5.4). Dual control enforced per §6.1 |
 | `GET /purges` · `GET /purges/{id}` | required | none | State machine, sealed closure, per-store receipts, pending nodes |

@@ -516,21 +516,35 @@ Proposal {
   agent_id, agent_version, llm_version, trace_ref
   authority_class        # required authority to adjudicate (§7.2.1)   [D16]
   blast_radius           # item | asset | class | fleet              [D16]
-  requires_dual_control  # boolean; true for class or fleet scope, and for
-                         # any kind with external legal effect. That set is
-                         # {requisition} — it creates a legally binding
-                         # procurement instrument reaching an external supply
-                         # chain (07 §4). No other kind creates an obligation
-                         # outside the program: redesign_case recommends an
-                         # acquisition action but is not itself one, and
-                         # configuration_change/interval_change/anomaly_tag/
-                         # work_candidate are entirely internal. [amendment,
-                         # closes doc 10 OQ-12 and doc 26 OQ-S3]
+  requires_dual_control  # boolean; true for class or fleet scope, for any kind
+                         # with external legal effect, and for purge/rewrap at
+                         # EVERY scope including item and asset. The external-
+                         # legal-effect set is {requisition} — it creates a
+                         # legally binding procurement instrument reaching an
+                         # external supply chain (07 §4). No other kind creates
+                         # an obligation outside the program: redesign_case
+                         # recommends an acquisition action but is not itself
+                         # one, and configuration_change/interval_change/
+                         # anomaly_tag/work_candidate are entirely internal.
+                         # purge/rewrap's item/asset dual control is a SEPARATE
+                         # trigger — data-destruction/re-encryption safety, not
+                         # external legal effect — never merged with the first.
+                         # [amendment, closes doc 10 OQ-12 and doc 26 OQ-S3]
   valid_until            # expiry; absent means no expiry is permitted
   status                 # proposed | claimed | approved | rejected | superseded | expired
   claimed_by, claimed_until                                          # [D16]
   adjudicated_by, adjudicated_at, adjudication_note
   second_adjudicator, second_adjudicated_at                          # dual control
+  counter_signature_by, counter_signature_at   # [AMENDMENT] a THIRD, additional
+                         # signatory distinct from both adjudicators — required
+                         # only where §7.2.1's authority matrix names a
+                         # counter_signature_class (purge/rewrap at class/fleet
+                         # scope: a fleet_authority counter-signature, ON TOP OF
+                         # dual control's two security_officers, never a
+                         # substitute for the second). Previously missing here
+                         # despite 31-auth.md §6.4 already requiring it and
+                         # 30-gateway.md's queue response already rendering it —
+                         # a field the wire carried with no schema behind it.
   classification
 }
 ```
