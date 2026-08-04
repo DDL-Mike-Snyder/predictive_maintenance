@@ -230,7 +230,7 @@ Rules on this block:
 
 - **`aud` is a list of canonical slugs** [03 §3.1]. A receiving service requires its own slug in `aud` and rejects otherwise. This is what stops a token minted for `pdm`'s what-if surface being replayed against `maintenance`.
 - **`scope` carries `sfx:` values** — the side-effect classes this token may authorize. A human interactive token may carry all three. See §3.4.
-- **`fathom.identity.authority_classes` is populated from realm roles**, filtered to the five values of §2.4. A role that is not one of the five never appears in a token.
+- **`fathom.identity.authority_classes` is populated from realm roles**, filtered to the six values of §2.4 (five plus `security_officer`, amendment 03-1). A role that is not one of the six never appears in a token.
 - `edipi` is `null` until the CAC/PIV path is enabled (§7). Its presence or absence changes nothing else in the token.
 
 ### 3.2 Token shape 1 — `delegated`
@@ -857,7 +857,7 @@ Built by `packages/py-common` from the validated token, the matched route's anno
 
 ### 6.4 Authority versus blast radius — document 03 §7.2.1, executable
 
-`authority_matrix.json`, generated, is document 03 §7.2.1's table verbatim. Note that three cells carry an **alternative set** rather than a single class, and one carries a two-stage requirement:
+`authority_matrix.json`, generated, is document 03 §7.2.1's table verbatim. Note that three cells carry an **alternative set** rather than a single class, one carries a two-stage requirement, and two (`purge`, `rewrap`) carry a **counter-signature by a different class** rather than a second instance of the primary one:
 
 ```json
 {
@@ -886,9 +886,23 @@ Built by `packages/py-common` from the validated token, the matched route's anno
                             "asset": {"any_of": ["maintainer"],
                                       "then_confirmed_by": "registry"},
                             "class": {"not_applicable": true},
-                            "fleet": {"not_applicable": true} }
+                            "fleet": {"not_applicable": true} },
+  "purge":                { "item": {"any_of": ["security_officer"], "dual_control": true},
+                            "asset": {"any_of": ["security_officer"], "dual_control": true},
+                            "class": {"any_of": ["security_officer"], "dual_control": true,
+                                      "counter_signature_class": "fleet_authority"},
+                            "fleet": {"any_of": ["security_officer"], "dual_control": true,
+                                      "counter_signature_class": "fleet_authority"} },
+  "rewrap":               { "item": {"any_of": ["security_officer"], "dual_control": true},
+                            "asset": {"any_of": ["security_officer"], "dual_control": true},
+                            "class": {"any_of": ["security_officer"], "dual_control": true,
+                                      "counter_signature_class": "fleet_authority"},
+                            "fleet": {"any_of": ["security_officer"], "dual_control": true,
+                                      "counter_signature_class": "fleet_authority"} }
 }
 ```
+
+**`purge` and `rewrap` were missing from this matrix** — they postdate this document's original authoring (amendments 03-1/03-2). Their item/asset cells are **same-role** dual control, like `interval_change`'s and `redesign_case`'s class/fleet cells: a second `security_officer`, not a different class. Their class/fleet cells add `counter_signature_class`, because document 03 §7.2.1 specifies the second signature there as a **`fleet_authority` counter-signature**, not a second `security_officer` — the two-signature requirement is satisfied by one of each, never by two of the primary class.
 
 ```rego
 package fathom.authz
@@ -963,12 +977,29 @@ deny contains "second_adjudicator_must_differ" if {
     input.principal.sub == input.resource.adjudicated_by
 }
 
-deny contains "second_adjudicator_authority_insufficient" if {
+# The class(es) the SECOND signature must hold. Same-role dual control (2 of
+# cell.any_of) unless the cell names a counter_signature_class (purge/rewrap
+# at class/fleet: 1 security_officer + 1 fleet_authority, never 2 of either).
+second_signature_any_of := {cell.counter_signature_class} if cell.counter_signature_class
+second_signature_any_of := cell.any_of if not cell.counter_signature_class
+
+# GENERALIZED to every kind, not just interval_change. The prior rule checked
+# only input.resource.kind == "interval_change", which meant a class- or
+# fleet-scoped redesign_case (or purge/rewrap) required a SECOND SIGNER, but
+# checked NOTHING about that signer's authority — satisfiable by any
+# authenticated human distinct from the first adjudicator. This is the
+# defect Redesign Case Builder's build-framework agent found (42 §18 item
+# 17): "nothing in this runtime can compensate: the agent cannot adjudicate,
+# so it cannot detect or refuse an under-authorized second signature."
+deny contains sprintf(
+    "second_adjudicator_authority_insufficient: need any_of %v, principal holds %v",
+    [second_signature_any_of, input.principal.authority_classes],
+) if {
     input.action == "second_adjudicate"
     dual_required
-    not "fleet_authority" in input.principal.authority_classes
-    input.resource.blast_radius in {"class", "fleet"}
-    input.resource.kind == "interval_change"
+    count({c | some c in second_signature_any_of
+                 some p in input.principal.authority_classes
+                 c == p}) == 0
 }
 
 obligations := {
@@ -1215,7 +1246,7 @@ Four tiers per document 09 §4.7, plus the shared conformance suite at `packages
 | T-5 | **Delegated reach equals user reach.** Replay a decision corpus with a user token and with a delegated token derived from it | Identical decisions and obligations. 01 §8.5's *"cannot read what the maintainer cannot read"* |
 | T-6 | **No agent adjudicates.** Both agent classes, against `adjudicate` and `second_adjudicate` | `403 …:agent-may-not-adjudicate`, regardless of `authority_classes` |
 | T-7 | **Authority matrix exhaustiveness.** Property test over the full cross-product of 03 §7.2.1's `kind` × `blast_radius` × the five classes | Every cell's allow/deny matches the table exactly; an uncovered cell **fails**; `not_applicable` cells deny; `any_of` cells accept either class; **no implicit hierarchy** — `fleet_authority` is denied on `anomaly_tag` |
-| T-8 | **Dual control.** Class and fleet scope, and external-legal-effect kinds | Required; second adjudicator must differ from the first; `interval_change` at class/fleet requires `fleet_authority`'s second signature |
+| T-8 | **Dual control.** Class and fleet scope, and external-legal-effect kinds | Required; second adjudicator must differ from the first; the second signature is checked against the matrix's `second_signature_any_of` (same-role `any_of` by default, `counter_signature_class` for `purge`/`rewrap`) for **every** kind requiring dual control, not `interval_change` alone |
 | T-9 | **Re-validation.** Adjudicate a proposal whose `blast_radius` was corrected after creation | `authority_class_field_stale` denial — 03 §7.2's *"[r]e-validation at approval is mandatory"* |
 | T-10 | **Classification.** Level dominance, missing compartment, unmet dissemination control, unauthorized CUI category, retired `FOUO` marking, above-deployment-level | Each denied with its own reason string |
 | T-11 | **No post-filtering.** For `read`/`retrieve` the decision returns a `classification_predicate` and the service's emitted SQL / vector query contains it | D13, 09 §9.4 item 22. Asserted on the emitted query, not on the result set — a passing result-set assertion is exactly what a post-filter would produce |
@@ -1405,7 +1436,7 @@ Document 09 §8's shared checklist applies **in full and unmodified** — it is 
 - [ ] Bundle signed; signature verification mandatory; `policy_bundle` readiness check wired and bounded (T-16). *(§6.2, A-7)*
 - [ ] The §6.3 input document built once in `packages/py-common`.
 - [ ] No implicit authority hierarchy; `any_of` sets honoured; `not_applicable` cells deny; `authority_class` re-validated at adjudication (T-7, T-9). *(§6.4)*
-- [ ] Dual control mandatory at class and fleet scope and for external-legal-effect kinds; second adjudicator distinct; `fleet_authority` required for the second signature on class/fleet `interval_change` (T-8). *(§6.4)*
+- [ ] Dual control mandatory at class and fleet scope and for external-legal-effect kinds; second adjudicator distinct; the second signature's authority is checked against the matrix for **every** kind requiring dual control — `interval_change`, `redesign_case`, `purge`, `rewrap`, and any future kind — never hardcoded to one (T-8). *(§6.4)*
 - [ ] No agent adjudicates, of either class (T-6). *(§6.4)*
 - [ ] Classification checks complete, and **the predicate obligation is asserted on the emitted query, not the result set** (T-10, T-11). *(§6.5)*
 - [ ] Declared-scope containment enforced (T-12). *(§6.6)*

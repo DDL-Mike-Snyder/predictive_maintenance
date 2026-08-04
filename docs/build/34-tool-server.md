@@ -88,7 +88,7 @@ Every rule below traces to a line of an architecture document. A rule with no ci
 | Pin checked at call time (manifest version **and** API major) | 03 §8.4 | — |
 | Live `x-side-effects` re-check; reject on mismatch | 03 §8.1, §4.1; 10 §7.4 `x_fathom_side_effects` | **C1**, **D11** |
 | Eligibility never gated on HTTP method | 03 §4.1, §8.1 | **C1**, **D11** |
-| Two agent authority classes; accountable-autonomous capped | 03 §8.3; 01 §8.5 | **D12** |
+| Two agent authority classes; accountable_autonomous capped | 03 §8.3; 01 §8.5 | **D12** |
 | Mid-run authority lapse is a defined condition, not a retry | 03 §8.3; 02 §4.1 (8-hour default propagation) | **D12** |
 | Every invocation recorded with full request/response and `trace_ref` | 03 §8.5; 01 §8.5; 04 §11 | — |
 | Domino Endpoint calls are proxied with caller identity attached | 03 §8.3; 02 §4.3 | **D12** |
@@ -135,7 +135,10 @@ Document 01 §11 already places the pin with the agent: each `agents/<name>/` ho
 # so Wave 5's agent build document may rename it.  Nothing here depends on the name —
 # only on the compiled binding — so a rename costs a compiler constant.
 agent_id: pma-prescreener
-authority_class: accountable-autonomous        # 03 §8.3
+agent_authority: accountable_autonomous        # 03 §8.3; snake_case per 31 §2.5 amendment A-2.
+                                                # Named agent_authority, not authority_class, to
+                                                # avoid colliding with 03 §7.2.1's Proposal field
+                                                # of the same bare name (31 §2.5's finding)
 accountable_owner: <named human, resolvable in auth>   # 03 §8.3, required for this class
 manifests:
   - name: pma-mission-review
@@ -153,7 +156,7 @@ The compiler enforces four rules and **fails the build** on each. Every one is d
 | B1 | Every `(name, version, slug, api_major)` resolves to a committed descriptor file. A pin naming a manifest that was never generated is a build failure | 03 §8.4 — a pin that cannot be resolved is not a pin |
 | B2 | For each bound manifest, `x_fathom_manifest.owner` is either this `agent_id` or `curated` | 03 §8.2 (`owner` is *"consuming agent, or `curated`"*), §8.4 (*"an unowned manifest is deleted rather than inherited"*) |
 | B3 | **No duplicate tool `name` within one binding.** Two manifests bound to the same agent may not both select the same operation, because `name` is `<slug>__<operation_id>` (10 §7.4) and MCP tool names must be unique in a session | Derived. See below |
-| B4 | `authority_class` is exactly one of `delegated` or `accountable-autonomous`; `accountable-autonomous` requires a non-empty `accountable_owner` | 03 §8.3 |
+| B4 | `agent_authority` is exactly one of `delegated` or `accountable_autonomous`; `accountable_autonomous` requires a non-empty `accountable_owner` | 03 §8.3; naming per 31 §2.5 amendment A-2 |
 
 **Why B3 is a hard failure and not a runtime disambiguation.** Document 01 §8.0 makes overlapping manifests over one API the *intended* design, and document 10 §7.6 is explicit that overlap is therefore *reviewed, not gated*. That reasoning holds **across** agents and does not hold **within** one agent's tool list: two descriptions for one tool name in one session is an ambiguous tool surface, which is the precise failure 01 §8.0 says degrades agent performance measurably. Runtime suffixing was rejected because it would make a tool's name depend on which manifests happen to be bound, and the tool name appears in the agent's prompt, its evaluation set, and its audit records — all three of which 03 §8.4 requires to be pinned and promoted as one unit. The remedy for a B3 failure is a manifest change, reviewed with the overlap report document 10 §7.6 already emits.
 
@@ -256,13 +259,13 @@ Every invocation passes all nine gates, in this order, and any failure ends the 
 
 | # | Gate | Rejects with | Source |
 |---|---|---|---|
-| 1 | Token validates against `auth`; `authority_class` claim present | `401` `invalid-token` / `422` `authority-class-missing` | 03 §4 Authentication, §8.3 |
+| 1 | Token validates against `auth`; `fathom.agent.authority` claim present (31 §2.5 amendment A-2 — not `authority_class`, which is document 03 §7.2.1's distinct Proposal field) | `401` `invalid-token` / `422` `agent-authority-missing` | 03 §4 Authentication, §8.3 |
 | 2 | Token is not expired and not inside the refusal margin | `401` `delegated-authority-lapsed` | 03 §8.3 |
 | 3 | `agent_id` derived from the token resolves to a binding | `403` `no-manifest-binding` | §2.3 |
 | 4 | The requested tool `name` is present in **this agent's** binding, and the binding's `(manifest name, version)` and `(slug, api_major)` match the descriptor's `x_fathom_manifest` and `x_fathom_target` | `403` `tool-not-in-pinned-manifest`, `409` `manifest-pin-superseded`, `409` `api-major-pin-unsatisfiable` | 03 §8.4 |
 | 5 | The live spec cache for `(slug, api_major)` is present and within its freshness bound | `503` `spec-cache-stale` | §2.5 |
 | 6 | **`assess(live_spec, operation_id)` returns eligible**, and the live declared class **equals** `x_fathom_side_effects` | `409` `side-effects-mismatch`, `403` `operation-not-agent-eligible`, `409` `operation-absent-from-live-spec`, `403` `side-effects-forbids-invocation` | 03 §8.1, §4.1; 10 §7.3 |
-| 7 | The caller's authority class permits the live class; `accountable-autonomous` requires a resolvable accountable owner | `403` `authority-class-insufficient`, `403` `accountable-owner-missing` | 03 §8.3 |
+| 7 | The caller's `fathom.agent.authority` permits the live class; `accountable_autonomous` requires a resolvable accountable owner | `403` `agent-authority-insufficient`, `403` `accountable-owner-missing` | 03 §8.3 |
 | 8 | Arguments validate against the **live** operation's parameter and request-body schemas, not only against the descriptor's `inputSchema`; `Idempotency-Key` present where the live class is `proposal-only` | `422` `input-schema-drift`, `400` `idempotency-key-required` | 03 §4, §4.1; 09 §8.1 |
 | 9 | The pre-invocation audit record is durably accepted by `audit` | `503` `audit-record-incomplete` | 03 §8.5 |
 
@@ -312,7 +315,7 @@ Three prohibitions, each with its failure scenario:
 
 1. **Never mint, exchange, elevate, or substitute a credential.** The proxied call carries the caller's identity, full stop. A service identity substituted for an expired delegated token would make every downstream ABAC decision (obligation 7) evaluate the wrong subject, and would produce an audit record naming a workload where a human belongs.
 2. **An expired or near-expired delegated token is a distinct, non-retryable condition.** Document 03 §8.3: an agent whose token expires *"terminates and records a resumable checkpoint. It does not silently continue under a service identity, and it does not create a proposal after its authority has lapsed."* The service therefore rejects with `401` `delegated-authority-lapsed` — a problem type deliberately distinct from a generic `401` so the runtime can checkpoint rather than back off and retry. A refusal margin (`FATHOM_TOOL_SERVER__TOKEN_REFUSAL_MARGIN_SECONDS`, measured monotonically) rejects a token that would expire mid-call rather than starting work that cannot legitimately finish. Document 02 §4.1 records Domino's extended identity propagation as defaulting to eight hours, so for a Domino-hosted interactive agent this is a routine daily event, not a corner case.
-3. **`accountable-autonomous` with no resolvable accountable owner is a rejection, not a warning.** Document 03 §8.3 requires *"a named accountable human owner"* and *"every run recorded to Audit with the accountable owner."* An unattributable autonomous run is exactly the artifact the class exists to prevent.
+3. **`accountable_autonomous` with no resolvable accountable owner is a rejection, not a warning.** Document 03 §8.3 requires *"a named accountable human owner"* and *"every run recorded to Audit with the accountable owner."* An unattributable autonomous run is exactly the artifact the class exists to prevent.
 
 **Do not confuse these classes with document 03 §7.2.1's.** §7.2.1 (`maintainer`, `planner`, `supply_officer`, `design_authority`, `fleet_authority`) governs which **human organizational role** may adjudicate a proposal given its `kind` and `blast_radius`, and its own opening line makes the separation explicit: *"This is distinct from the agent authority classes in §8.3."* This service enforces §8.3 and has no opinion about §7.2.1 — the `authority_class` on a `Proposal` is set and re-validated by the owning sub-application (03 §7.2.1), reached through a `proposal-only` tool call like any other write. Note that document 10's **OQ-13** recorded the §7.2.1 vocabulary as undefined and called it *"the most consequential gap in the package"*; §7.2.1 now defines it, so OQ-13 is closed against document 03 and document 10's open-question table is stale on that row. Nothing in this service changes as a result, which is the point of keeping the two vocabularies apart.
 
@@ -867,7 +870,7 @@ This **extends** the shared Definition of Done in [`09-monorepo-and-conventions.
 - [ ] All ten fake-target variants of §11.1 exist and produce their stated outcome — including `target-optional-absent` **succeeding** (the **D19** case) and `target-path-moved` **succeeding**.
 - [ ] The live-spec cache measures age monotonically, fetches through the gateway with `If-None-Match`, fails closed past its bound, and never falls back to the descriptor's recorded class.
 - [ ] The service is not ready until every bound target's spec has been fetched once.
-- [ ] Authority: delegated tokens forwarded unchanged; accountable-autonomous capped at `none`/`proposal-only` with a resolvable accountable owner; expired delegated authority yields `delegated-authority-lapsed` and is never substituted.
+- [ ] Authority: delegated tokens forwarded unchanged; accountable_autonomous capped at `none`/`proposal-only` with a resolvable accountable owner; expired delegated authority yields `delegated-authority-lapsed` and is never substituted.
 - [ ] Audit: `attempted` before proxying and fails closed; completion always written, including on rejection; an incomplete record is visible, never discarded; `trace_ref` and `X-Correlation-Id` on every record.
 - [ ] `Idempotency-Key` required on `proposal-only` and forwarded, never consumed or minted. `If-Match` never synthesized. `X-Backfill` never set.
 - [ ] No configuration or flag can disable, sample, or soften any gate.

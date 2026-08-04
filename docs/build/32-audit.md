@@ -293,7 +293,7 @@ Five things about this table are deliberate and should not be "simplified" by an
 
 ### 4.3 Tool invocation records
 
-Document 03 §8.5: *"Tool invocations, with full request and response, are recorded to Audit & Provenance and correlated to the Domino trace by `trace_ref`."* Document 03 §8.3 adds two requirements this table exists to satisfy: every accountable-autonomous run is *"recorded to Audit with the accountable owner"*, and every Domino Endpoint call is proxied so that *"a Sustainment Plane service attaches caller identity to the audit record"* — because an Endpoint's static token *"carries no caller identity and no per-caller audit trail"* (document 02 §4.3, finding D12).
+Document 03 §8.5: *"Tool invocations, with full request and response, are recorded to Audit & Provenance and correlated to the Domino trace by `trace_ref`."* Document 03 §8.3 adds two requirements this table exists to satisfy: every accountable_autonomous run is *"recorded to Audit with the accountable owner"*, and every Domino Endpoint call is proxied so that *"a Sustainment Plane service attaches caller identity to the audit record"* — because an Endpoint's static token *"carries no caller identity and no per-caller audit trail"* (document 02 §4.3, finding D12).
 
 ```sql
 CREATE TABLE tool_invocation (
@@ -308,9 +308,12 @@ CREATE TABLE tool_invocation (
   operation_id         text   NOT NULL,      -- OpenAPI operationId [09 §7.3]
   api_major            integer NOT NULL,
   declared_side_effects text  NOT NULL,      -- none | proposal-only [03 §4.1, §8.1]
-  authority_class      text   NOT NULL,      -- delegated | accountable-autonomous [03 §8.3]
+  agent_authority      text   NOT NULL,      -- delegated | accountable_autonomous [03 §8.3].
+                                              -- Named agent_authority, not authority_class, to
+                                              -- avoid colliding with 03 §7.2.1's Proposal field
+                                              -- of the same bare name (31 §2.5 amendment A-2)
   principal_id         text   NULL,          -- the human, for delegated
-  accountable_owner    text   NULL,          -- the NAMED human, for accountable-autonomous
+  accountable_owner    text   NULL,          -- the NAMED human, for accountable_autonomous
   proxied_endpoint     text   NULL,          -- the Domino Endpoint, where proxied [03 §8.3, D12]
   http_status          integer NOT NULL,
   duration_ms          integer NOT NULL,     -- MONOTONIC-measured [09 §4.8]
@@ -318,8 +321,8 @@ CREATE TABLE tool_invocation (
   resumable_checkpoint_ref text NULL,        -- [03 §8.3: mid-run token expiry is a defined condition]
 
   CONSTRAINT ti_authority_owner CHECK (
-    (authority_class = 'delegated'               AND principal_id    IS NOT NULL) OR
-    (authority_class = 'accountable-autonomous'  AND accountable_owner IS NOT NULL)),
+    (agent_authority = 'delegated'               AND principal_id    IS NOT NULL) OR
+    (agent_authority = 'accountable_autonomous'  AND accountable_owner IS NOT NULL)),
   CONSTRAINT ti_no_state_changing CHECK (declared_side_effects IN ('none','proposal-only'))
 );
 ```
@@ -740,7 +743,7 @@ with `target_sub_app = audit`, published on `fathom.audit.proposal.v1` per docum
 
 **Three hard constraints on purge proposals, beyond §7.2's:**
 
-1. **No agent may create or adjudicate a purge proposal.** `x-side-effects` on the purge-proposal operation is `state-changing`, so document 03 §8.1 already forecloses agent eligibility; additionally the coordinator rejects any proposal whose principal `authority_class` is `accountable-autonomous` (document 03 §8.3) and any proposal carrying an `agent_id`. A prompt-injected purge (D14) is the worst available outcome in this system.
+1. **No agent may create or adjudicate a purge proposal.** `x-side-effects` on the purge-proposal operation is `state-changing`, so document 03 §8.1 already forecloses agent eligibility; additionally the coordinator rejects any proposal whose principal's `fathom.agent.authority` claim is `accountable_autonomous` (document 03 §8.3, 31 §2.5) and any proposal carrying an `agent_id`. A prompt-injected purge (D14) is the worst available outcome in this system.
 2. **`evidence[]` must include the spillage report** — the incident reference, the mislabeling determination, and its authority — with `source_trust: program`. A purge proposal resting on non-program evidence is refused, not merely flagged.
 3. **`valid_until` is mandatory and short** (default 72 hours). Document 03 §7.2 requires re-validation at adjudication; for a purge, re-validation recomputes the closure, because a closure computed five days ago may have grown as derived values were published. **The closure is recomputed and re-sealed at adjudication, and a growth beyond the adjudicated scope aborts the purge and requires a new proposal.**
 
@@ -1181,7 +1184,7 @@ Base path `/api/v1/audit/` (document 03 §4, document 09 §7.1). Every operation
 
 | Operation | `x-sub` | `x-side-effects` | Notes |
 |---|---|---|---|
-| `POST /proposals` | required | state-changing | A `purge` (or `rewrap`) proposal per document 03 §7.2. `Idempotency-Key`. Rejects agent principals and `accountable-autonomous` |
+| `POST /proposals` | required | state-changing | A `purge` (or `rewrap`) proposal per document 03 §7.2. `Idempotency-Key`. Rejects agent principals and `accountable_autonomous` |
 | `POST /proposals/{id}/claim` | required | state-changing | Lease. Triggers phase 2 containment (§6.2) |
 | `PATCH /proposals/{id}` | required | state-changing | Adjudication. `If-Match` required (D16, document 09 §5.4). Dual control enforced per §6.1 |
 | `GET /purges` · `GET /purges/{id}` | required | none | State machine, sealed closure, per-store receipts, pending nodes |
@@ -1354,7 +1357,7 @@ Companion cases, each required:
 | `test_purge_aborts_when_closure_grew_since_adjudication` | A derived value published between seal and adjudication aborts the purge (§6.2 phase 4) |
 | `test_purge_pending_at_disconnected_node_is_not_certified_complete` | A disconnected stub yields `certified-partial`, a pending metric, degraded `/readyz`, and a supplemental certificate on reconnect (§6.7) |
 | `test_purge_requires_dual_control_and_if_match` | Single adjudicator → refused; missing `If-Match` → `428`; concurrent adjudication → `412` (D16) |
-| `test_agent_principal_cannot_propose_or_adjudicate_purge` | `accountable-autonomous` and any `agent_id` refused (§6.1, D14) |
+| `test_agent_principal_cannot_propose_or_adjudicate_purge` | `accountable_autonomous` and any `agent_id` refused (§6.1, D14) |
 | `test_purge_resumable_at_every_injection_point` | Document 11 §11.1's matrix over the purge state machine: never half-applied, always resumable, key destruction only after every prior phase is durable |
 
 ### 12.3 Tombstone tests
@@ -1508,7 +1511,7 @@ Each item carries the finding or citation that makes it a defect rather than a p
 7. **Do not destroy a `legally-immutable` record.** Re-wrap upward and shred the low-side copies. The distinction is document 03 §13.3's requirement, and destroying an anomaly tag, a 3-M maintenance action, a legally effective adjudication, or a model-binding approval destroys evidence, a statutory record, accountability, or the accreditation basis respectively. *(§4.1, §5.10; 03 §11, §13.3)*
 8. **Do not post-filter for classification, and do not leak through counts or cursors.** Filtering happens inside the query; removing results afterward leaks the existence of records. Audit is the highest-cardinality aggregation surface in the system, so document 03 §7.3's "aggregation is a classification event" binds hardest here. *(**D13**; 03 §7.3, §12)*
 9. **Do not make any audit operation `x-agent-eligible`.** The audit store is every domain's records at the union of their labels — an agent tool over it is a D13 aggregation channel; its tool-invocation payloads contain retrieved corpus text, so it is a D14 amplifier; and an agent that can read the audit store can read the evidence for every proposal it might make. *(**D13**, **D14**; 03 §8.1, §9)*
-10. **Do not let an agent propose or adjudicate a purge.** `accountable-autonomous` principals and any proposal carrying an `agent_id` are refused. A prompt-injected purge is the worst available outcome in this system. *(**D14**; 03 §8.3, §9)*
+10. **Do not let an agent propose or adjudicate a purge.** `accountable_autonomous` principals and any proposal carrying an `agent_id` are refused. A prompt-injected purge is the worst available outcome in this system. *(**D14**; 03 §8.3, §9)*
 11. **Do not make a domain transaction's success depend on an audit HTTP call.** Provenance rides the producing service's own outbox — transactional, survives six weeks of disconnection, cannot be lost by an HTTP failure. The sanctioned HTTP edge is for components with no outbox, fire-and-forget with local spooling. *(§10.1; 03 §5.2, 09 §4.4.2)*
 12. **Do not publish a purge order as an event.** Events carry facts, not instructions. The order goes over `POST /{slug}/remediations` and is acknowledged with a signed receipt; the *fact* that a purge occurred is published, and it carries no content. *(03 principle 3; §6.5)*
 13. **Do not treat a purge as complete while any holder is unreachable.** `certified-partial` is never reported, displayed, or logged as "complete." A hull dark for six weeks holding a copy means the purge is incomplete, and saying so is the whole value of the certificate. *(§6.7)*
@@ -1604,7 +1607,7 @@ Every item is a change this document's design requires in a document upstream of
 | # | Section | Edit |
 |---|---|---|
 | **03-1** | §7.2.1 | Add `security_officer` to `AuthorityClass` (ISSM/ISSO). Add its row to the class table. Add a `purge` row to the minimum-authority table: `item`/`asset` → `security_officer` + dual control; `class`/`fleet` → `security_officer` + dual control + `fleet_authority` counter-signature. Reasoning per §6.1: §7.2.1's existing classes are operational and engineering roles, and document 08 §5.4 places classification determinations with the OCA and the SCG, *"not… engineering."* |
-| **03-2** | §7.2 | Add `purge` (and `rewrap`) to `Proposal.kind`. Add the standing rule that a purge proposal may never be created or adjudicated by an agent principal or an `accountable-autonomous` identity. |
+| **03-2** | §7.2 | Add `purge` (and `rewrap`) to `Proposal.kind`. Add the standing rule that a purge proposal may never be created or adjudicated by an agent principal or an `accountable_autonomous` identity. |
 | **03-3** | §13 + §15 | Add obligation **17**, as a **contract term** (externally observable, binding on substitutes): *"Exposes a remediation operation (`POST /{slug}/remediations`) accepting quarantine, purge, rewrap, and release actions over declared selectors, idempotent on the remediation id, returning a receipt signed by the implementation and stating, per store it owns, whether that store is legally immutable or operationally append-only and which mechanism was used."* Cross-reference from §13.2 and §13.3. |
 | **03-4** | §6 | Add an "Audit & Provenance (`audit`)" producer block with the five topics and ten event types of §11.1. Document 03 §6 currently lists audit only as a consumer, so a conformant audit service publishes events no catalog declares. |
 | **03-5** | §6 | Add `audit` as a declared consumer on **every** row, with a standing note: *"`audit` is a universal consumer. Its declared dependency is on the §5.4 envelope — the complete `clock` block, the signature, and a well-formed `ClassificationLabel` with `inherited_from[]` on derived aggregates — not on any payload. Its consumer-driven tests assert envelope properties only, so payload evolution never breaks it."* Without this, an explicit non-wildcard audit subscription fails document 09 §8.2's three-way catalog equality. |

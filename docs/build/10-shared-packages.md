@@ -4211,16 +4211,38 @@ manifests."  §8.4: "shared manifests are marked `curated` and maintained
 centrally", and "an UNOWNED manifest is DELETED rather than inherited."  """
 
 
+ToolTargetSlug = SubAppSlug | Literal[PlatformServiceSlug.KNOWLEDGE_RETRIEVAL,
+                                       PlatformServiceSlug.REFERENCE_DATA]
+"""**[AMENDMENT — closes a BLOCKING defect, `40-copilot.md` §16 correction 6.]**
+`ManifestTarget.slug` was typed `SubAppSlug` alone, which document 03 §3.1
+restricts to the nine sub-applications.  `knowledge-retrieval` and
+`reference-data` are `PlatformServiceSlug` values and were therefore
+UNREPRESENTABLE as manifest targets — yet `35-knowledge-retrieval.md` §8 marks
+`POST /retrievals` `x-agent-eligible: yes`, §11.5 expects manifests under
+`packages/agent-tooling/manifests/knowledge-retrieval/`, and
+`12-reference-data-taxonomy.md` §3.1 marks fourteen operations agent-eligible.
+Without this widening the Maintainer Copilot cannot cite a technical-manual
+passage at all — one third of 01 §8.1's stated function for that agent.
+
+`tool-server`, `auth`, `audit`, `gateway`, `sync`, and `notification` stay
+EXCLUDED, deliberately — this preserves `34-tool-server.md` §8.1's existing
+guard (no agent ever binds a manifest targeting a platform-orchestration
+service) as a property of this narrower union, not as an accident of a wider
+one that happened not to be exercised yet."""
+
+
 class ManifestTarget(FathomModel):
     """Document 03 §8.2 `target`: "Sub-application slug and the API major
-    version written against."
+    version written against" — widened to `ToolTargetSlug` (above) to also
+    admit the two knowledge/reference platform services a manifest may
+    legitimately target.
 
     §8.4: "Manifest version and API major version are INDEPENDENT.  An agent
     artifact pins BOTH, plus its prompt and model version, promoted together as
     one registered unit."
     """
 
-    slug: SubAppSlug = Field(description="Slug from document 03 §3.1  [C27].")
+    slug: ToolTargetSlug = Field(description="Slug from document 03 §3.1 or §3.1's platform-service list  [C27].")
     api_major: int = Field(
         ge=1,
         description=(
@@ -4654,6 +4676,55 @@ def orphans() -> list[str]:
     constrains an API change nobody can trace to a consumer.
     """
 ```
+
+### 7.7 `packages/py-common` — the `LLMPort` abstraction
+
+**[AMENDMENT — closes a gap flagged independently by two of the three Wave-5 agent-runtime build documents: `40-copilot.md` §16 correction 13 and `42-redesign-case-builder.md` §18 item 6.]** Document 01 §8.6 names `LLMPort` among the retained port abstractions — *"An `LLMPort` abstraction preserves principle 5"* — and lists its three implementations (Domino AI Gateway for the demonstration, AWS Bedrock in GovClock for the production path, self-hosted vLLM Endpoints for the air-gapped path). Document 01 §9 lists it again among the substitution seams. **No package defined it.** This document's own §1 scope covers `canonical-schemas`, `contracts`, and `agent-tooling`; document 09 §2.6's governance table asserts that `packages/py-common`'s *"required surface is enumerated in §5"* of this document, but §5 is specification generation, not `py-common` — a second stale cross-reference, also corrected here.
+
+`LLMPort` belongs in `packages/py-common`, not `packages/agent-tooling`, because it is consumed by every one of the three agent runtimes as ordinary application code (a completion call), not as anything related to manifest generation or tool eligibility — and `py-common` is already the shared-surface package document 09 §5 places FastAPI middleware, problem details, and health routes in for every Python service, agent runtimes included per the amendment 09-4 NetworkPolicy widening (`09-monorepo-and-conventions.md` §4.4.2).
+
+```python
+# packages/py-common/src/fathom_py_common/llm.py
+"""Document 01 §8.6's LLMPort, defined once so three agent runtimes do not
+define three incompatible ports with three incompatible failure modes.
+
+Implementations, one per 01 §8.6 serving path:
+  - DominoAIGatewayLLM   (demonstration)
+  - BedrockGovCloudLLM   (production path, IL4/IL5)
+  - VLLMEndpointLLM      (air-gapped, self-hosted, OpenAI-compatible)
+
+Selection is configuration (`FATHOM_LLM__PROVIDER`), never a code branch a
+runtime carries — the same substitution-by-configuration shape 01 §9 already
+uses for TrainingJobPort, ModelRegistryPort, InferencePort, FeatureStorePort.
+"""
+from typing import Protocol
+
+class LLMPort(Protocol):
+    async def complete(
+        self,
+        *,
+        messages: list[dict],           # role/content pairs; the four-region
+                                         # prompt structure (40 §6.2, 41 §7, 42 §8)
+                                         # is the caller's concern, not this port's
+        response_schema: type,          # structured-output target (e.g. GroundedAnswer)
+        model_id: str,                  # NO DEFAULT — 40 §OQ-40-4: "a model change is
+                                         # an agent_version change"
+        max_tokens: int,
+        temperature: float,
+        trace_ref: str,                 # MLflow correlation, 01 §8.8
+    ) -> "LLMCompletion": ...            # .content, .llm_version, .usage, .latency_ms
+
+
+class LLMCompletion:
+    """`llm_version` is REQUIRED and travels onto every downstream record —
+    `cp_turn`, `agent_run`, the Proposal's `llm_version` field (03 §7.2) — so
+    a model change is traceable to every artifact it produced, per 03 §8.4's
+    "promoted together as one registered unit"."""
+```
+
+**Credential custody, per runtime, not centralized.** Each agent runtime holds its own External Secret to its configured provider (per-runtime, not a shared custodial service) — the position `40-copilot.md` §8.3 and §OQ-40-3 adopt, over the alternative `31-auth.md` §5.2 reason 1 raises (*"credential custody collapses to one service"*). The Domino AI Gateway itself is the governed custody and audit point (01 §9) for the demonstration path, so no additional centralization closes a gap that does not exist for that path; the same per-runtime pattern extends to Bedrock and vLLM without inventing a fourth component.
+
+**This does not close the rest of `py-common`'s surface.** Document 09 §5 also places shared FastAPI middleware, problem details, idempotency, `ETag`, logging, health routes, and the OpenAPI-annotation helpers in this package, and none of that is specified in this document — `LLMPort` is added here because it was the item three build documents converged on naming as missing; the broader `py-common` gap this leaves is recorded in document 05 rather than silently implied closed.
 
 ---
 

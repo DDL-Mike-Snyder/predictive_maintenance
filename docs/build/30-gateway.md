@@ -429,6 +429,9 @@ The registry, with every budget cited:
 | `asset_detail` | `/views/asset/{asset_id}` | 1500 ms | 06 §7 | `asset` (registry · **required** · 0); `configuration_baseline` (registry · **required** · 0); `readiness` (fleet-status · optional · 0); `predictions` (pdm · optional · 0); `open_work` (maintenance · optional · 0); `parts_position` (supply · optional · 0); `open_proposals` (**local read model** · optional · 0); `installed_items` (registry · optional · **1**) |
 | `installed_item_detail` | `/views/installed-item/{installed_item_id}` | 1500 ms | 06 §7 | `installed_item` (registry · **required** · 0); `prediction` (pdm · optional · 0); `health_indicators` (telemetry · optional · 0); `usage_counters` (telemetry · optional · 0); `maintenance_history` (maintenance · optional · 0); `failure_modes` (failure-intel · optional · 0) |
 | `explanation_decomposition` | `/views/explanation/{prediction_id}` | 4000 ms | 06 §7 *"< 4 s for explanation decomposition"* | `prediction` (pdm · **required** · 0); `contributing_factors` (pdm · **required** · 0); `feature_observations` (telemetry · optional · **1**); `causal_findings` (failure-intel · optional · 1); `procedure_references` (knowledge-retrieval · optional · 1) |
+| `redesign_case_detail` **[AMENDMENT]** | `/views/redesign-case/{case_id}` | 4000 ms, **[NOT SOURCED — see note]** | No figure exists in 06 §7 for this view; `explanation_decomposition`'s budget is borrowed by analogy (same order of composition: a multi-hop dependency/causal chain, not a single-slug lookup) | `redesign_case` (design-advisory · **required** · 0); `dossier` (design-advisory · **required** · 0); `impact_snapshot` (design-advisory · optional · 0); `cost_estimate` (design-advisory · optional · 0); `causal_findings` (failure-intel · optional · **1**) |
+
+**`redesign_case_detail` closes `42-redesign-case-builder.md` §18 item 13**: *"An adjudicator opening a `redesign_case` from the queue has no composed drill-down, though the case's value is entirely in its evidence chain."* `28-design-advisory.md` §2's claim that this composition *"is composed by the gateway"* had no implementation until this row. The budget is flagged rather than asserted as settled — `42`'s own §18 item 20 separately records that 06 §6 has no adjudication-effort figure for a `redesign_case` at all, so this view's timing budget shares that same open dependency rather than resolving it. **Phase 1's `causal_findings` fragment is the drill-down into Failure Intelligence** the same document's §18 item 13 describes as absent from every existing `ViewSpec` fragment list.
 
 Four properties of the table are load-bearing:
 
@@ -815,14 +818,14 @@ Response, per row, is exactly the `PROJECTED_COLUMNS` allowlist rendered as wire
   "items": [
     {
       "proposal_id": "…",
-      "kind": "interval_change",
-      "target_sub_app": "maintenance",
-      "authority_class": "fleet_authority",
-      "blast_radius": "class",
+      "kind": "redesign_case",
+      "target_sub_app": "design-advisory",
+      "authority_class": "design_authority",
+      "blast_radius": "fleet",
       "requires_dual_control": true,
       "status": "proposed",
-      "scope": "class",
-      "subject": { "class_id": "DDG51-FIIA" },
+      "scope": "fleet",
+      "subject": {},
       "subject_provisional": false,
       "valid_until": "2026-08-18T00:00:00+00:00",
       "baseline_id": "…",
@@ -833,7 +836,7 @@ Response, per row, is exactly the `PROJECTED_COLUMNS` allowlist rendered as wire
       "second_adjudicator": null,
       "confidence": 0.71,
       "evidence_count": 4,
-      "non_program_evidence_only": true,
+      "non_program_evidence_only": false,
       "agent_id": "redesign-case-builder",
       "agent_version": "2.1.0",
       "trace_ref": "…",
@@ -1003,111 +1006,90 @@ time.monotonic() via composition/deadline.py.  See §3.3 and §6.3.
 JWT_LEEWAY_SECONDS: int = 60
 ```
 
-### 5.3 Delegated authority — RFC 8693 token exchange
+### 5.3 Delegated authority — one exchange, forwarded unchanged
+
+**[AMENDED — reconciled against `31-auth.md` §4.1, §3.2, which is authoritative.]** This section originally specified a two-hop model in which the gateway itself called Keycloak's token-exchange endpoint twice, re-narrowing `audience` and `scope` at each tool call and carrying a second credential (`X-Fathom-Delegation`) alongside the caller's own workload token. **That model is superseded.** All three Wave-5 agent-runtime build documents (`40-copilot.md` §16 item 1, `41-pma-prescreener.md` §20 items 7–9, `42-redesign-case-builder.md` §18 items 7 and 14) independently reconciled against `31-auth.md`'s flow instead and flagged this section as the one needing the edit — three of three runtimes converging on the same reading is the signal that this document, not the runtime documents, was carrying the defect.
 
 This is the mechanism 04 §11 assigns to the gateway and names only as *"token exchange for delegated authority."* Document 03 §8.3 states the requirement it must satisfy: for the **Delegated** class, *"the user's delegated token"* with *"reach bounded by the user's own authorization, evaluated by the receiving sub-application."* Document 01 §8.5 puts it operationally: *"A maintainer's copilot cannot read what the maintainer cannot read."*
 
-> **DECISION G-4.** **RFC 8693 OAuth 2.0 Token Exchange**, executed by the gateway against `auth`'s token operation, in **two hops**, carrying the delegation chain in the standard `act` claim and constraining onward exchange with the standard `may_act` claim.
+> **DECISION G-4, revised.** **One RFC 8693 exchange per agent turn, mediated by `auth`, not by the gateway calling Keycloak directly.** The resulting token carries `aud` as the **union** of the pinned manifest's target slugs (not narrowed per call) and is **forwarded unchanged** on every subsequent tool call for the life of the turn. There is no second exchange and no second credential.
 
-The two hops exist because the audience must be narrow at the point of use. A single exchange producing one token valid at every sub-application would mean a token minted for a PdM what-if call could be replayed against Scheduling's proposal operations.
-
-**Hop 1 — invocation exchange.** The operator asks the gateway to invoke an agent. The gateway exchanges the user's access token for an **agent-scoped delegation token**.
+**The flow, exactly `31-auth.md` §4.1's:**
 
 ```http
-POST /realms/fathom/protocol/openid-connect/token HTTP/1.1
+POST /api/v1/auth/delegations HTTP/1.1
 Host: auth.fathom-sustainment.svc.cluster.local
-Content-Type: application/x-www-form-urlencoded
+Authorization: Bearer <the user's own access token, verbatim as received>
+Content-Type: application/json
 
-grant_type=urn:ietf:params:oauth:grant-type:token-exchange
-&subject_token=<the user's access token, verbatim as received>
-&subject_token_type=urn:ietf:params:oauth:token-type:access_token
-&actor_token=<the gateway's own workload access token>
-&actor_token_type=urn:ietf:params:oauth:token-type:access_token
-&requested_token_type=urn:ietf:params:oauth:token-type:access_token
-&audience=agent%3Amaintainer-copilot
-&scope=<the union of the pinned manifest's declared operation scopes>
+{ "agent_id": "copilot", "manifest": "pdm-equipment-deepdive", "manifest_version": 2 }
 ```
 
-Resulting claims:
+`auth` — not the gateway — re-runs the manifest eligibility gate against the committed OpenAPI document (31 §4.1 steps 4a–4c), derives `aud` from the manifest's targets (step 4d), performs the RFC 8693 exchange against Keycloak internally, persists the delegation record, and writes the audit record. The gateway's role is to be the **caller** of `POST /api/v1/auth/delegations`, holding the user's access token as a BFF (*"the user's access token never leaves the server"*) and never touching Keycloak's token endpoint itself. Resulting token (31 §3.2's exact shape, transcribed):
 
 ```json
 {
-  "iss": "https://auth.internal/realms/fathom",
-  "aud": "agent:maintainer-copilot",
-  "sub": "user:N00023-4471",
-  "act": { "sub": "svc:gateway" },
-  "may_act": { "sub": "agent:maintainer-copilot@3.2.0" },
-  "scope": "pdm.predictions.read pdm.whatif.compute registry.configuration.read",
-  "fathom:authority_class": "delegated",
-  "fathom:manifest": "pdm-equipment-deepdive.v1",
-  "exp": 1785312000
+  "iss": "https://keycloak.internal/realms/fathom",
+  "sub": "b31f…",
+  "aud": ["pdm", "registry", "telemetry"],
+  "azp": "fathom-agent-copilot",
+  "exp": 1770000900, "iat": 1770000600,
+  "scope": "fathom.agent.delegated sfx:none sfx:proposal-only",
+  "act": {
+    "sub": "svc:agents/copilot",
+    "fathom": { "agent_id": "copilot", "agent_version": "3.2.0", "llm_version": "…" }
+  },
+  "fathom": {
+    "identity": { "…": "byte-identical to the user token's identity block" },
+    "agent": {
+      "authority": "delegated",
+      "run_id": "0f2c8f5a-…",
+      "delegation_id": "d-7731…",
+      "manifest": "pdm-equipment-deepdive",
+      "manifest_version": 2,
+      "api_major": 1,
+      "trace_ref": "mlflow://…"
+    }
+  }
 }
 ```
 
-`may_act` is RFC 8693 §4.4's claim: a statement of *which* principal is authorised to become the actor for this subject. Here it names one agent at one version, so the token is useless to any other workload — which is the property that makes it safe to hand to a Domino-hosted runtime whose own authentication posture is the open dependency of 01 §8.7.
+**The gateway invokes the agent, passing this one token** (31 §4.1 step 5). Every subsequent tool call the agent makes — through the tool server, back through the gateway to the target sub-application — presents `Authorization: Bearer <this same token>`, unmodified. **There is no `X-Fathom-Delegation` header, no second `Authorization`, and no re-exchange.** 31 §4.1: *"THE TOKEN IS FORWARDED UNCHANGED. The gateway never swaps it for its own workload identity"* [03 §15 obligation 7].
 
-**Hop 2 — tool exchange.** The agent calls a sub-application operation through the gateway. It presents **two** credentials:
+**How the user's authority actually reaches the receiving sub-application.** The sub-application authorizes on `sub` — the human — against its own ABAC attributes, exactly as it would for a direct human call (03 §4, obligation 7). Nothing about the request tells it to relax anything. It audits on `act`, which names the agent, its version, and (nested one level deeper) the gateway. That is the whole mechanism, and its virtue is that **the receiving sub-application needs no agent-specific authorization logic at all**: an agent call is a user call with an actor annotation. This is the runtime expression of 01 §8.0's claim that sub-application APIs are the tool surface by construction.
 
-| Credential | Header | Purpose |
-|---|---|---|
-| The agent's own workload access token | `Authorization: Bearer …` | Authenticates the *caller* to the gateway |
-| The hop-1 delegation token | `X-Fathom-Delegation: …` | Carries the *user's* authority |
+**Why `aud` is a list rather than narrowed per call.** The rejected two-hop design narrowed `audience` to one slug at tool-call time on the theory that a token minted for a PdM what-if call should not be replayable against Scheduling. 31 §3.1's rule achieves the same property without a second exchange: *"A receiving service requires its own slug in `aud` and rejects otherwise"* — the token is already useless outside the manifest's declared target set, and narrowing further at each call adds a second exchange (with its own failure mode, `[VERIFY]`-gated Keycloak behavior twice instead of once) for no additional safety.
 
-The gateway then, in order:
-
-1. Validates the `Authorization` token normally (§5.1).
-2. Validates the `X-Fathom-Delegation` token, and asserts `may_act.sub` **equals** the `Authorization` token's `sub`. A mismatch is `403 urn:fathom:problem:gateway:delegation-actor-mismatch` — this is what stops a compromised or merely wrong workload from replaying a captured delegation token.
-3. Asserts the delegation token's `aud` names this agent, and its remaining life is positive without leeway beyond §5.2's fixed 60 s.
-4. Exchanges again, narrowing `audience` to exactly one sub-application slug and `scope` to the operations the pinned manifest selects:
-
-```json
-{
-  "aud": "pdm",
-  "sub": "user:N00023-4471",
-  "act": { "sub": "agent:maintainer-copilot@3.2.0", "act": { "sub": "svc:gateway" } },
-  "scope": "pdm.predictions.read",
-  "fathom:authority_class": "delegated",
-  "fathom:manifest": "pdm-equipment-deepdive.v1",
-  "fathom:agent_version": "3.2.0",
-  "fathom:llm_version": "…",
-  "exp": 1785309300
-}
-```
-
-5. Forwards the request upstream with **only** the hop-2 token in `Authorization`. The user's original token, the agent's workload token, and the hop-1 token are all dropped at this boundary and never travel further.
-
-**How the user's authority actually reaches the receiving sub-application.** The sub-application authorizes on `sub` — the human — against its own ABAC attributes, exactly as it would for a direct human call (03 §4, obligation 7). Nothing about the request tells it to relax anything. It audits on `act`, which names the agent, its version, and the gateway. That is the whole mechanism, and its virtue is that **the receiving sub-application needs no agent-specific authorization logic at all**: an agent call is a user call with an actor annotation. This is the runtime expression of 01 §8.0's claim that sub-application APIs are the tool surface by construction.
-
-**Constraints on every exchanged token, all enforced by the gateway and asserted in §10:**
+**Constraints on the delegation token, enforced by `auth` at issuance (31 §3.2) and asserted at the gateway on every forward (§10):**
 
 | Constraint | Value | Reason |
 |---|---|---|
-| Audience | Exactly one sub-application slug (hop 2) or one agent identity (hop 1) | No token is valid at two upstreams |
-| TTL | ≤ 300 s, **and never exceeding the subject token's remaining life** | An exchange narrows authority; it never extends it in scope or in time |
-| Scope | Subset of the pinned manifest's declared operations | 03 §8.2: manifests pin both manifest version and API major version |
-| `fathom:authority_class` | `delegated` | Distinguishes it from §5.4 at the receiver |
-| Caching | **None.** Every tool call exchanges | A cached delegation token is a bearer credential for a specific principal at a specific instant, held in the component every request passes through |
+| Audience | The manifest's target slugs, as a list | A slug not in `aud` is rejected by the receiving service; no broader reach exists |
+| TTL | Default 300 s, `FATHOM_AUTH__DELEGATED_TTL_SECONDS`, **never exceeding the parent session's remaining life** | `exp ≤ min(iat + TTL, parent_session_exp)` (31 §3.2). One exchange, one lifetime — there is no second exchange to extend it |
+| Scope | `fathom.agent.delegated` plus the `sfx:` classes the manifest's operations require — **never** `sfx:state-changing` | 03 §8.1/§15 obligation 8; 31 §3.2 |
+| `fathom.agent.authority` | `delegated` | 31 §2.5 amendment A-2. Not `fathom:authority_class` — that bare name collides with 03 §7.2.1's distinct `Proposal` field |
+| Caching | **None**, at the gateway or anywhere else. The token is forwarded, not reconstructed | A cached delegation token is a bearer credential for a specific principal at a specific instant |
 | Storage | **None.** Held in the request scope, never persisted, never logged (09 §4.8) | |
 
-**The rejected alternative, recorded.** A **signed gateway assertion** — the gateway mints a short-lived JWT with its own key, carrying `sub`/`act`/`aud`/`scope`, validated by sub-applications against the gateway's JWKS — is a working mechanism and is the documented fallback if `auth` cannot supply RFC 8693. It is not the primary choice because it makes the gateway a **token issuer**, which makes it a second root of trust for authorization decisions and a component whose key compromise mints authority for any user. §5.7's whole argument is that the gateway must not become the place authority is decided; issuing the credentials that carry authority is a short step from deciding it. Adopting the fallback requires an ADR (09 §7.5) and a note in the SSP that the gateway's signing key is an authorization root.
+**The rejected alternative, recorded.** A **signed gateway assertion** — the gateway mints a short-lived JWT with its own key, carrying `sub`/`act`/`aud`/`scope`, validated by sub-applications against the gateway's JWKS — is a working mechanism and is the documented fallback if `auth` cannot supply RFC 8693 token exchange with `act` and the `fathom` claim namespace. It is not the primary choice because it makes the gateway a **token issuer**, which makes it a second root of trust for authorization decisions and a component whose key compromise mints authority for any user. §5.7's whole argument is that the gateway must not become the place authority is decided; issuing the credentials that carry authority is a short step from deciding it. Adopting the fallback requires an ADR (09 §7.5) and a note in the SSP that the gateway's signing key is an authorization root.
 
-**Dependency, flagged rather than assumed.** `auth` must implement the exchange grant, including `act` nesting and `may_act`. Keycloak documents token exchange, but exact conformance on these two claims is a **verification item at implementation time**, per this document's header note and 09's verification convention. It is OQ-1, and it is downstream of 01 §8.7's machine-to-machine authentication dependency — *"the single open dependency capable of altering the agentic design."* Note that 01 §8.7's contingency (relocating agent orchestration to the Sustainment Plane) does **not** change any of the above: the hops, the claims, and the audience narrowing are identical whether the agent runtime is a Domino application or a Sustainment Plane workload. Only the network path changes.
+**Dependency, flagged rather than assumed.** `auth` must implement the exchange grant, including `act` nesting. Keycloak documents token exchange, but exact conformance on this claim is a **verification item at implementation time**, per 31's own **OQ-31-1** and 09's verification convention. It is downstream of 01 §8.7's machine-to-machine authentication dependency — *"the single open dependency capable of altering the agentic design."* Note that 01 §8.7's contingency (relocating agent orchestration to the Sustainment Plane) does **not** change any of the above: the exchange, the claims, and the forwarding rule are identical whether the agent runtime is a Domino application or a Sustainment Plane workload. Only the network path changes.
 
 ### 5.4 Accountable autonomous — no exchange, because there is no subject
 
 Document 03 §8.3's second class covers *"event-triggered and scheduled agents — PMA Pre-Screener, Readiness Narrative, scheduled evaluation."* D12's finding is that delegated authority is *unsatisfiable* here: there is no requesting user, so there is no subject token, so there is nothing to exchange.
 
-The gateway therefore performs **no exchange** on this path. The agent runtime holds a client-credentials workload identity issued by `auth`, and the gateway validates it like any other bearer token, with three additional assertions:
+The gateway therefore performs **no exchange** on this path. The agent runtime holds a client-credentials workload identity issued by `auth` (31 §3.3), and the gateway validates it like any other bearer token, with three additional assertions:
 
 | Assertion | Failure | Reason |
 |---|---|---|
-| `fathom:authority_class == "accountable_autonomous"` | `403 urn:fathom:problem:gateway:authority-class-unknown` | An unrecognised class is not a default-allow |
-| `fathom:accountable_owner` present and non-empty | `403 urn:fathom:problem:gateway:accountable-owner-absent` | 03 §8.3 requires *"a named accountable human owner."* A run with no owner is a run nobody answers for, and the gateway is where that becomes unrepresentable |
+| `fathom.agent.authority == "accountable_autonomous"` | `403 urn:fathom:problem:gateway:authority-unknown` | An unrecognised class is not a default-allow. Naming per 31 §2.5 amendment A-2 — not `fathom:authority_class` |
+| `fathom.agent.accountable_owner` present and non-empty | `403 urn:fathom:problem:gateway:accountable-owner-absent` | 03 §8.3 requires *"a named accountable human owner."* A run with no owner is a run nobody answers for, and the gateway is where that becomes unrepresentable |
 | The matched route's `x-side-effects` is `none` or `proposal-only` | `403 urn:fathom:problem:gateway:autonomous-state-change-refused` | 03 §8.3: *"Restricted to `x-side-effects: none` and `proposal-only`"* |
 
 The third is **defense in depth and is declared as such.** 09 §5.5 already places this check in every sub-application's `require_authz` dependency, and 03 obligation 7 makes the sub-application's check the authoritative one. The gateway's copy exists because it is cheap, because the route's side-effect class is statically known at the gateway (§8.2, decision G-3), and because a state-changing call from an autonomous agent is a class of request that should not traverse the network at all. §5.7 enumerates it as one of exactly two authorization-adjacent decisions the gateway makes, so that "the gateway does not authorize" remains a checkable statement.
 
-Every accountable-autonomous request is recorded to `audit` with `fathom:accountable_owner`, per 03 §8.3's *"Every run recorded to Audit with the accountable owner."*
+Every `accountable_autonomous` request is recorded to `audit` with the accountable owner, per 03 §8.3's *"Every run recorded to Audit with the accountable owner."*
 
 ### 5.5 Mid-run authority lapse
 
@@ -1175,9 +1157,9 @@ Document 03 §8.5: *"Tool invocations, with full request and response, are recor
 
 | Recorded | Content |
 |---|---|
-| Every agent tool call through the pass-through surface | `principal_id` (`sub`), the full nested `act` chain, `fathom:agent_version`, `fathom:llm_version`, `fathom:manifest`, `trace_ref`, `correlation_id`, method, resolved upstream operation, request and response bodies, status, `X-Classification`, duration (`time.monotonic()`, per 09 §4.8) |
+| Every agent tool call through the pass-through surface | `principal_id` (`sub`), the full nested `act` chain, `fathom.agent.agent_version` (carried on `act.fathom.agent_version`), `fathom.agent.llm_version`, `fathom.agent.manifest`, `trace_ref`, `correlation_id`, method, resolved upstream operation, request and response bodies, status, `X-Classification`, duration (`time.monotonic()`, per 09 §4.8) |
 | Every Domino Endpoint proxy call | §5.6 |
-| Every accountable-autonomous request | Plus `fathom:accountable_owner` (03 §8.3) |
+| Every `accountable_autonomous` request | Plus `fathom.accountable_owner` (03 §8.3; 31 §3.3) |
 | Every proposal claim and adjudication proxied | Plus `proposal_id`, `target_sub_app`, `If-Match` presence, and the outcome. The owning sub-application also records its own; the gateway's record is the *invocation*, the owner's is the *decision* |
 | Human view requests | **Not** recorded to `audit`. They are logged (09 §4.8) with `correlation_id` and `principal_id`. A `GET` of a fleet view is not a tool invocation, and recording every read into the immutable accreditation store at operator-interface volume would flood the artifact 04 §11 describes |
 
@@ -1393,11 +1375,39 @@ That the "change required" column is almost empty is the point of §2.5, and it 
 | Surface | Paths | Nature |
 |---|---|---|
 | **Pass-through** | `/api/v1/{slug}/…` for the nine sub-applications plus `tool-server`, `knowledge-retrieval`, `notification`, `reference-data` | The upstream's own contract, proxied. The gateway adds authentication, rate limiting, correlation, and audit; it changes nothing else |
-| **Gateway-owned** | `/api/v1/gateway/…` | The queue (§4.5), the composed views (§3.2), the Domino Endpoint proxy (§5.6), health |
+| **Gateway-owned** | `/api/v1/gateway/…` | The queue (§4.5), the composed views (§3.2), the Domino Endpoint proxy (§5.6), the agent-invocation surface (§8.1.1, **[AMENDMENT]**), health |
 
 The pass-through surface is why 03 §4 requires slug-namespaced base paths: *"This prevents collision at the single gateway ingress `[C25]`."* C25 records three sub-applications defining operations under `/assets/{id}` with no namespacing; the convention is what makes one ingress possible, and the gateway is the component that would break without it.
 
-**There is no separate "agent API."** Agents call the same pass-through paths as humans, differing only in the credential (§5.3). This is 01 §8.0's *"the sub-application APIs **are** the tool surface"* made true at runtime rather than asserted: had the gateway exposed an agent-specific surface, tool manifests would be written against the gateway rather than against sub-application contracts, and 01 §8.0's substitution-safety-equals-tool-safety property would be lost.
+**There is no separate "agent API" for *tool calls*.** Agents call the same pass-through paths as humans, differing only in the credential (§5.3). This is 01 §8.0's *"the sub-application APIs **are** the tool surface"* made true at runtime rather than asserted: had the gateway exposed an agent-specific surface for reaching a sub-application, tool manifests would be written against the gateway rather than against sub-application contracts, and 01 §8.0's substitution-safety-equals-tool-safety property would be lost. **This does not extend to *starting* an agent turn or run** — that act has no sub-application to be a pass-through to, and §8.1.1 is where it lives.
+
+#### 8.1.1 Agent invocation — the operation this document was missing
+
+**[AMENDMENT — closes a BLOCKING gap.]** `31-auth.md` §4.1 step 2 is *"Human starts an agent turn"* and step 5 is *"gateway ── invoke agent, passing the delegated token ──▶ agent runtime"*; §5.3 above (as amended) has the gateway calling `POST /api/v1/auth/delegations` and then invoking the runtime. Until this amendment, nothing in this document — not §8.1's surface table, not a problem type, not an operation — gave that act a route. `apps/web` had nothing to call. Flagged independently by `40-copilot.md` §16 correction 16 (marked **R10**, "blocks the demonstration end-to-end") and `42-redesign-case-builder.md` §18 item 9(b); the two agents converged on different SHAPES of the same missing surface, because they are invoked differently, and both are specified below.
+
+**Shape 1 — interactive, turn-based** (the Maintainer Copilot's shape; `40-copilot.md` §9.2's proposal, adopted verbatim):
+
+| Operation | `x-side-effects` | `x-substitution` | `x-agent-eligible` | Notes |
+|---|---|---|---|---|
+| `POST /api/v1/gateway/agent-sessions` | `state-changing` | `internal` | **false** | Body `{agent_id, subject_hint?}`. Opens a session; returns `session_id`. `Idempotency-Key` required |
+| `POST /api/v1/gateway/agent-sessions/{session_id}/turns` | `state-changing` | `internal` | **false** | Body `{question}`. Issues the delegation (§5.3 step 3), invokes the runtime, returns the `GroundedAnswer` or a refusal. `Idempotency-Key` required |
+| `GET /api/v1/gateway/agent-sessions/{session_id}` | `none` | `internal` | **false** | Session and turn history for the calling human **only** |
+| `DELETE /api/v1/gateway/agent-sessions/{session_id}` | `state-changing` | `internal` | **false** | Explicit close; terminates any live delegation |
+
+**Shape 2 — asynchronous, job-based** (the Redesign Case Builder's shape; `42-redesign-case-builder.md` §13.4's interim surface, promoted from that document's runtime-owned dispatcher to a gateway-owned contract, since a gateway-owned surface is what both correction sets actually asked for):
+
+| Operation | `x-side-effects` | `x-substitution` | `x-agent-eligible` | Notes |
+|---|---|---|---|---|
+| `POST /api/v1/gateway/agent-invocations` | `state-changing` | `internal` | **false** | Body `{agent_id, invocation, candidate_id?, session_id?, case_id?}`. `Idempotency-Key` required. `202 Accepted`, `Location: /api/v1/gateway/agent-runs/{run_id}` |
+| `GET /api/v1/gateway/agent-runs/{run_id}` | `none` | `internal` | **false** | Polled result |
+
+**Three annotations are load-bearing on every row above, in both shapes, and are the reason this cannot be waved through as "the UI will figure it out":**
+
+- **`x-agent-eligible: false` on every row.** Per §8.3's existing rule that it is *"`false` everywhere on the gateway's own surface."* An agent able to invoke an agent is a recursion with no authority boundary — worse, a *delegated* agent invoking another delegated agent would pass a human's authority through a component that never saw the human.
+- **`x-side-effects: state-changing` on every `POST`.** A turn or a run is not a computational `POST` — it mints a delegation or a grant, writes runtime-store rows, and produces audit records. Declaring it `none` to make it agent-eligible would be exactly the "correct in form and false in substance" mis-declaration `24-scheduling.md` §9.2 rejects.
+- **`Idempotency-Key` required on every `POST`**, per 01 §9's *"agent invocation is idempotency-keyed"* and 09 §5.3.
+
+**Which agent uses which shape is not a free choice per runtime** — it follows from whether the interaction is a bounded conversational exchange (shape 1) or a long-running assembly with no single human waiting synchronously (shape 2). `41-pma-prescreener.md`'s enterprise path uses **neither**: it is `accountable_autonomous` and event-triggered through its own run-initiator (§5.4 below; that document's §2.2), never invoked by the gateway on a human's behalf, so it has no row here.
 
 ### 8.2 How pass-through routes are constructed
 
@@ -1427,12 +1437,12 @@ The gateway is a proxy, and a proxy that changes things is a source of defects n
 
 | Direction | Rule |
 |---|---|
-| Request → upstream | `Authorization` replaced **only** on the delegated-agent path (§5.3, hop-2 token) and never otherwise. `Idempotency-Key`, `If-Match`, `If-None-Match`, `X-Backfill`, `Content-Type`, `Accept`, and query parameters forwarded verbatim. `X-Correlation-Id` forwarded, or minted if absent (09 §5.5) |
+| Request → upstream | `Authorization` **never replaced on the agent path** (§5.3) — the delegation token forwards unchanged from invocation to every tool call. `Idempotency-Key`, `If-Match`, `If-None-Match`, `X-Backfill`, `Content-Type`, `Accept`, and query parameters forwarded verbatim. `X-Correlation-Id` forwarded, or minted if absent (09 §5.5) |
 | Request → upstream | **Added:** nothing except `X-Correlation-Id` when absent. Explicitly **not** added: any header a sub-application might authorize on (§5.7) |
-| Request → upstream | **Dropped:** `X-Fathom-Delegation` (consumed at the gateway), the caller's original user token on the agent path, `Host`/hop-by-hop headers |
+| Request → upstream | **Dropped:** the human's original browser-session cookie (never forwarded past the BFF boundary, §5.1), `Host`/hop-by-hop headers. There is no `X-Fathom-Delegation` header to drop — §5.3's amendment removed it along with the second exchange it existed to carry |
 | Upstream → response | Status code, `Content-Type`, body **byte-identical**. `ETag`, `Location`, `Retry-After`, `Deprecation`, `Sunset`, `X-Classification`, `Idempotency-Replayed` forwarded verbatim |
 | Upstream → response | **Never rewritten:** RFC 9457 problem bodies. An upstream's `urn:fathom:problem:pdm:…` reaches the client unchanged; the gateway does not re-wrap it as a gateway problem. A re-wrapped problem detail destroys the stable-`type` contract 03 §4 establishes |
-| Upstream → response | The gateway's **own** problem types are used only for conditions the gateway itself detected — `unauthenticated`, `rate-limit-exceeded`, `owner-unavailable`, `classification-fault`, `required-fragment-unavailable`, `delegation-actor-mismatch`, `delegated-authority-lapsed`, `autonomous-state-change-refused`, `cursor-generation-stale`, `audit-unavailable`, and the two `Idempotency-Key` conditions of 09 §5.3 |
+| Upstream → response | The gateway's **own** problem types are used only for conditions the gateway itself detected — `unauthenticated`, `rate-limit-exceeded`, `owner-unavailable`, `classification-fault`, `required-fragment-unavailable`, `authority-unknown`, `accountable-owner-absent`, `delegated-authority-lapsed`, `autonomous-state-change-refused`, `cursor-generation-stale`, `audit-unavailable`, and the two `Idempotency-Key` conditions of 09 §5.3. **`delegation-actor-mismatch` is retired** — it existed only to catch a mismatch between the two credentials §5.3's superseded two-hop model presented; with one forwarded token there is nothing to compare |
 
 `ETag` forwarding is load-bearing for D16: 03 §7.2 rule 3 requires adjudication to carry `If-Match` on the *claimed* ETag. A gateway that regenerated ETags would break the claim mechanism while appearing to work — the same defect as synthesizing `If-Match` (§4.6), from the other end.
 
@@ -1550,13 +1560,13 @@ The last of these is the guard with the longest reach: it makes "the gateway hol
 
 | Test | Asserts |
 |---|---|
-| `test_delegation_two_hop_claims` | Hop 1 produces `act.sub = svc:gateway` and `may_act.sub = <agent@version>`; hop 2 produces `sub = <user>`, nested `act`, `aud` = exactly one slug, `scope ⊆ manifest scopes`, `exp ≤ min(300 s, subject remaining)` |
-| `test_delegation_actor_mismatch_refused` | A delegation token presented by a workload other than `may_act.sub` yields `403 delegation-actor-mismatch` |
-| `test_delegation_token_never_cached_or_persisted` | Two tool calls perform two exchanges; no token value appears in the database or in any log line |
+| `test_delegation_claims` | The single exchange (§5.3) produces `sub = <user>`, `aud` = the manifest's target-slug list, nested `act.sub = svc:agents/<name>`, `scope ⊆ manifest scopes`, `exp ≤ min(300 s, subject remaining)` |
+| `test_delegation_forwarded_unchanged` | The same token's byte value reaches every tool-call upstream for the life of the turn; the gateway never re-exchanges, never substitutes, and never adds a second `Authorization`-bearing header |
+| `test_delegation_token_never_cached_or_persisted` | No token value appears in the database or in any log line, across the whole turn |
 | `test_d12_no_service_identity_fallback` | Across every upstream failure mode on a delegated request, every outbound `Authorization` derives from the inbound delegation, and the gateway's own workload token appears in no upstream request on that path (§5.5) |
 | `test_d12_delegated_expiry_terminates` | An expired delegation yields `401 delegated-authority-lapsed`, no `Retry-After`, and no upstream call |
 | `test_d12_autonomous_state_change_refused` | `accountable_autonomous` against a `state-changing` route yields `403`, with no upstream call (§5.4) |
-| `test_d12_accountable_owner_required` | An autonomous token without `fathom:accountable_owner` yields `403` |
+| `test_d12_accountable_owner_required` | An autonomous token without `fathom.accountable_owner` yields `403` |
 | `test_d12_domino_endpoint_audit_written_before_response` | Killing the process between the Domino call and the response leaves the audit record present; the caller's token never reaches Domino (§5.6) |
 | `test_gateway_has_no_policy_engine` | Neither OPA nor Cedar is a dependency of `platform/gateway/pyproject.toml` (§5.7) |
 | `test_gateway_forwards_an_authority_violation` | A proposal whose `authority_class` the caller does not hold is **forwarded** and rejected by the owner; the gateway does not pre-reject (§4.6, §5.7) |

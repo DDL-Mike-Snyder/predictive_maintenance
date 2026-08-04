@@ -1569,8 +1569,8 @@ Base path `/api/v1/maintenance/` ([03 §4](../architecture/03-integration-contra
 | `PATCH /work-orders/{id}` | `required` | `state-changing` | no | `If-Match` required |
 | **`POST /maintenance-action-records`** | `required` | `state-changing` | no | **The only writer of the label stream.** `work_order_id` nullable. Edge-writable |
 | `POST /work-orders/{id}/actions` | `required` | `state-changing` | no | Thin wrapper on the above (§5.1). Retained from [04 §6](../architecture/04-subapplication-architectures.md) |
-| `GET /maintenance-action-records?installed_item_id=&asset_id=&status_code=&changed_since=&cursor=` | `required` | `none` | yes | The rebuild path for PdM, Failure Intelligence, PMA, Supply, Registry, Design Advisory |
-| `GET /maintenance-history?installed_item_id=&status_code=&capture_completeness=` | `required` | `none` | yes | [04 §6](../architecture/04-subapplication-architectures.md). Human/agent-facing projection over the above |
+| `GET /maintenance-action-records?installed_item_id=&asset_id=&niin=&status_code=&changed_since=&cursor=` | `required` | `none` | yes | The rebuild path for PdM, Failure Intelligence, PMA, Supply, Registry, Design Advisory. **`niin=` added** — `[amendment]`, `42-redesign-case-builder.md` §18 item 12: every NIIN-scoped consumer (Design Advisory, Supply, Failure Intelligence) needs fleet-wide history for a part type, and without it that requires fanning in through Registry for no reason |
+| `GET /maintenance-history?installed_item_id=&niin=&status_code=&capture_completeness=` | `required` | `none` | yes | [04 §6](../architecture/04-subapplication-architectures.md). Human/agent-facing projection over the above. **`niin=` added**, same correction |
 | `POST /deferrals` | `required` | `state-changing` | no | §3.5 validations |
 | `GET /deferrals?asset_id=&deferral_reason_class=&changed_since=&cursor=` | `required` | `none` | yes | |
 | `GET /availabilities?asset_id=&changed_since=&cursor=`, `GET /availabilities/{id}` | `required` | `none` | yes | |
@@ -1631,6 +1631,21 @@ Scheduling's compliance is structural rather than asserted:
 - **Agent-eligible means `x-side-effects: none` or `proposal-only`, with no exceptions in this service.** The planner agent can `plan`, read explanations, and raise proposals. It cannot `POST /work-packages`, cannot `/reserve`, cannot `/approve`, and cannot write a maintenance action record. The three most consequential operations in this document are unreachable by any agent, and §9.2 explains why `plan` had to be split for that to be true.
 - **`POST /maintenance-action-records` is not agent-eligible even though it is a capture operation.** An agent asserting what a maintainer did is a fabricated label, and the whole of §5 exists to prevent fabricated labels. Capture is a human act with a human's identity on it (`recorded_by`, `findings_coder_was_observer`).
 - **Proposals carry a human identity even when raised by an agent.** [03 §7.2.1](../architecture/03-integration-contracts.md): "An agent's delegated token still carries a human's identity and roles, and it is that identity's roles that are checked here." The §3.9 authority check therefore operates on the human, and an accountable-autonomous agent cannot adjudicate its own proposal.
+
+### 9.5 Agent tool manifests
+
+**[AMENDMENT — closes a BLOCKING gap.]** §9.4 above reasons at length about the Work-Package Planner reaching this service "through tool-server proxied HTTP against the operations marked `x-agent-eligible` in §9.1" and then shipped no manifest for it to reach them through. Flagged by `40-copilot.md` §16 correction 8 (blocking) as gap C.
+
+`packages/agent-tooling/manifests/maintenance/`:
+
+| Manifest | Consumer | Purpose | Operations |
+|---|---|---|---|
+| `maintenance-history-lookup.v1` | Maintainer Copilot | Read-only maintenance-history surface: what has been done to this item, what's open against this hull, why something hasn't been fixed yet | `GET /maintenance-history?installed_item_id=&status_code=&capture_completeness=`, `GET /maintenance-action-records?installed_item_id=&asset_id=&status_code=&…`, `GET /deferrals?asset_id=&deferral_reason_class=&…`, `GET /work-orders?asset_id=&status=&…` (`status=open` default), `GET /work-orders/{id}`, `GET /availabilities?asset_id=&…` |
+| `maintenance-work-package-planner.v1` | Work-Package Planner (out of demonstration scope, 06 §7) | The planner's own binding — `POST /work-packages/plan` and its explanation read, per §9.2's split from `reserve`/`approve`. Not detailed here; this agent is not built in this wave | `POST /work-packages/plan` (`x-side-effects: none`, §9.2), `GET /work-packages/{id}/explanation` |
+
+**`maintenance-history-lookup.v1`'s selection is fully specified in `40-copilot.md` §4.2.4**, including task-scoped descriptions, parameter defaults, and the deliberate exclusions (`POST /work-packages/plan` — the planner's, not this agent's; `POST /proposals`/`GET /proposals`; every `state-changing` row). Reproduced here only by reference, per the convention `21-telemetry.md` §9.5 and `22-pdm.md` §10.1 use — the manifest's home is this service's directory and its conformance test belongs in this service's suite (03 §8.4), even though another document did the selection work.
+
+Both manifests select only `x-side-effects: none` operations (03 §8.1), pin `api_major: 1`, ship a conformance test inside this service's suite, and declare a reviewed `purpose` (03 §8.5). `POST /maintenance-action-records` remains **excluded from every manifest** regardless of consumer — §9.4's third bullet is unconditional, not agent-specific.
 
 ---
 

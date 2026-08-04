@@ -332,6 +332,8 @@ Producer-owned. A consumer listed here has a declared dependency, binding under 
 | `usage_counter.updated` | installed item, counter type, cumulative value, `counter_epoch`, as-of time | `pdm`, `maintenance`, `audit` |
 | `usage_counter.reset` | installed item, counter type, reason, meter replacement reference | `pdm`, `maintenance`, `audit` |
 | `mission.completed` | mission_id, asset, type, period, data completeness | `pma`, `failure-intel`, `audit` |
+
+`pma`'s consumption of `mission.completed` includes the bridge for the PMA Pre-Screener agent's event trigger. §8's principle — *"agents are never direct topic consumers... the consumer named here is the platform component that bridges to it"* — is satisfied by a non-agent run-initiator component shipped from `agents/pma-prescreener/` itself (specified in `41-pma-prescreener.md` §2.2): it holds no prompt, calls no LLM, and makes no tool call, so it is not the agent in the sense §8 forbids, even though its process boundary sits under `agents/` rather than under `platform/`. This is recorded here, closing `41-pma-prescreener.md`'s **PS-OQ-1**, rather than adding a tenth platform-service row to 01 §5's inventory for a component with no domain responsibility of its own.
 | `anomaly.detected` | installed item, window, detector version, score, channels implicated, origin (`enterprise` \| `edge`) | `pma`, `fleet-status`, `audit` |
 | `channel_mapping.version_published` | channel/binding/mapping id, new version, `channel_registry_version`, effective date | `pdm`, `pma`, `audit` |
 

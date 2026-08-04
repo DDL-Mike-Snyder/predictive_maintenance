@@ -895,6 +895,20 @@ Base path `/api/v1/knowledge-retrieval/` (03 §4, 09 §8.1). Every operation car
 
 There is deliberately **no** `classification-denied`, `insufficient-clearance`, `results-filtered`, or `applicability-mismatch` type. Their existence would be the leak.
 
+### 8.1 Agent tool manifests
+
+**[AMENDMENT — closes a BLOCKING gap.]** §11.5 refers to *"every manifest in `packages/agent-tooling/manifests/knowledge-retrieval/`"* without naming one. Flagged by `40-copilot.md` §16 correction 9 (blocking, downstream of correction 6's `ToolTargetSlug` widening in `10-shared-packages.md` §7.2 — this service is a `PlatformServiceSlug`, not a `SubAppSlug`, and could not be named as a manifest target until that correction landed).
+
+`packages/agent-tooling/manifests/knowledge-retrieval/`:
+
+| Manifest | Consumer | Purpose | Operations |
+|---|---|---|---|
+| `knowledge-procedure-lookup.v1` | Maintainer Copilot | The agent's third citation class (01 §8.1): grounded technical-manual passages, configuration-aware | `POST /retrievals` (`mode=asset_scoped`, `source_types=["ietm","technical_manual"]`, `limit` from caller config), `GET /chunks/{chunk_id}`, `GET /documents/{document_id}` |
+
+**This manifest's selection is fully specified in `40-copilot.md` §4.2.5**, including why `mode=asset_scoped` is a load-bearing parameter default supplied by the manifest and never by a model-chosen value (§4.1's `x-agent-eligible` mode; `class_scoped` and `unscoped` are not agent-eligible and must stay that way, per this document's own DO-NOT-7), and the deliberate exclusions (`GET /documents` full inventory — a browse surface; the rebuild feed; every `internal` operation including the SME applicability-review queue). Reproduced here only by reference, per the convention `21-telemetry.md` §9.5 uses.
+
+Selects only `x-side-effects: none` operations, pins `api_major: 1`, ships a conformance test inside this service's suite, and declares a reviewed `purpose` (03 §8.5).
+
 ---
 
 ## 9. Events

@@ -190,8 +190,9 @@ Reconciled against document 01 §11's layout, document 03's package paths, and t
 │   ├── tool-server/                  # Hosts MCP-style manifests (03 §8.5)
 │   └── sync/                         # Edge reconciliation coordinator service [11-outbox-sync-library.md]
 │
-├── agents/                           # Versioned agent artifacts: prompt, manifest pin, API version pin,
-│   ├── copilot/                      #   evaluation set, deployment spec (01 §11). Demo builds three
+├── agents/                           # Versioned agent artifacts: prompt, manifest pin, model pin,
+│   ├── copilot/                      #   API version pin, evaluation set, deployment spec (01 §11,
+│   │                                 #   03 §8.4 — model pin added, previously omitted here). Demo builds three
 │   ├── pma-prescreener/              #   (06 §7): copilot, pma-prescreener, redesign-case-builder
 │   ├── diagnostic/
 │   ├── work-package-planner/
@@ -263,7 +264,7 @@ Reconciled against document 01 §11's layout, document 03's package paths, and t
 | `deploy/argocd` | Argo CD Applications and sync policy | This document §6.3 |
 | `deploy/terraform` | Cluster-adjacent infrastructure | Not covered by any build-framework document yet — **[OPEN]** |
 | `tools` | Repository-level validators and generators | This document §6 |
-| `docs/adr` | ADRs for decisions taken after Phase 3 begins | This document §7.6 |
+| `docs/adr` | ADRs for decisions taken after Phase 3 begins | This document §7.5's last bullet |
 
 ---
 
@@ -635,12 +636,15 @@ spec:
 
 | Edge | Permitted | Reason |
 |---|---|---|
-| any service → own CloudNativePG cluster | yes | 01 §11 |
-| any service → Redpanda brokers + schema registry | yes | 01 §11, 03 §5.5 |
-| any service → `kube-dns` | yes | 01 §11 service discovery |
-| any service → `auth` | yes | 03 §4: authorization is enforced by the receiving service, which requires JWKS/introspection |
-| any service → `audit` | yes | 03 §15 obligation 9: provenance recording |
-| any service → `reference-data` | yes | 04 §11: runtime enumeration and taxonomy resolution. Must be cached; it is not a compute-path dependency |
+| any service **or agent runtime** → own CloudNativePG cluster | yes | 01 §11. **[amendment 09-4]** Widened from "any service" — an agent runtime is not one of the seventeen services (§4's own scoping), but each of the three demo agents owns a small runtime store (OQ-40-2/R2's per-runtime-cluster decision), so the rule must reach it. Flagged independently by `40-copilot.md` §16 correction 18 and `42-redesign-case-builder.md` §18 item 9(a) |
+| any service → Redpanda brokers + schema registry | yes | 01 §11, 03 §5.5. **Not widened to agent runtimes** — 09 §9 item 15 and C19 forbid an agent from ever being a topic consumer or producer; an agent runtime holding this edge would make the prohibition unenforceable at the network layer, not merely a coding convention |
+| any service **or agent runtime** → `kube-dns` | yes | 01 §11 service discovery. **[amendment 09-4]** Widened; service discovery is a universal need, not a seventeen-services-only one |
+| any service **or agent runtime** → `auth` | yes | 03 §4: authorization is enforced by the receiving service, which requires JWKS/introspection. **[amendment 09-4]** Widened — an `accountable_autonomous` agent (or its run-initiator bridge, `41-pma-prescreener.md` §2.2) obtains its own client-credentials workload token directly from `auth` (31 §3.3); a `delegated` agent never calls `auth` itself but still validates incoming tokens against it |
+| any service **or agent runtime** → `audit` | yes | 03 §15 obligation 9: provenance recording. **[amendment 09-4]** Widened — every agent runtime writes its own accountability record (`agent_run`/`agent_answer`) via `POST /records` (32 §10.1), fire-and-forget with local durable spooling, since it has no outbox |
+| any service → `reference-data` | yes | 04 §11: runtime enumeration and taxonomy resolution. Must be cached; it is not a compute-path dependency. **Not widened** — an agent's reference-data reads are tool calls through the manifest/tool-server path (below), not a raw HTTP dependency of the runtime itself |
+| `agents/*` → `tool-server` | yes, **one rule**, per-agent binding enforced at the tool server, not the network layer | **[amendment 09-4]** — every tool call an agent makes, to any of the nine sub-applications or to `knowledge-retrieval`, is proxied through `tool-server` (`34-tool-server.md` §2.3), on the identical reasoning this table already gives for `tool-server → gateway` below. **The absence of a direct `agents/* → <slug>` edge is what makes 09 §9 item 15's prohibition enforceable at the network layer, not merely a coding convention** — flagged independently by `40-copilot.md` §16 correction 19 and `42-redesign-case-builder.md` §18 item 9(a); two of three Wave-5 runtimes converging on the same missing row is the signal that this is a table gap |
+| `gateway` → `agents/*` | yes, **one rule** | **[amendment 09-4]** — `31-auth.md` §4.1 step 5 and this table's own `gateway` row already place agent invocation at the gateway; this is the row that makes it a sanctioned edge rather than an implicit one. See `30-gateway.md` §8.1/§9.2 for the invocation operations this edge carries |
+| `agents/*` → `domino-platform` namespace (AI Gateway / LLM Endpoint), **config-gated** | yes, **one rule**, LLM completion calls only | **[amendment 09-4]** — no document specified the network path for an agent runtime's own LLM completion calls (01 §8.6 names three serving paths; this table sanctioned none of them). Resolved together with the adjacent `gateway → domino-platform` gap `30-gateway.md` §14 item 3 already flags as blocking deployment. Credential custody: a per-runtime External Secret to the serving path, not a single custodial service — each agent's own workload identity, not a shared one, per `40-copilot.md` §16 OQ-40-3 |
 | `gateway` → any of the nine, plus `tool-server`, `knowledge-retrieval`, `notification` | yes | 01 §5: the gateway performs all view-model composition |
 | `tool-server` → `gateway` | yes, **one rule**, pass-through only | `docs/build/34-tool-server.md` §4.4: an agent tool call is proxied through the gateway rather than the tool server calling a target sub-application directly, so the gateway's existing composition/auth path is reused rather than duplicated. The gateway must serve a pass-through mode for this edge — a requirement on the gateway's own build document, not established here |
 | `pma` → `gateway` | yes, **one rule**, evidence materialisation only | `docs/build/23-pma.md` §10.3: PMA materialises an immutable evidence package from Telemetry's replay API rather than reading Telemetry's own object store (C36). Not a compute path in principle 2's sense — asynchronous, retried, out-of-band, and gating a workflow state transition rather than a request/response latency. Routes through the gateway for the same single-ingress-plus-caller-identity reason as the two rows above, rejecting a direct `pma → telemetry` rule for the same reason: it would need repeating for every future evidence consumer |
@@ -1204,7 +1208,7 @@ ignore_missing_imports = true                      # the ONLY sanctioned overrid
 **[ESTABLISHED HERE]** — nothing in the architecture documents addresses this.
 
 - **Trunk-based.** `main` is always deployable. Branches are short-lived: `feat/<slug>-<short-description>`, `fix/<slug>-<short-description>`, `docs/<short-description>`, `chore/<short-description>`.
-- **Conventional Commits, with the canonical slug as scope**: `feat(pdm): add bulk prediction ingest with baseline fencing`. Permitted types: `feat`, `fix`, `docs`, `test`, `refactor`, `perf`, `build`, `ci`, `chore`. Scope is a canonical slug from §7.1, a package name (`py-common`, `canonical-schemas`), or `repo`.
+- **Conventional Commits, with the canonical slug as scope**: `feat(pdm): add bulk prediction ingest with baseline fencing`. Permitted types: `feat`, `fix`, `docs`, `test`, `refactor`, `perf`, `build`, `ci`, `chore`. Scope is a canonical slug from §7.1, a package name (`py-common`, `canonical-schemas`), an `agent/<name>` scope for a change under `agents/<name>/` (§3.1 names seven such directories, none of which had a legal scope until this line — flagged independently by `40-copilot.md` §16 correction 21 and `42-redesign-case-builder.md` §18 item 19), or `repo`.
 - A commit touching a contract surface **must** cite the governing section: `feat(registry): add changed_since reads (03 §4, D5)`.
 - **Squash merge.** One commit per PR on `main`, so the Argo CD deployment record maps one-to-one to a reviewed change — which is the accreditation-relevant property in 01 §11.
 - A PR that changes an architecture document and code together is split: the document change lands first, so document 03 remains binding rather than retro-fitted.

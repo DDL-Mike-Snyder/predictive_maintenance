@@ -1210,6 +1210,22 @@ Base path `/api/v1/pdm/`. Every operation declares `x-substitution` and `x-side-
 
 **Two singular paths** — `/what-if` and `/attribution-policy` — are enumerated in `x-naming-carve-outs` with reasons, per 03 §4's carve-out rule (`[C23]`).
 
+### 10.1 Agent tool manifests
+
+**[AMENDMENT — closes a BLOCKING gap.]** This section did not exist; the string "manifest" appeared nowhere in this document, although 03 §8.2 names three manifests against this service by name (`pdm-fleet-triage`, `pdm-equipment-deepdive`, `pdm-whatif`), `30-gateway.md` §5.3 uses one in a worked token, and 09 §8.5's Definition of Done requires *"[m]anifest tests pass for every manifest in `packages/agent-tooling/manifests/<slug>/`."* Flagged by `40-copilot.md` §16 correction 7 (blocking) as gap B.
+
+`packages/agent-tooling/manifests/pdm/`:
+
+| Manifest | Consumer | Purpose | Operations |
+|---|---|---|---|
+| `pdm-equipment-deepdive.v1` | Maintainer Copilot | Narrow, provenance-rich — one item's predictions and *why*, per 03 §8.2's characterization | `GET /predictions?asset_id=&installed_item_id=&…` (`status=active` default), `GET /predictions/{id}`, `GET /predictions/{id}/provenance`, `GET /criticality?niin=&installed_item_id=&…`, `GET /criticality/{id}/inputs`, `GET /calibration?tier=&family=&horizon_days=&reference_class=&…`, `GET /attribution-policy` |
+| `pdm-fleet-triage` | Work-Package Planner (out of demonstration scope, 06 §7) | Fleet-wide ranked triage, named in 03 §8.2, not detailed here — this agent is not built in this wave | *(Phase 3, when the Work-Package Planner is in scope)* |
+| `pdm-whatif` | (reserved) | Interactive tier-3 scenario analysis via `POST /what-if`, kept **separate** from `pdm-equipment-deepdive` per 03 §8.2 because scenario analysis is a distinct task from answering a status question, and `/what-if` reaches a Domino Endpoint with a 45 s deadline and no-cancellation semantics (02 §4.3) — a poor fit to bundle into a manifest a conversational agent may abandon mid-turn | `POST /what-if` |
+
+**`pdm-equipment-deepdive.v1`'s selection is fully specified in `40-copilot.md` §4.2.3**, including task-scoped descriptions, parameter defaults, and the deliberately-excluded rows (`POST /what-if`, `POST /expected-consequence`, `POST /scoring-runs`, `GET /research/predictions`, the model-governance surfaces) with reasons. Reproduced here only by reference, per the same convention `21-telemetry.md` §9.5 and this document's own §16 use — the manifest's home is the target's directory and its conformance test belongs in the target's suite (03 §8.4), even though another document did the selection work.
+
+All manifests select only `x-side-effects: none` operations (03 §8.1), pin `api_major: 1`, ship a conformance test inside this service's suite, and declare a reviewed `purpose` (03 §8.5). Per document 09 §8.7, an unowned manifest is deleted rather than inherited.
+
 ---
 
 ## 11. Events

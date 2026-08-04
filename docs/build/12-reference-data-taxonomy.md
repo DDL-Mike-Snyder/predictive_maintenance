@@ -565,6 +565,20 @@ Reference Data publishes on `fathom.reference-data.taxonomy.v1` and `fathom.refe
 
 Per obligation 2, no state change without its event; per obligation 11, the transactional outbox is implemented without exception (03 §15).
 
+### 3.5 Agent tool manifests
+
+**[AMENDMENT — closes a BLOCKING gap.]** §3.1 marks fourteen operations `x-agent-eligible: yes` and this document named no manifest for any of them, though 35 §11.5 already refers to manifests existing against this service by inference. Flagged by `40-copilot.md` §16 correction 9 (blocking, downstream of correction 6's `ToolTargetSlug` widening in `10-shared-packages.md` §7.2).
+
+`packages/agent-tooling/manifests/reference-data/`:
+
+| Manifest | Consumer | Purpose | Operations |
+|---|---|---|---|
+| `reference-data-vocabulary-lookup.v1` | Maintainer Copilot | Resolve a taxonomy code, a MIL-STD-3034A term, an equipment family, or a 3-M crosswalk into readable text — never gloss one from parametric memory (01 §8.3) | `GET /taxonomy/entries/{code}?version=&equipment_class=`, `GET /taxonomy/definitions?version=`, `GET /equipment-families/{family_id}?version=`, `GET /crosswalk/3m-codes?version=&cause=&when_discovered=&action_taken=&eic=&…` |
+
+**This manifest's selection is fully specified in `40-copilot.md` §4.2.6**, including the reason each operation is necessary rather than nice (a coded maintenance record is otherwise unrenderable except by guessing) and the deliberate exclusions (`POST /taxonomy/proposals` — `proposal-only`, foreclosed to this read-only agent; the full `GET /taxonomy` browse; export projections; every `internal` row). Reproduced here only by reference, per the convention `21-telemetry.md` §9.5 uses — the manifest's home is this service's directory and its conformance test belongs in this service's suite (03 §8.4).
+
+Selects only `x-side-effects: none` operations, pins `api_major: 1`, ships a conformance test inside this service's suite, and declares a reviewed `purpose` (03 §8.5). Blocked, as of this writing, on `10-shared-packages.md` §7.2's `ManifestTarget.slug` widening — this service is a `PlatformServiceSlug`, not a `SubAppSlug`, and could not be named as a manifest target until that correction lands (it has, in this reconciliation pass).
+
 ---
 
 ## 4. Consumer integration — the three projections
