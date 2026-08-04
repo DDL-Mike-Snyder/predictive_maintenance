@@ -459,42 +459,44 @@ The registry, with every budget cited:
 
 **The `gate_decision` fragment was added by a later amendment** `[closes 52-practitioner-apps.md §13 correction 7, blocking]` — the wireframe's cost box draws the two-stage gate, and `28-design-advisory.md` §5.5's `failed_conditions`/`remedy` are the actionable part of a gate failure; without this fragment, rendering the gate region required a second client call this view exists to avoid.
 
-**Every fragment's `operation_id`, enumerated — `[amendment, closes 51-operator-console.md §22 row 21, blocking]`.** The field has existed in `Fragment`'s definition (§3.2) since this document's original authoring — *"the upstream `operationId` (09 §7.3); resolved against its committed spec"* — and no fragment's value was ever given, so no consumer of this table could derive a response shape from this document alone. Cross-checked against each cited sub-application's own API-surface table:
+**Every fragment's `operation_id`, enumerated — `[amendment, closes 51-operator-console.md §22 row 21, blocking]`.** The field has existed in `Fragment`'s definition (§3.2) since this document's original authoring — *"the upstream `operationId` (09 §7.3); resolved against its committed spec"* — and no fragment's value was ever given, so no consumer of this table could derive a response shape from this document alone.
 
-| View | Fragment | `operation_id` |
-|---|---|---|
-| `fleet_overview` | `readiness_rollup` | `GET /readiness?scope=fleet` (`27-fleet-status.md` §10.1) |
-| | `asset_status` | `GET /assets?...` (`20-registry.md` §9.1, list form) |
-| | `open_casrep_risk` | `GET /risk-flags?severity=&horizon_days=` (`27-fleet-status.md`) |
-| | `availability_windows` | `GET /availabilities?asset_id=` (`24-scheduling.md` §9.1) |
-| | `proposal_counts` | none — the local `proposal_queue` read model (§9.3), not an upstream call |
-| `asset_detail` | `asset` | `GET /assets/{asset_id}` (`20-registry.md` §9.1) |
-| | `configuration_baseline` | `GET /assets/{asset_id}/configuration` (`20-registry.md` §9.1) |
-| | `readiness` | `GET /readiness?scope=asset&asset_id=` (`27-fleet-status.md` §10.1) |
-| | `predictions` | `GET /predictions?asset_id=` (`22-pdm.md` §10) |
-| | `open_work` | `GET /work-orders?asset_id=&status=open` (`24-scheduling.md` §9.1) |
-| | `parts_position` | `GET /availability?asset_id=` (`26-supply.md` §7) |
-| | `open_proposals` | none — the local read model, same as `proposal_counts` above |
-| | `installed_items` | `GET /assets/{asset_id}/installed-items` (`20-registry.md` §9.1) |
-| `installed_item_detail` | `installed_item` | `GET /installed-items/{installed_item_id}` (`20-registry.md` §9.1) |
-| | `prediction` | `GET /predictions?installed_item_id=` (`22-pdm.md` §10) |
-| | `health_indicators` | `GET /health-indicators?installed_item_id=&from=&to=&as_of=&as_known_at=` (`21-telemetry.md` §9.1) |
-| | `usage_counters` | `GET /usage-counters?installed_item_id=&as_of=` (`21-telemetry.md` §9.1) |
-| | `maintenance_history` | `GET /maintenance-history?installed_item_id=&niin=` (`24-scheduling.md` §9.1, amended) |
-| | `failure_modes` | `GET /failure-modes?equipment_class=&taxonomy_version=` (`25-failure-intelligence.md` §8.1) — resolved from the installed item's `equipment_family`, itself read off its `PartRef`. **[VERIFY]**: this fragment may be better served by `GET /attributions?installed_item_id=` (attributed findings, item-scoped) than by the class-level annotation surface; the two answer different questions and the wireframe's box (04 §3's per-item view) reads as the latter |
-| `explanation_decomposition` | `prediction` | `GET /predictions/{id}` (`22-pdm.md` §10) |
-| | `contributing_factors` | `GET /predictions/{id}/provenance` (`22-pdm.md` §10) |
-| | `feature_observations` | `GET /health-indicators?installed_item_id=&from=&to=` (`21-telemetry.md` §9.1), windowed to the prediction's observation window |
-| | `causal_findings` | `GET /attributions?installed_item_id=&mode_lineage_id=` (`25-failure-intelligence.md` §8.1) |
-| | `procedure_references` | `POST /retrievals` (`35-knowledge-retrieval.md` §8, `mode=asset_scoped`) |
-| `redesign_case_detail` | `redesign_case` | `GET /redesign-cases/{id}` (`28-design-advisory.md` §9.1) |
-| | `dossier` | `GET /dossiers/{id}` (`28-design-advisory.md` §9.1) |
-| | `impact_snapshot` | `GET /impact-snapshots/{id}` (`28-design-advisory.md` §9.1) |
-| | `cost_estimate` | `GET /cost-estimates/{id}` (`28-design-advisory.md` §9.1, added by amendment alongside this row — no such operation existed until this reconciliation pass) |
-| | `gate_decision` | `GET /redesign-candidates/{id}/gate-decisions` (`28-design-advisory.md` §9.1, full append-only history — the fragment takes the most recent row) |
-| | `causal_findings` | `GET /attributions?niin=` (`25-failure-intelligence.md` §8.1) |
+**[AMENDMENT — corrected.]** An earlier pass filled this table with `METHOD /path?query` strings — a real improvement over nothing, but not actually `operation_id` values: 09 §7.3's convention is `<slug_underscored>_<verb>_<resource>`, generated by FastAPI's `generate_unique_id_function` and used as the manifest join key (03 §8.2) — a query string is not resolvable against a committed OpenAPI document's `operationId` index at all. Corrected below, method/path kept alongside as documentation. **One consequence the query-string form obscured: `operation_id` is keyed to the endpoint, not to the query parameters, so several fragments that looked distinct as strings share one operationId** — `readiness_rollup` and `asset_detail`'s `readiness` are both `GET /readiness`, just different `scope`/`asset_id` combinations; `asset_detail`'s `predictions` and `installed_item_detail`'s `prediction` are both `GET /predictions`, filtered differently. A fragment resolving the wrong one of a shared operation's parameter sets is now a visible defect against one named `operation_id`, not two unrelated-looking strings.
 
-One row above is itself a new, smaller correction rather than a clean answer — `failure_modes`'s `[VERIFY]` — recorded here rather than papered over with a confident-sounding wrong answer. `cost_estimate`'s missing read operation was found and closed in the same pass (`28-design-advisory.md` §9.1, `GET /cost-estimates/{id}`).
+| View | Fragment | `operation_id` | Method / path (for reference) |
+|---|---|---|---|
+| `fleet_overview` | `readiness_rollup` | `fleet_status_get_readiness` | `GET /readiness?scope=fleet` (`27-fleet-status.md` §10.1) |
+| | `asset_status` | `registry_get_assets` | `GET /assets?...` (`20-registry.md` §9.1, list form) |
+| | `open_casrep_risk` | `fleet_status_get_risk_flags` | `GET /risk-flags?severity=&horizon_days=` (`27-fleet-status.md`) |
+| | `availability_windows` | `scheduling_get_availabilities` | `GET /availabilities?asset_id=` (`24-scheduling.md` §9.1) |
+| | `proposal_counts` | none — the local `proposal_queue` read model (§9.3), not an upstream call | — |
+| `asset_detail` | `asset` | `registry_get_asset` | `GET /assets/{asset_id}` (`20-registry.md` §9.1) |
+| | `configuration_baseline` | `registry_get_asset_configuration` | `GET /assets/{asset_id}/configuration` (`20-registry.md` §9.1) |
+| | `readiness` | `fleet_status_get_readiness` **(same operation as `readiness_rollup` above, `scope=asset&asset_id=` instead)** | `GET /readiness?scope=asset&asset_id=` (`27-fleet-status.md` §10.1) |
+| | `predictions` | `pdm_get_predictions` | `GET /predictions?asset_id=` (`22-pdm.md` §10) |
+| | `open_work` | `scheduling_get_work_orders` | `GET /work-orders?asset_id=&status=open` (`24-scheduling.md` §9.1) |
+| | `parts_position` | `supply_get_availability` | `GET /availability?asset_id=` (`26-supply.md` §7) |
+| | `open_proposals` | none — the local read model, same as `proposal_counts` above | — |
+| | `installed_items` | `registry_get_asset_installed_items` | `GET /assets/{asset_id}/installed-items` (`20-registry.md` §9.1) |
+| `installed_item_detail` | `installed_item` | `registry_get_installed_item` | `GET /installed-items/{installed_item_id}` (`20-registry.md` §9.1) |
+| | `prediction` | `pdm_get_predictions` **(same operation as `asset_detail`'s `predictions` above, filtered by `installed_item_id` instead of `asset_id`)** | `GET /predictions?installed_item_id=` (`22-pdm.md` §10) |
+| | `health_indicators` | `telemetry_get_health_indicators` | `GET /health-indicators?installed_item_id=&from=&to=&as_of=&as_known_at=` (`21-telemetry.md` §9.1) |
+| | `usage_counters` | `telemetry_get_usage_counters` | `GET /usage-counters?installed_item_id=&as_of=` (`21-telemetry.md` §9.1) |
+| | `maintenance_history` | `scheduling_get_maintenance_history` | `GET /maintenance-history?installed_item_id=&niin=` (`24-scheduling.md` §9.1, amended) |
+| | `failure_modes` | `failure_intel_get_failure_modes` | `GET /failure-modes?equipment_class=&taxonomy_version=` (`25-failure-intelligence.md` §8.1) — resolved from the installed item's `equipment_family`, itself read off its `PartRef`. **[VERIFY]**: this fragment may be better served by `failure_intel_get_attributions` (`GET /attributions?installed_item_id=`, attributed findings, item-scoped) than by the class-level annotation surface; the two answer different questions and the wireframe's box (04 §3's per-item view) reads as the latter |
+| `explanation_decomposition` | `prediction` | `pdm_get_prediction` **(the single-resource form, distinct from `pdm_get_predictions` above)** | `GET /predictions/{id}` (`22-pdm.md` §10) |
+| | `contributing_factors` | `pdm_get_prediction_provenance` | `GET /predictions/{id}/provenance` (`22-pdm.md` §10) |
+| | `feature_observations` | `telemetry_get_health_indicators` **(same operation as `installed_item_detail`'s fragment above, windowed to the prediction's observation window)** | `GET /health-indicators?installed_item_id=&from=&to=` (`21-telemetry.md` §9.1) |
+| | `causal_findings` | `failure_intel_get_attributions` | `GET /attributions?installed_item_id=&mode_lineage_id=` (`25-failure-intelligence.md` §8.1) |
+| | `procedure_references` | `knowledge_retrieval_create_retrieval` **[VERIFY — the verb for a query-shaped `POST` is not settled by 09 §7.3's one given example (a `GET`); `create` follows REST convention for `POST` generally but a name like `search`/`retrieve` may read better for a non-resource-creating query. Raise with 09's owner before treating this as final.]** | `POST /retrievals` (`35-knowledge-retrieval.md` §8, `mode=asset_scoped`) |
+| `redesign_case_detail` | `redesign_case` | `design_advisory_get_redesign_case` | `GET /redesign-cases/{id}` (`28-design-advisory.md` §9.1) |
+| | `dossier` | `design_advisory_get_dossier` | `GET /dossiers/{id}` (`28-design-advisory.md` §9.1) |
+| | `impact_snapshot` | `design_advisory_get_impact_snapshot` | `GET /impact-snapshots/{id}` (`28-design-advisory.md` §9.1) |
+| | `cost_estimate` | `design_advisory_get_cost_estimate` | `GET /cost-estimates/{id}` (`28-design-advisory.md` §9.1, added by amendment alongside this row — no such operation existed until this reconciliation pass) |
+| | `gate_decision` | `design_advisory_get_redesign_candidate_gate_decisions` | `GET /redesign-candidates/{id}/gate-decisions` (`28-design-advisory.md` §9.1, full append-only history — the fragment takes the most recent row) |
+| | `causal_findings` | `failure_intel_get_attributions` **(same operation as `explanation_decomposition`'s fragment above, filtered by `niin` instead of `installed_item_id`)** | `GET /attributions?niin=` (`25-failure-intelligence.md` §8.1) |
+
+Two rows above are themselves smaller corrections rather than clean answers — `failure_modes`'s `[VERIFY]` and `procedure_references`'s verb — recorded here rather than papered over with a confident-sounding wrong answer. `cost_estimate`'s missing read operation was found and closed in the same pass (`28-design-advisory.md` §9.1, `GET /cost-estimates/{id}`).
 
 Four properties of the table are load-bearing:
 
