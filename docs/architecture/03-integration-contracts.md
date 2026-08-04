@@ -379,7 +379,7 @@ Batch-level rather than sample-level, deliberately. Per-sample events would cons
 
 | Event | Payload summary | Consumers |
 |---|---|---|
-| `part_availability.changed` | NIIN, location, on-hand, due-in, allowance position, **`lead_time`, `condition_code`, interchangeable group** `[D6, D24]` | `maintenance`, `fleet-status`, `design-advisory`, `audit` |
+| `part_availability.changed` | NIIN, location, on-hand, due-in, allowance position, **`lead_time`, `condition_code`, interchangeable group** `[D6, D24]`, **`unit_price_cents`** `[AMENDMENT — added; design-advisory's parametric and stage-2 cost estimators (26-supply.md §7.x) have always cited "unit cost" from this event, but no version of this row ever carried one, so the field could not arrive]` | `maintenance`, `fleet-status`, `design-advisory`, `audit` |
 | `requisition.status_changed` | document number, NIIN, status, projected availability | `maintenance`, `fleet-status`, `audit` |
 | `allowance_shortfall.detected` | asset, NIIN, allowance versus on-hand, driver | `maintenance`, `fleet-status`, `notification`, `audit` |
 | `reservation_set.confirmed` | reservation set, NIIN quantities, expiry | `maintenance`, `audit` |

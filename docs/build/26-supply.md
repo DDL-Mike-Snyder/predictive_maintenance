@@ -734,7 +734,7 @@ An implementation that instead relaxes the CHECK has converted a loud, transacti
 | `reservation_set.released` | `DELETE`, TTL expiry, `stock_shortfall`, `superseded`, `consumed` | `asset` / `asset_id` | `reservation_set_id` |
 | `part_availability.changed` | Once per affected `(niin, location)` in the same transaction as any change to on-hand, due-in, reserved, condition, or allowance position | `niin` / `niin` | `(niin, location)` |
 
-Payloads carry exactly what document 03 §6 specifies. `reservation_set.confirmed`: *reservation set, NIIN quantities, expiry.* `reservation_set.released`: *reservation set, cause.* `part_availability.changed`: *NIIN, location, on-hand, due-in, allowance position, `lead_time`, `condition_code`, interchangeable group.*
+Payloads carry exactly what document 03 §6 specifies. `reservation_set.confirmed`: *reservation set, NIIN quantities, expiry.* `reservation_set.released`: *reservation set, cause.* `part_availability.changed`: *NIIN, location, on-hand, due-in, allowance position, `lead_time`, `condition_code`, interchangeable group, `unit_price_cents`* **[AMENDMENT]**.
 
 Two rules follow from document 03 §5.1 and are tested:
 
@@ -1252,6 +1252,9 @@ GET /api/v1/supply/availability?niin=LLC004821&asset_id=8f2b…&condition_code=A
       ],
       "lead_time": { "order_and_ship_time_days": 12, "procurement_lead_time_days": 96,
                      "basis": "observed", "observed_n": 41, "as_of": "2026-07-31" },
+      "unit_price_cents": 214900,          /* [AMENDMENT] 03 §6; the stock_item column (§2.1),
+                                              never previously exposed on this event, though
+                                              design-advisory's cost estimators have always cited it */
       "interchangeable_group_id": "ig-0f24",
       "allowance_position": { "allowance_qty": 4, "allowance_state": "authorized_and_held",
                               "derivation_code": "…", "sparing_model": ".25 FLSIP" },

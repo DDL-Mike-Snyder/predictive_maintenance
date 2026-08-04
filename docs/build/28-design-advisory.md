@@ -1158,7 +1158,7 @@ POST /api/v1/design-advisory/redesign-candidates/{id}/parametric-estimate
 ```
 `x-substitution: required` · `x-side-effects: none` · `x-agent-eligible: true`
 
-A pure computation: fast, re-derivable, persists nothing. Inputs are the candidate's driver evidence, `affected_population`, PdM criticality tier, the NIIN's `part_availability` read-model figures (unit cost, `lead_time`, `condition_code` — 03 §6 `[D6, D24]`), and the count of impacted parts and artifacts at `max_depth = 1`. Output is a `CostEstimate` document with `method = parametric`, unpersisted.
+A pure computation: fast, re-derivable, persists nothing. Inputs are the candidate's driver evidence, `affected_population`, PdM criticality tier, the NIIN's `part_availability` read-model figures (`unit_price_cents`, `lead_time`, `condition_code` — 03 §6 `[D6, D24]`), and the count of impacted parts and artifacts at `max_depth = 1`. Output is a `CostEstimate` document with `method = parametric`, unpersisted.
 
 Deliberately shallow: stage 1 must not traverse the graph deeply, or it is not fast and the two-stage split buys nothing.
 
@@ -1293,7 +1293,7 @@ Four properties:
 1. **The gate is enforced at the API boundary, not in the estimator.** A caller cannot obtain a detailed roll-up by any route without a live `gate_decision` with `decision = 'pass'`.
 2. **`failed_conditions` names the conditions by identifier**, so the response is actionable and the gate is debuggable. `detail` is never used for control flow (03 §4).
 3. **`method = parametric` is always permitted** — recording the cheap estimate on a case is not gated.
-4. **The stage-2 estimator refuses to run outside its staleness bound.** Roll-up cost lines depend on `part_availability.changed` (unit cost, lead time, condition code). Per 03 §5.2 and 09 DO-NOT rules, the operation declares a staleness bound on the `part_availability` read model and returns `503` with `urn:fathom:problem:design-advisory:read-model-stale`, incrementing `fathom_staleness_refusals_total`, rather than costing against figures weeks old. The parametric estimator declares no such bound, which is part of what makes it the fast stage.
+4. **The stage-2 estimator refuses to run outside its staleness bound.** Roll-up cost lines depend on `part_availability.changed` (`unit_price_cents`, lead time, condition code). Per 03 §5.2 and 09 DO-NOT rules, the operation declares a staleness bound on the `part_availability` read model and returns `503` with `urn:fathom:problem:design-advisory:read-model-stale`, incrementing `fathom_staleness_refusals_total`, rather than costing against figures weeks old. The parametric estimator declares no such bound, which is part of what makes it the fast stage.
 
 ### 5.6 What the roll-up actually rolls up
 
@@ -1804,7 +1804,7 @@ Exactly 03 §6's declared set for `design-advisory`:
 | `installed_item.removed` | `registry` | Removals with failure indicator and disposition |
 | `prediction.updated` | `pdm` | **Population and consequence context only.** Never evidence for a causal claim (DO-NOT-DA-6) |
 | `prediction.invalidated` | `pdm` | Marks context stale; drops scenario-tainted rows (§7.5) |
-| `part_availability.changed` | `supply` | Cost inputs: unit cost, `lead_time`, `condition_code`, interchangeable group (`[D6, D24]`) |
+| `part_availability.changed` | `supply` | Cost inputs: `unit_price_cents` **[AMENDMENT — 03 §6 never carried this field until now; every cost estimate was silently costing on an absent input]**, `lead_time`, `condition_code`, interchangeable group (`[D6, D24]`) |
 
 `src/fathom_design_advisory/events/catalog.py`'s `PUBLISHES`/`CONSUMES` frozensets must **equal** `helm/values.yaml`'s `events.publishes`/`events.consumes` and **equal** 03 §6's rows for this slug. `python tools/check_event_catalog.py` exits 0 (09 §8.6).
 
