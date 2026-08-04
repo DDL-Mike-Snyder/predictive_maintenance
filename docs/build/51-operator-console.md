@@ -455,7 +455,7 @@ Eleven `NavItem`s in four groups. The mapping is exact, and **two items leave th
 
 | Mode | Trigger | Operation | Behaviour |
 |---|---|---|---|
-| NIIN | Input matches `^[0-9A-Z]{9}$` | `GET /api/v1/registry/parts/{niin}` | Navigate to `/supply/parts/{niin}`. The pattern is [26 §13 row 1]'s corrected form, not the all-numeric `^\d{9}$` that *"rejects the entire synthetic catalogue"* |
+| NIIN | Input matches `^([0-9]{9}\|[A-Z]{2}[A-Z0-9]{7})$` | `GET /api/v1/registry/parts/{niin}` | Navigate to `/supply/parts/{niin}`. **[AMENDMENT]** Previously `^[0-9A-Z]{9}$` per [26 §13 row 1]'s *proposed* form — broader than what `10-shared-packages.md` §4.1 actually adopted, which constrains letters to positions 1–2 rather than accepting one anywhere in the 9 characters. The wider pattern let the console accept input the API's canonical `Niin` type would `422` on |
 | Installed item | Input is a UUID | `GET /api/v1/registry/installed-items/{installed_item_id}` | Navigate to `/telemetry/installed-items/{id}` |
 | **Hull / asset** | Anything else | **None** | The listbox renders one non-selectable `EmptyState` option: *"Hull lookup is unavailable — no operation accepts a hull number. Open the Asset Browser to select an asset."* with a link to `/registry`. **Never a spinner, never a silent empty list.** `[ESTABLISHED HERE]`, §22 row 4 |
 
@@ -1244,7 +1244,7 @@ WF box 1's label is `Triage — ranked by expected consequence`. Three facts mak
 
 | WF column | Field | Rendering |
 |---|---|---|
-| `NIIN` | `niin` [22 §2.5] | Linked to `/supply/parts/{niin}`. Pattern `^[0-9A-Z]{9}$` [26 §13 row 1] |
+| `NIIN` | `niin` [22 §2.5] | Linked to `/supply/parts/{niin}`. Pattern `^([0-9]{9}\|[A-Z]{2}[A-Z0-9]{7})$`, canonical `Niin` [10-shared-packages.md §4.1] — **not** [26 §13 row 1]'s broader proposed form |
 | `Installed item` | `installed_item_id` [22 §2.5] | Linked to `/telemetry/installed-items/{id}`. Nomenclature is §6.5's `[GAP]` |
 | `Tier` | `tier` [22 §2.5] | **Displayed, never branched on.** [03 §7.1]: `tier` is *"0..3, transparency only"* and *"consumers must not branch on `tier`. They may, and must, branch on `reference_class`."* `ui-no-tier-branch` / `FTH006` [50 §10.2, §11.4 item 38]. Rendered as a plain numeral with **no tone** |
 | `Reference class` | `reference_class` — `item \| niin_fleet \| equipment_family \| class_estimate` [22 §2.5] | `StatusChip tone="neutral"`, value verbatim. **This is the branch column**, and it governs both the `P(failure)` cell and whether `rul` exists at all |
@@ -1689,7 +1689,7 @@ Components [50 §3.5]: `SheetFrame`, `Box`, `WfTable`, `WfTableScroll`, `StatusC
 | `asset_id` | Identifier input | Canonical identifiers only [03 §3.3] |
 | `system_id` | Identifier input | |
 | `installed_item_id` | Identifier input | |
-| `niin` | Identifier input | Pattern `^[0-9A-Z]{9}$` [26 §13 row 1] |
+| `niin` | Identifier input | Pattern `^([0-9]{9}\|[A-Z]{2}[A-Z0-9]{7})$`, canonical `Niin` [10-shared-packages.md §4.1] |
 | `class_id` | Identifier input | A string, not a UUID [20 §4.2] |
 | `mission_id` | Identifier input | |
 | `expires_before` | `datetime-local` + offset | RFC 3339 |

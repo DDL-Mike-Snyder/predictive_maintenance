@@ -768,7 +768,15 @@ class InstalledItem(Base, RecordSeqMixin, ETagMixin, ClassifiedMixin):
     installed_item_id: Mapped[UUID] = mapped_column(PgUUID, primary_key=True)
 
     niin: Mapped[str] = mapped_column(ForeignKey("parts.niin"), nullable=False)
-    """What it is.  A NIIN alone is a part TYPE, not an installed item
+    """[AMENDMENT] `NOT NULL` here, unlike `parts.niin`, is correct and stays —
+    it is a residual gap, recorded rather than silently accepted: `parts.niin`
+    is nullable for `identifier_form = 'cage_part_number'` (§4.7 above), and
+    this FK requires a non-null value, so **no `cage_part_number` part can ever
+    be installed** through this table as specified. Whether that is the
+    intended scope of `identifier_form`'s fourth-and-fifth values or a genuine
+    gap is a Phase 3 question this schema does not resolve.
+
+    What it is.  A NIIN alone is a part TYPE, not an installed item
     [03 §3.3 rule 4]."""
 
     iuid: Mapped[str | None] = mapped_column(Text, unique=True)
@@ -831,7 +839,17 @@ class InstalledItem(Base, RecordSeqMixin, ETagMixin, ClassifiedMixin):
 
     __table_args__ = (
         CheckConstraint("eic IS NULL OR eic ~ '^[A-Z0-9]{2,7}$'", name="eic_shape"),
-        CheckConstraint("niin ~ '^[0-9]{9}$'", name="niin_nine_digits"),
+        # [AMENDMENT — corrected.] Previously `niin ~ '^[0-9]{9}$'`, which rejected
+        # Block A of the canonical `Niin` type (10-shared-packages.md §4.1) and
+        # every NICN-form part (07 §4.8, `parts.niin_shape_matches_identifier_form`
+        # above) — this table's `niin` FKs to `parts.niin`, so it must accept
+        # every shape that CHECK allows. `cage_part_number` needs no case here:
+        # `parts.niin` is NULL for those rows, and this column is NOT NULL, so
+        # the FK itself already excludes them (see the docstring above).
+        CheckConstraint(
+            "niin ~ '^([0-9]{9}|[A-Z]{2}[A-Z0-9]{7})$' OR niin ~ '^[0-9A-Z]{4}LL[0-9A-Z]{3}$'",
+            name="niin_shape",
+        ),
         CheckConstraint(
             "provisional = false OR provisional_context IS NOT NULL",
             name="provisional_carries_context",
@@ -1300,7 +1318,12 @@ class Part(Base, RecordSeqMixin, ETagMixin, ClassifiedMixin):
 
     __tablename__ = "parts"
 
-    niin: Mapped[str] = mapped_column(String(9), primary_key=True)
+    part_id: Mapped[UUID] = mapped_column(PgUUID, primary_key=True)
+    """[AMENDMENT] The surrogate key, replacing `niin` as primary key. `niin` is
+    NULL for `identifier_form = 'cage_part_number'` (07 §4.8: a cage/part-number
+    item "has no NIIN at all"), and a nullable column cannot be a primary key —
+    the prior schema made every `cage_part_number` row unrepresentable."""
+    niin: Mapped[str | None] = mapped_column(String(9), unique=True)
     nsn: Mapped[str | None] = mapped_column(String(13))
     fsc: Mapped[str | None] = mapped_column(String(4))
     ncb: Mapped[str | None] = mapped_column(String(2))
@@ -1340,11 +1363,36 @@ class Part(Base, RecordSeqMixin, ETagMixin, ClassifiedMixin):
     enforces it: `serialization_scope = 'item'` requires `InstalledItem.iuid`."""
 
     __table_args__ = (
-        CheckConstraint("niin ~ '^[0-9]{9}$'", name="niin_nine_digits"),
+        # [AMENDMENT — corrected.] The prior CHECK, `niin ~ '^[0-9]{9}$'`, both
+        # (a) rejected Block A of the canonical `Niin` type (10-shared-packages.md
+        # §4.1: `^(\d{9}|[A-Z]{2}[A-Z0-9]{7})$`) — the exact shape the synthetic
+        # generator (13 §6.2) mints for roughly half its catalogue — and
+        # (b) was unsatisfiable by construction for three of `identifier_form`'s
+        # five values: `permanent_nicn`/`temporary_nicn` carry `LL` at positions
+        # 5-6 (07 §4.8), and `cage_part_number` items have no NIIN at all. `licn`
+        # is local-use-only per 07 §4.8 and is not further distinguished here.
+        CheckConstraint(
+            "identifier_form = 'cage_part_number' AND niin IS NULL"
+            " OR identifier_form = 'nsn' AND niin ~ '^([0-9]{9}|[A-Z]{2}[A-Z0-9]{7})$'"
+            " OR identifier_form IN ('permanent_nicn','temporary_nicn','licn')"
+            "    AND niin ~ '^[0-9A-Z]{4}LL[0-9A-Z]{3}$'",
+            name="niin_shape_matches_identifier_form",
+            # The NICN/LICN branch enforces only the one positional rule 07 §4.8
+            # states precisely (LL at positions 5-6, 9 characters total) — it does
+            # not distinguish permanent from temporary NICN (position 7: `C` versus
+            # any other letter) or LICN from NICN, because 07 §4.8 gives no
+            # complete positional grammar for those and a CHECK enforcing an
+            # invented one would be worse than one that enforces what is actually
+            # specified. A residual gap, recorded rather than guessed at.
+        ),
         CheckConstraint("nsn IS NULL OR nsn ~ '^[0-9]{13}$'", name="nsn_thirteen_digits"),
         CheckConstraint(
             "identifier_form IN ('nsn','permanent_nicn','temporary_nicn','licn','cage_part_number')",
             name="identifier_form_vocabulary",
+        ),
+        CheckConstraint(
+            "identifier_form <> 'cage_part_number' OR (cage IS NOT NULL AND part_number IS NOT NULL)",
+            name="cage_part_number_requires_cage_and_part_number",
         ),
         CheckConstraint(
             "serialization_scope IN ('item','lot','none')", name="serialization_scope_vocabulary"
@@ -1354,7 +1402,7 @@ class Part(Base, RecordSeqMixin, ETagMixin, ClassifiedMixin):
     )
 ```
 
-`Niin` and `Nsn` on the wire are the constrained scalars from `packages/canonical-schemas` [10 §4.1] — `^\d{9}$` and `^\d{13}$`. The database CHECKs mirror them so a bulk import cannot bypass the wire constraint.
+`Niin` and `Nsn` on the wire are the constrained scalars from `packages/canonical-schemas` [10 §4.1]. **[AMENDMENT — corrected.]** This previously restated `Niin`'s pattern as `^\d{9}$`, predating 10 §4.1's actual fix (`^(\d{9}|[A-Z]{2}[A-Z0-9]{7})$`, accepting both blocks 13 §6.2 mints) and contradicting this section's own `niin_shape`/`niin_shape_matches_identifier_form` CHECKs above, which already implement the wider shape. `Nsn` remains `^\d{13}$`. The database CHECKs mirror the wire constraints so a bulk import cannot bypass them.
 
 ### 4.10 The complete owned-aggregate inventory
 
