@@ -59,7 +59,7 @@ Four structural enforcements. Each is a schema or route property that makes the 
 | # | Enforcement | Mechanism |
 |---|---|---|
 | **E1** | **No `RedesignCase` state means "approved."** | `case_status` is the enum `draft \| assembled \| published \| superseded \| withdrawn`. There is no `approved`, no `authorized`, no `directed`. `published` means *released to a design authority as a decision package*, which is asserted in the column comment and in the OpenAPI description. A `PATCH` carrying any unknown status value fails Pydantic validation before it reaches a service (§3.6) |
-| **E2** | **No operation records a redesign decision, and none can be added silently.** | `POST /redesign-cases` does not exist. A case reaches `published` **only** as the effect of a human adjudicating a `redesign_case` proposal (§6.5). The service exposes no route that accepts an adjudication outcome for a *redesign*, as distinct from for a *proposal*. A contract test enumerates every route and asserts none matches a decision-verb pattern (§13, T-NODECISION-1) |
+| **E2** | **No operation records a redesign decision, and none can be added silently.** | **[AMENDMENT — narrowed.]** `POST /redesign-cases` now exists (added above, closing `42-redesign-case-builder.md` §18 item 1) — but it creates an empty `draft` row, recording no decision, no scope, and no recommendation; every value a design authority would need to disagree with is still absent until `/assemble` and `/estimate` run and a proposal is adjudicated. A case reaches `published` **only** as the effect of a human adjudicating a `redesign_case` proposal (§6.5). The service exposes no route that accepts an adjudication outcome for a *redesign*, as distinct from for a *proposal*. A contract test enumerates every route and asserts none matches a decision-verb pattern (§13, T-NODECISION-1), **and a second test asserts `POST /redesign-cases`'s response carries no field beyond `id`, `candidate_id`, `dossier_id`, `case_status`, and timestamps** — the creation route is checked for silence, not merely absence of a decision verb |
 | **E3** | **`recommendation` is structurally non-directive.** | `RedesignRecommendation.stance` is a closed vocabulary containing no approval value: `redesign_warranted_for_evaluation`, `insufficient_evidence`, `monitor_and_reassess`, `no_action_indicated`. `limitations[]` and `evidence_gaps[]` are **required and non-empty** — a recommendation that claims no limitations cannot be persisted (§3.6). This is what makes "to a standard a design engineer can evaluate and defend" checkable: the case states what it does not know |
 | **E4** | **The only authority-bearing write is a proposal.** | `POST /proposals` (`kind=redesign_case`) is the sole `proposal-only` operation, and its `authority_class` is set by this service from 03 §7.2.1 to `design_authority` unconditionally. Every other write is internal bookkeeping on this service's own aggregates |
 
@@ -1387,6 +1387,37 @@ Everything else follows 03 §7.2 and doc 10 §4.7 unchanged: `evidence[]` requir
 
 **Evidence composition for a `redesign_case` proposal.** `evidence[]` must include, at minimum, the `case_id`, the `dossier_id`, the `impact_snapshot_id`, the `gate_decision_id`, and the `cost_estimate_id`. `source_trust` is `program` for each. Any retrieved document chunk supporting the rationale carries its own `source_trust` per 03 §9, and **a proposal resting solely on non-program content is flagged to the adjudicator** — for this proposal kind that flag is close to disqualifying, and the adjudication UI surfaces it prominently.
 
+**[AMENDMENT — closes `42-redesign-case-builder.md` §18 item 4.]** `payload`'s shape for this `kind` was unspecified here, though §6.5 below dereferences `proposal.payload["case_id"]` and 03 §7.2 makes `payload` *"the domain object, validated by the owning sub-application"* — this service, not the agent that proposes it. Adopted from `42-redesign-case-builder.md` §6.2, whose Redesign Case Builder is the reference sender:
+
+```
+RedesignCaseProposalPayload {
+  case_id                       # required. Dereferenced at §6.5 below
+  case_version                  # required. The version the agent read at its step 10
+  candidate_id
+  dossier_id, dossier_version
+  impact_snapshot_id
+  gate_decision_id
+  cost_estimate_id
+  scenario_id?                  # only where a DesignScenario already exists; §7.2
+
+  carried_digests { dossier, impact_snapshot, gate_decision }   # attestations, not
+                                                                 # assertions — this
+                                                                 # service re-validates
+                                                                 # against current state
+                                                                 # at adjudication regardless
+  narrative_sections[] { section, text, source_pointers[] }
+
+  evidence_gaps[]  { code, basis_ref, quantities }              # derived, complete,
+  limitations[]    { code, basis_ref, quantities }              # no model output
+
+  prompt_digest, manifest_pins[], renderer_versions[]
+}
+```
+
+**Deliberately absent:** `recommendation_stance`, `recommendation_limitations`, `recommendation_evidence_gaps` (those exist only on the case, written by the human at `assemble` — duplicating them into the payload would create a second, agent-authored version an adjudicator could act on instead of the committed one); `evidence_strength` or any strength band (cited by reference to the dossier, never copied, per §6.3's rules above); a cost figure (cited by `cost_estimate_id`, never restated as a number that could disagree with it); `blast_radius` and `authority_class` (this service derives both, per the function above — never caller-supplied).
+
+Added to `packages/canonical-schemas` alongside `Proposal`, with golden vectors per `10-shared-packages.md` §4.9's convention for the other typed payload shapes.
+
 ### 6.5 Publication is an effect of human adjudication — E2, mechanically
 
 The service consumes its own `proposal.adjudicated` event. On `status = approved`:
@@ -1659,14 +1690,15 @@ Base path `/api/v1/design-advisory/`. Every operation declares `x-substitution` 
 |---|---|---|---|---|
 | `GET /dossiers?niin=&changed_since=&limit=&cursor=` | required | `none` | ✔ | Change-feed read (03 §4, `[D5]`) |
 | `GET /dossiers/{id}` | required | `none` | ✔ | Full dossier incl. verbatim citations |
-| `POST /dossiers/assemble` | required | `none` | ✔ | §6.2. Writes snapshot + provenance only |
+| `POST /dossiers/assemble` | required | `none` | ✔ | §6.2. Writes snapshot + provenance only. **Body `{niin, candidate_id, as_of?}`** `[amendment, 42 §18 item 3]` |
 | `GET /redesign-candidates?status=&min_priority=&niin=&changed_since=&limit=&cursor=` | required | `none` | ✔ | 04 §10 |
 | `GET /redesign-candidates/{id}` | required | `none` | ✔ | |
-| `POST /redesign-candidates/{id}/parametric-estimate` | required | `none` | ✔ | §5.1, stage 1 |
-| `POST /redesign-candidates/{id}/evaluate-gate` | required | `none` | ✔ | §6.3 |
+| `POST /redesign-candidates/{id}/parametric-estimate` | required | `none` | ✔ | §5.1, stage 1. **Body `{}`** — all inputs are server-side against the candidate and its dossier `[amendment, 42 §18 item 3]` |
+| `POST /redesign-candidates/{id}/evaluate-gate` | required | `none` | ✔ | §6.3. **Body `{dossier_id, impact_snapshot_id}`** — both `NOT NULL` on the `gate_decision` row this operation writes (§5.3), so both must arrive on the request `[amendment, 42 §18 item 3]` |
 | `GET /redesign-candidates/{id}/gate-decisions` | internal | `none` | ✔ | Full append-only history |
 | `GET /redesign-cases?niin=&status=&changed_since=&limit=&cursor=` | required | `none` | ✔ | |
 | `GET /redesign-cases/{id}` | required | `none` | ✔ | 04 §10 |
+| `POST /redesign-cases` | required | `state-changing` | ✗ | **[AMENDMENT — closes a BLOCKING gap, `42-redesign-case-builder.md` §18 item 1.]** Body `{candidate_id, dossier_id}`. Mints the `{id}` every downstream route on this aggregate presupposes and that nothing previously created. `case_status` fixed at `draft`, not caller-settable. Does **not** record a redesign decision — see the revised E2 below |
 | `POST /redesign-cases/{id}/assemble` | required | `state-changing` | ✗ | §6.1 step 9 |
 | `POST /redesign-cases/{id}/estimate` | required | `state-changing` | ✗ | 04 §10. **Gate-gated** (§5.5) |
 | `GET /dependencies?niin=&depth=&relation=&as_of=&changed_since=&limit=&cursor=` | required | `none` | ✔ | 04 §10, neighbourhood |

@@ -514,6 +514,16 @@ agent_runs
   accountable_owner_sub   -- NOT NULL for autonomous runs
   status                  running | completed | terminated_authority_lapsed
                           | terminated_pod_restart | terminated_revoked
+                          | terminated_target_refused
+                          # terminated_target_refused: a routine target refusal
+                          # with a valid, unexpired token (a 429 admission-control
+                          # engagement, a 503 tool-surface-unavailable) -- NOT an
+                          # authority event.  Closes 41-pma-prescreener.md §20
+                          # item 6, which found no status value for the "designed,
+                          # routine condition" its own §5.6.2 requires; conflating
+                          # it with terminated_authority_lapsed would send an
+                          # implementer looking for authority-lapse causes a
+                          # target refusal never had. [amendment]
   authority_expires_at    TIMESTAMPTZ           -- the token's exp
   checkpoint_ref          TEXT, nullable        -- s3://… An OBJECT REFERENCE, never content
   checkpoint_hash         TEXT, nullable        -- JCS-canonical SHA-256, so a resumed
@@ -879,7 +889,7 @@ Built by `packages/py-common` from the validated token, the matched route's anno
                             "fleet": {"any_of": ["fleet_authority"], "dual_control": true} },
   "redesign_case":        { "item": {"any_of": ["design_authority"]},
                             "asset": {"any_of": ["design_authority"]},
-                            "class": {"any_of": ["design_authority"]},
+                            "class": {"any_of": ["design_authority"], "dual_control": true},
                             "fleet": {"any_of": ["design_authority"], "dual_control": true} },
   "configuration_change": { "item": {"any_of": ["maintainer"],
                                      "then_confirmed_by": "registry"},

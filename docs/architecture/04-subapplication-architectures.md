@@ -558,7 +558,7 @@ Core program capability, not a substitution candidate. The tag stream is the pro
 ### Phase 3 questions
 
 - Anomaly taxonomy definition, and its reconciliation with maintenance findings coding and failure-mode taxonomy — a single vocabulary question spanning three sub-applications, and one that should be resolved once rather than three times
-- Candidate cap per review and the ranking function
+- ~~Candidate cap per review and the ranking function~~ **Resolved** — cap 12 from document 06 §6, ranking function `pma-ranker-1.0.0` from `23-pma.md` §3.3/§3.6. Flagged as stale by `41-pma-prescreener.md` §20 item 12: a reader arriving here for the agent's own budget constraints would otherwise conclude the cap is still open and size its contribution freely
 - Reviewer assignment: by billet, by qualification, or by asset
 - Whether ship's force or shore-based analysts perform review in the demonstration, which changes the interface substantially
 - Evidence package composition and size, particularly for unmanned vehicles with dense telemetry

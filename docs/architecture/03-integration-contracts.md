@@ -517,7 +517,15 @@ Proposal {
   authority_class        # required authority to adjudicate (§7.2.1)   [D16]
   blast_radius           # item | asset | class | fleet              [D16]
   requires_dual_control  # boolean; true for class or fleet scope, and for
-                         # any kind with external legal effect
+                         # any kind with external legal effect. That set is
+                         # {requisition} — it creates a legally binding
+                         # procurement instrument reaching an external supply
+                         # chain (07 §4). No other kind creates an obligation
+                         # outside the program: redesign_case recommends an
+                         # acquisition action but is not itself one, and
+                         # configuration_change/interval_change/anomaly_tag/
+                         # work_candidate are entirely internal. [amendment,
+                         # closes doc 10 OQ-12 and doc 26 OQ-S3]
   valid_until            # expiry; absent means no expiry is permitted
   status                 # proposed | claimed | approved | rejected | superseded | expired
   claimed_by, claimed_until                                          # [D16]
@@ -560,11 +568,13 @@ AuthorityClass = maintainer | planner | supply_officer | design_authority | flee
 | `work_candidate` | `maintainer` or `planner` | `planner` | `fleet_authority` |
 | `requisition` | `supply_officer` | `supply_officer` | `fleet_authority` |
 | `interval_change` | `planner` | `fleet_authority` + dual control | `fleet_authority` + dual control |
-| `redesign_case` | `design_authority` | `design_authority` | `design_authority` + dual control |
+| `redesign_case` | `design_authority` | `design_authority` + dual control | `design_authority` + dual control |
 | `configuration_change` | `maintainer` (edge-submitted) then Registry confirmation | — | — |
 | `purge` / `rewrap` | `security_officer` + dual control | `security_officer` + dual control + `fleet_authority` counter-signature | `security_officer` + dual control + `fleet_authority` counter-signature |
 
 A proposal's `authority_class` field is set by the owning sub-application at creation, from this table, and re-validated at adjudication (§7.2's re-validation rule) in case the scope was corrected between proposal and adjudication. Phase 3 per-sub-application design may add finer-grained roles within a class (e.g. splitting `planner` by RMC), but may not remove the minimum this table establishes.
+
+**`redesign_case`'s class cell now annotates dual control**, closing an inconsistency `28-design-advisory.md` §16 correction 3 found between this table (originally dual control at fleet only) and §7.2 rule 4 above, which is unqualified: *"Dual control is mandatory at class **and fleet** scope."* The stricter reading governs — this table is a minimum-authority floor, not an exhaustive dual-control list, and rule 4 already bound the class scope even where a cell's annotation didn't say so.
 
 **Some cells accept more than one class** — `work_candidate` at item or asset scope accepts `maintainer` *or* `planner` — and a singular field cannot carry an alternative set. The **policy evaluation, not the field, is authoritative**: adjudication checks the adjudicator's held roles for membership in the cell's full allow-set, generated from this table, never a single-value equality check and never a rank comparison between classes (there is no implicit hierarchy — a `fleet_authority` does not automatically satisfy a `maintainer` requirement, since these are organizational roles, not levels of the same authority). `Proposal.authority_class` itself records one representative value from the cell — for display, audit, and queue filtering — and is re-validated against the full allow-set, not against that single recorded value, at adjudication time. **"Minimum" in the table above means minimum authority, not a hierarchy floor:** it identifies the least-privileged role or roles the cell accepts, not a rank threshold above which any higher-ranked class also qualifies.
 
