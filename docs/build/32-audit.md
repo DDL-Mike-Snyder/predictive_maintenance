@@ -1597,6 +1597,8 @@ Each item carries the finding or citation that makes it a defect rather than a p
 
 Every item is a change this document's design requires in a document upstream of it. An implementer follows this document immediately; each amendment is release-blocking because document 03 is what binds substitutes.
 
+**All fourteen amendments below (03-1 through 03-6, 11-1 through 11-5, 09-1 through 09-3) have been applied** to their respective documents, verified against the live files rather than assumed from this table. Two ADRs were written for the 09-1 NetworkPolicy edges (`docs/adr/0001-audit-key-service-edge.md`, `docs/adr/0002-audit-object-store-edge.md`) per document 09 DO-NOT 30's requirement. `python3 tools/check_event_catalog.py` passes with the amended catalog.
+
 ### 16.1 Document 03 — Integration Contracts
 
 | # | Section | Edit |

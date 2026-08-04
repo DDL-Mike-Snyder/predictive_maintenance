@@ -305,17 +305,19 @@ Producer-owned. A consumer listed here has a declared dependency, binding under 
 
 **Agents are never direct topic consumers.** Agents obtain state through tools (document 01 §8.3). Where a downstream capability is realized by an agent, the consumer named here is the platform component that bridges to it `[C19]`.
 
+**`audit` is a universal consumer, listed explicitly on every row below rather than assumed.** Its declared dependency is on the §5.4 envelope — the complete `clock` block, the signature, and a well-formed `ClassificationLabel` with `inherited_from[]` on derived aggregates — never on any payload. Its consumer-driven conformance suites assert envelope properties only, so payload evolution never breaks it, and it is exempt from every producer's version-bump obligation (§2 principle 5) for exactly that reason. It is listed explicitly rather than left implicit because an implementation's own `catalog.py` ≡ `values.yaml` ≡ this document three-way equality check (document 09 §8.2) fails on a real, non-wildcard audit subscription otherwise `[amendment 03-5]`.
+
 ### Asset & Configuration Registry (`registry`)
 
 | Event | Payload summary | Consumers |
 |---|---|---|
-| `asset.registered` | AssetRef, class, commissioning data | `fleet-status`, `pdm`, `telemetry` |
-| `asset.status_changed` | operational status, OFRP phase, deployment state | `fleet-status`, `maintenance`, `pdm` |
-| `configuration.baseline_changed` | `baseline_id`, `baseline_epoch`, changed installed-item set, effective date | `pdm`, `pma`, `knowledge-retrieval`, `failure-intel`, `fleet-status`, `maintenance`, `supply`, `telemetry` |
-| `installed_item.installed` | InstalledItemRef, position, install date, source work order, usage-at-install | `pdm`, `telemetry`, `supply` |
-| `installed_item.removed` | InstalledItemRef, removal date, disposition, failure indicator | `pdm`, `failure-intel`, `supply`, `design-advisory`, `telemetry` |
-| `installed_item.identity_resolved` | `provisional_id`, `canonical_id`, `resolution` (`confirmed`\|`superseded`), evidence, `baseline_epoch` | `pdm`, `telemetry`, `supply`, `failure-intel`, `design-advisory` |
-| `allowance.updated` | COSAL/APL/AEL revision for an asset | `supply`, `maintenance` |
+| `asset.registered` | AssetRef, class, commissioning data | `fleet-status`, `pdm`, `telemetry`, `audit` |
+| `asset.status_changed` | operational status, OFRP phase, deployment state | `fleet-status`, `maintenance`, `pdm`, `audit` |
+| `configuration.baseline_changed` | `baseline_id`, `baseline_epoch`, changed installed-item set, effective date | `pdm`, `pma`, `knowledge-retrieval`, `failure-intel`, `fleet-status`, `maintenance`, `supply`, `telemetry`, `audit` |
+| `installed_item.installed` | InstalledItemRef, position, install date, source work order, usage-at-install | `pdm`, `telemetry`, `supply`, `audit` |
+| `installed_item.removed` | InstalledItemRef, removal date, disposition, failure indicator | `pdm`, `failure-intel`, `supply`, `design-advisory`, `telemetry`, `audit` |
+| `installed_item.identity_resolved` | `provisional_id`, `canonical_id`, `resolution` (`confirmed`\|`superseded`), evidence, `baseline_epoch` | `pdm`, `telemetry`, `supply`, `failure-intel`, `design-advisory`, `audit` |
+| `allowance.updated` | COSAL/APL/AEL revision for an asset | `supply`, `maintenance`, `audit` |
 
 `configuration.baseline_changed` is the most consequential event in the system. It invalidates every prediction attached to affected installed items, carries the new epoch, and is a correctness signal rather than an informational one.
 
@@ -325,13 +327,13 @@ Producer-owned. A consumer listed here has a declared dependency, binding under 
 
 | Event | Payload summary | Consumers |
 |---|---|---|
-| `telemetry.batch_ingested` | asset, time range, channel set, sample counts, quality flags | `pdm`, `pma`, `failure-intel` |
-| `health_indicator.computed` | installed item, indicator set, values, definition version, definition-time | `pdm`, `fleet-status` |
-| `usage_counter.updated` | installed item, counter type, cumulative value, `counter_epoch`, as-of time | `pdm`, `maintenance` |
-| `usage_counter.reset` | installed item, counter type, reason, meter replacement reference | `pdm`, `maintenance` |
-| `mission.completed` | mission_id, asset, type, period, data completeness | `pma`, `failure-intel` |
-| `anomaly.detected` | installed item, window, detector version, score, channels implicated, origin (`enterprise` \| `edge`) | `pma`, `fleet-status` |
-| `channel_mapping.version_published` | channel/binding/mapping id, new version, `channel_registry_version`, effective date | `pdm`, `pma` |
+| `telemetry.batch_ingested` | asset, time range, channel set, sample counts, quality flags | `pdm`, `pma`, `failure-intel`, `audit` |
+| `health_indicator.computed` | installed item, indicator set, values, definition version, definition-time | `pdm`, `fleet-status`, `audit` |
+| `usage_counter.updated` | installed item, counter type, cumulative value, `counter_epoch`, as-of time | `pdm`, `maintenance`, `audit` |
+| `usage_counter.reset` | installed item, counter type, reason, meter replacement reference | `pdm`, `maintenance`, `audit` |
+| `mission.completed` | mission_id, asset, type, period, data completeness | `pma`, `failure-intel`, `audit` |
+| `anomaly.detected` | installed item, window, detector version, score, channels implicated, origin (`enterprise` \| `edge`) | `pma`, `fleet-status`, `audit` |
+| `channel_mapping.version_published` | channel/binding/mapping id, new version, `channel_registry_version`, effective date | `pdm`, `pma`, `audit` |
 
 `channel_mapping.version_published` closes **OQ-2**, raised by the same agent: document 04 §3 requires a channel-mapping change to be "a versioned event," but §6's catalog had none, forcing Telemetry to fall back to `changed_since` reads plus a bumped `channel_registry_version` on `health_indicator.computed`. That fallback remains correct and is not superseded — it is how a mapping change reaches a consumer that doesn't subscribe to this new event — but the event itself was the missing, cheaper path for `pdm` and `pma`, which already react to registry-version bumps.
 
@@ -341,8 +343,8 @@ Batch-level rather than sample-level, deliberately. Per-sample events would cons
 
 | Event | Payload summary | Consumers |
 |---|---|---|
-| `prediction.updated` | scoring run reference, affected scope, **references to the run artifact rather than inline result sets** `[D27]` | `fleet-status`, `maintenance`, `supply`, `design-advisory`, `failure-intel` |
-| `prediction.invalidated` | affected scope, cause, `baseline_epoch` | `fleet-status`, `maintenance`, `supply`, `design-advisory` |
+| `prediction.updated` | scoring run reference, affected scope, **references to the run artifact rather than inline result sets** `[D27]` | `fleet-status`, `maintenance`, `supply`, `design-advisory`, `failure-intel`, `audit` |
+| `prediction.invalidated` | affected scope, cause, `baseline_epoch` | `fleet-status`, `maintenance`, `supply`, `design-advisory`, `audit` |
 | `criticality_tier.assigned` | NIIN, equipment family, tier, contributing factors, transition annotation | `fleet-status`, `maintenance`, `audit` |
 | `model_binding.activated` | which registry model version now serves which tier and family, approval reference | `audit`, `fleet-status` |
 
@@ -352,20 +354,20 @@ Batch-level rather than sample-level, deliberately. Per-sample events would cons
 
 | Event | Payload summary | Consumers |
 |---|---|---|
-| `readiness.recomputed` | scope, score components, contributing degradations, classification union | `notification` |
-| `casrep_risk.raised` | installed item, predicted category, horizon, evidence references | `notification`, `maintenance`, `supply` |
-| `casrep_risk.cleared` | installed item, cause of clearance | `notification`, `maintenance` |
+| `readiness.recomputed` | scope, score components, contributing degradations, classification union | `notification`, `audit` |
+| `casrep_risk.raised` | installed item, predicted category, horizon, evidence references | `notification`, `maintenance`, `supply`, `audit` |
+| `casrep_risk.cleared` | installed item, cause of clearance | `notification`, `maintenance`, `audit` |
 
 ### Maintenance Execution & Scheduling (`maintenance`)
 
 | Event | Payload summary | Consumers |
 |---|---|---|
-| `work_candidate.created` | installed item, driver, estimated scope | `supply`, `fleet-status` |
-| `work_order.opened` | work order, installed item, planned window, work package | `supply`, `fleet-status`, `registry` |
-| `maintenance_action.recorded` | installed item, action taken, parts consumed, findings code, `failure_indicator`, **`triggering_driver`, `triggering_prediction_id`, `policy_version`** `[D1, D21]` | `pdm`, `failure-intel`, `registry`, `supply`, `pma`, `design-advisory` |
-| `deferral.recorded` | installed item, `deferral_reason_class`, revised window, risk accepted | `fleet-status`, `pdm` |
-| `work_package.proposed` | availability, candidate set, constraint satisfaction summary, reservation-set reference | `supply`, `fleet-status` |
-| `work_package.approved` | availability, committed work set — **published only after reservation confirmation** `[D6]` | `supply`, `fleet-status`, `registry` |
+| `work_candidate.created` | installed item, driver, estimated scope | `supply`, `fleet-status`, `audit` |
+| `work_order.opened` | work order, installed item, planned window, work package | `supply`, `fleet-status`, `registry`, `audit` |
+| `maintenance_action.recorded` | installed item, action taken, parts consumed, findings code, `failure_indicator`, **`triggering_driver`, `triggering_prediction_id`, `policy_version`** `[D1, D21]` | `pdm`, `failure-intel`, `registry`, `supply`, `pma`, `design-advisory`, `audit` |
+| `deferral.recorded` | installed item, `deferral_reason_class`, revised window, risk accepted | `fleet-status`, `pdm`, `audit` |
+| `work_package.proposed` | availability, candidate set, constraint satisfaction summary, reservation-set reference | `supply`, `fleet-status`, `audit` |
+| `work_package.approved` | availability, committed work set — **published only after reservation confirmation** `[D6]` | `supply`, `fleet-status`, `registry`, `audit` |
 
 `maintenance_action.recorded` is the label stream for every model in the system. The three added fields record the treatment-assignment mechanism, without which neither calibration nor causal analysis can condition on the intervention policy `[D1, D21]`.
 
@@ -375,18 +377,18 @@ Batch-level rather than sample-level, deliberately. Per-sample events would cons
 
 | Event | Payload summary | Consumers |
 |---|---|---|
-| `part_availability.changed` | NIIN, location, on-hand, due-in, allowance position, **`lead_time`, `condition_code`, interchangeable group** `[D6, D24]` | `maintenance`, `fleet-status`, `design-advisory` |
-| `requisition.status_changed` | document number, NIIN, status, projected availability | `maintenance`, `fleet-status` |
-| `allowance_shortfall.detected` | asset, NIIN, allowance versus on-hand, driver | `maintenance`, `fleet-status`, `notification` |
-| `reservation_set.confirmed` | reservation set, NIIN quantities, expiry | `maintenance` |
-| `reservation_set.released` | reservation set, cause | `maintenance` |
+| `part_availability.changed` | NIIN, location, on-hand, due-in, allowance position, **`lead_time`, `condition_code`, interchangeable group** `[D6, D24]` | `maintenance`, `fleet-status`, `design-advisory`, `audit` |
+| `requisition.status_changed` | document number, NIIN, status, projected availability | `maintenance`, `fleet-status`, `audit` |
+| `allowance_shortfall.detected` | asset, NIIN, allowance versus on-hand, driver | `maintenance`, `fleet-status`, `notification`, `audit` |
+| `reservation_set.confirmed` | reservation set, NIIN quantities, expiry | `maintenance`, `audit` |
+| `reservation_set.released` | reservation set, cause | `maintenance`, `audit` |
 
 ### Post-Mission Analysis (`pma`)
 
 | Event | Payload summary | Consumers |
 |---|---|---|
-| `mission_review.opened` | mission_id, asset, candidate set, assigned reviewer, candidate origin | `notification` |
-| `anomaly_tag.confirmed` | installed item, window, taxonomy classification, reviewer, qualification, evidence | `failure-intel`, `pdm` |
+| `mission_review.opened` | mission_id, asset, candidate set, assigned reviewer, candidate origin | `notification`, `audit` |
+| `anomaly_tag.confirmed` | installed item, window, taxonomy classification, reviewer, qualification, evidence | `failure-intel`, `pdm`, `audit` |
 | `anomaly_tag.rejected` | candidate reference, rejection reason, reviewer | `failure-intel`, `audit` |
 | `mission_review.completed` | mission_id, tag counts, review duration, reviewer, canary outcomes | `fleet-status`, `audit` |
 
@@ -396,17 +398,35 @@ Batch-level rather than sample-level, deliberately. Per-sample events would cons
 
 | Event | Payload summary | Consumers |
 |---|---|---|
-| `causal_finding.published` | failure mode, hypothesized cause, evidence strength, affected population, treatment-assignment handling | `pdm`, `design-advisory`, `fleet-status`, `maintenance` |
-| `failure_mode.attributed` | installed item or NIIN, failure mode, confidence | `design-advisory`, `pdm` |
-| `causal_feature_set.updated` | feature definitions and versions available to tier-3 models, definition-time | `pdm` |
+| `causal_finding.published` | failure mode, hypothesized cause, evidence strength, affected population, treatment-assignment handling | `pdm`, `design-advisory`, `fleet-status`, `maintenance`, `audit` |
+| `failure_mode.attributed` | installed item or NIIN, failure mode, confidence | `design-advisory`, `pdm`, `audit` |
+| `causal_feature_set.updated` | feature definitions and versions available to tier-3 models, definition-time | `pdm`, `audit` |
 
 ### System Test & Design Advisory (`design-advisory`)
 
 | Event | Payload summary | Consumers |
 |---|---|---|
-| `redesign_candidate.created` | NIIN, driver evidence, affected population, preliminary priority | `fleet-status`, `notification` |
+| `redesign_candidate.created` | NIIN, driver evidence, affected population, preliminary priority | `fleet-status`, `notification`, `audit` |
 | `redesign_case.published` | NIIN, dependency impact, cost estimate, recommendation | `fleet-status`, `audit` |
-| `design_change.projected` | NIIN, projected reliability improvement, effective configuration | `pdm` |
+| `design_change.projected` | NIIN, projected reliability improvement, effective configuration | `pdm`, `audit` |
+
+### Audit & Provenance (`audit`) `[amendment 03-4]`
+
+Audit is a consumer of every row above (the standing note at the top of this section) and is also a producer in its own right, on its own topics. This block was missing from rev 2 — Audit's build-framework agent flagged that a conformant audit service publishes events no version of this catalog declared.
+
+| Topic | Event | Payload summary | Consumers |
+|---|---|---|---|
+| `fathom.audit.remediation.v1` | `remediation.purge_executed` | `purge_id`, selectors, classification label, `certificate_ref`, **no content** | all nine domain sub-applications, `gateway`, `knowledge-retrieval`, `notification`, `sync` |
+| | `remediation.purge_certified` | `purge_id`, per-store outcomes, pending nodes, `certificate_ref` | as above |
+| | `remediation.rewrap_executed` | record selectors, old and new `key_class`, authority | as above |
+| | `remediation.quarantine_ordered` / `.quarantine_lifted` | selectors, reason class | as above |
+| `fathom.audit.integrity.v1` | `integrity.checkpoint_sealed` | node, seq range, merkle root, signature | `notification` |
+| | `integrity.signature_verification_failed` | producer, node, seq, quarantine ref | `notification` |
+| | `integrity.sequence_gap_unrecoverable` | producer, node, missing seq range | `notification` |
+| `fathom.audit.attestation.v1` | `attestation.clock_step_recorded` | node, measured `skew_ms`, `sync_quality` | `notification` |
+| `fathom.audit.evaluation_export.v1` | `evaluation_export.completed` | export id, interval, record counts, destination | `notification` |
+
+Audit's `purge`/`rewrap`-kind proposals follow the generic convention below rather than a separate block: `fathom.audit.proposal.v1` carries `proposal.created`/`.adjudicated`/`.expired` for the proposals Audit itself owns, exactly as any other proposal-accepting sub-application's topic does.
 
 ### Proposals — a convention
 
@@ -729,8 +749,8 @@ The production requirement is producer-side segregation: one classification per 
 Append-only is an integrity property, not a licence for unrecoverable data. A mislabeled payload reaching a lower-side topic is a routine expected incident, and remediation must be possible across the audit store, nine read models, tag stores, compacted topics, inboxes and outboxes, the vector index, object-store evidence, and Domino traces `[D15]`.
 
 1. **Envelope-level encryption with per-classification keys.** Crypto-shredding a key is the purge mechanism where physical deletion is impossible.
-2. **A declared purge protocol** covering every store, including Domino-side traces and gateway-held read models, with an owner and a tested procedure.
-3. **An explicit statement per store** of whether it is legally immutable or operationally append-only. The two require different remediation.
+2. **A declared purge protocol** covering every store, including Domino-side traces and gateway-held read models, with an owner and a tested procedure — the externally observable form of this is §15 obligation 17's `POST /{slug}/remediations` operation.
+3. **An explicit statement per store** of whether it is legally immutable or operationally append-only. The two require different remediation, and obligation 17's receipt is where an implementation states, per store, which applies and which mechanism was used.
 4. **Tombstone semantics for compacted topics** that preserve the compaction invariant.
 5. **Crypto-shred does not apply to the vector index, and this is a distinct remediation class.** An embedding used for nearest-neighbor search must remain in a plaintext-comparable form for the index to compute distances; encrypting it defeats the search it exists to serve, so there is no key to shred. Purge for this store is **physical row deletion plus a rebuild of the affected index partition** — point deletion alone is insufficient, because a graph-structured index (e.g. HNSW) can retain proximity information about a removed node in its connectivity until the graph is rebuilt. Partitioning the index by classification level, as Knowledge & Retrieval's build specification does, bounds a rebuild to the affected partition rather than the whole corpus.
 
@@ -777,3 +797,7 @@ This is an accreditation prerequisite, not a refinement.
 14. Exposes read-model lag, and refuses freshness-dependent computation outside its declared staleness bound.
 15. Emits `X-Correlation-Id` on every log line.
 16. Declares its conflict policy per aggregate, or accepts the §11 default.
+
+### Contract term added by amendment `[03-3]`
+
+17. **Exposes a remediation operation** (`POST /{slug}/remediations`) accepting `quarantine`, `purge`, `rewrap`, and `release` actions over declared selectors, idempotent on the remediation id, returning a receipt signed by the implementation and stating, per store it owns, whether that store is legally immutable or operationally append-only and which mechanism was used. Numbered 17 rather than inserted into the contract-terms list above to avoid renumbering obligations already cited elsewhere by number (§13.2, §13.3, and multiple build documents cite 5, 9, and 14 specifically) — it is nonetheless a **contract term**, externally observable and binding on substitutes, not a program implementation standard. §13 items 1–3 specify what the receipt must be able to certify; this is the operation that does the certifying.

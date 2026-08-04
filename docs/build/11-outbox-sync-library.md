@@ -1074,7 +1074,13 @@ class DivergenceBudgetDeclaration:
     max_disconnection: timedelta          # measured on a MONOTONIC clock
     max_unreconciled_records: int | None = None
     max_unreconciled_bytes: int | None = None
-    on_breach: BreachAction = BreachAction.EXPLICIT_READ_ONLY   # the only permitted value
+    on_breach: BreachAction = BreachAction.EXPLICIT_READ_ONLY
+    # EXPLICIT_READ_ONLY is the only permitted value for every aggregate except one.
+    # ALERT_AND_DEGRADE is permitted ONLY for the audit store `[amendment 11-3]`:
+    # refusing audit writes stops the accountability record for every service on
+    # the hull, and no document 08 control requires that a breached audit budget
+    # go read-only rather than degrade with an alert. No other aggregate may set
+    # this value — enforced at declaration time, not left to service discretion.
 
 
 class DivergenceBudgetTracker:
@@ -1130,7 +1136,8 @@ For the demonstration's one SSN (document 06 §4: "a physically separate deploym
 
   | Class | Contents | Order |
   |---|---|---|
-  | 0 | Provisional identity submissions | First, always (§8.3) |
+  | 0-R | Remediation commands and purge receipts | **First, ahead of class 0** `[amendment 11-2]` — a spillage remediation outranks a data-quality concern, and a purge receipt awaiting drain is exactly the kind of unreconciled state the divergence budget (§9.1) exists to bound |
+  | 0 | Provisional identity submissions | Next, always (§8.3) |
   | 1 | Maintenance action records, anomaly tags, mission records | Next — the label stream `[D8, D18]` |
   | 2 | Requisition and work-order request queues | Next — operationally time-critical |
   | 3 | Usage counters, health indicators, anomaly candidates | Next |
@@ -1159,14 +1166,14 @@ Every property below is **provided by the library by default**. None is somethin
 
 - Payloads are stored as `payload_ciphertext` under a **per-classification KEK** (03 §13.1: "Envelope-level encryption with per-classification keys"), with mission-owner sole key control (08 §3.5).
 - `emit()` encrypts. There is no plaintext-payload code path. A service cannot write an unencrypted payload because `emit()` is the only way in (§2.3).
-- **Crypto-shredding a KEK is the purge mechanism** where physical deletion is impossible (03 §13.1, `[D15]`). The library exposes `purge_by_selector(...)` covering the outbox, the inbox, the quarantine tables, and the object-store payload references — four of the stores D15 enumerates, so a spillage remediation does not have to reverse-engineer them.
+- **Crypto-shredding a KEK is the purge mechanism** where physical deletion is impossible (03 §13.1, `[D15]`). The library exposes `purge_by_selector(...)` covering the outbox, the inbox, the quarantine tables, and the object-store payload references — four of the stores D15 enumerates, so a spillage remediation does not have to reverse-engineer them. `purge_by_selector(...)` accepts a coordinator-issued `remediation_id` — the identifier document 03 §15 obligation 17's `POST /{slug}/remediations` operation mints — and returns a receipt **signed by this library**, per §10.2's key material, stating which of the four stores it touched and by which mechanism `[amendment 11-4]`.
 - `payload_ref` objects are encrypted with the same KEK class. A reference is not an exemption.
 
 ### 10.2 Signed records — AU-10
 
 "**AU-10** sign outbox records at the ship" (08 §3.5).
 
-- `emit()` signs, at insert, over the canonical serialization of: `event_id, event_type, event_version, producer_slug, producer_version, producer_node_id, monotonic_seq, hlc, scope, subject, baseline_epoch, classification, payload_sha256, source_time, sync_quality, replay`. Key id recorded in `signing_key_id`.
+- `emit()` signs, at insert, over the canonical serialization of: `event_id, event_type, event_version, producer_slug, producer_version, producer_node_id, monotonic_seq, hlc, scope, subject, baseline_epoch, classification, payload_sha256, source_time, sync_quality, replay`. Key id recorded in `signing_key_id`. **The signed set is exactly this list — the signature covers `payload_sha256`, never the payload itself, and excludes `wrapped_dek` and all key-wrapping metadata** `[amendment 11-5]`. Both exclusions are load-bearing, not oversights: a rewrap (§10.1) changes `wrapped_dek` without changing the fact being attested, and a purge shreds the key the payload was encrypted under while the hash and signature remain valid evidence that the (now unrecoverable) content once existed with that provenance. An implementer who "completes" the field set by including the payload or the wrap metadata breaks purge and reclassification simultaneously — every rewrap or purge would invalidate every affected record's signature.
 - The relay verifies before publishing (detects at-rest tampering or corruption before it propagates).
 - The shore ingress verifies before admitting. **Verification failure quarantines and audits; it never silently drops** — a dropped record is a lost maintenance action, and a lost maintenance action is a lost label.
 - Signature covers `sync_quality`, so a clock attestation cannot be edited after the fact. This is what makes "skew is indistinguishable from tampering to an assessor" (08 §3.3) a solved problem rather than a finding.
@@ -1189,6 +1196,7 @@ The library ships the control-mapping evidence — the fault-injection suite of 
 ### 10.5 Audit and clock-attestation retention — AU-4(1), AU-6(3), AU-9(3), AU-12(1)
 
 - **`sync_quality` is retained permanently** (03 §5.4). It is exported to Audit before its outbox row becomes prunable (§2.6). "It converts 'our timestamps drifted' from an audit finding into a bounded, documented condition, and it is the only way to re-derive true ordering after the fact. Without it that information is gone."
+- **The inbox exports a dissemination record on every apply** — `(source_event_id, holder_slug, holder_node, holder_store, applied_at, materialized)` — to Audit's dissemination ledger (`32-audit.md` §4.6), alongside the `sync_quality` export above. **`ChangedSinceRebuilder` (§2.8) does the same for every rebuild it performs** `[amendment 11-1]`. This is the half of the ledger this library owns: Audit's coordinator can only know a store holds a copy if every path that materializes one — a live apply or a rebuild from `changed_since` — reports it. A rebuild that skips this export is exactly the gap §4.6 describes as "the rebuild path is the one that resurrects purged content" — a purge can shred the key everywhere the ledger knows about and still leave a live copy in a store that rebuilt without reporting.
 - **1 ms granularity** on `recorded_at` and `ingest_time` (AU-12(1), the stated correlation parameter — 08 §3.5, and the Zero Trust Overlays' audit time-stamp granularity per 03 §5.4).
 - **AU-4(1)** transfer to alternate storage: the edge outbox is itself the alternate store during disconnection; the drain is the transfer.
 - **AU-6(3)** correlate ship and shore repositories: `(producer_node_id, monotonic_seq)` plus `correlation_id` is the correlation key. Wall time is not, and cannot be, that key.

@@ -556,7 +556,11 @@ networkPolicy:
     toServices: [auth, audit, reference-data]   # the ONLY permitted in-namespace egress
     toNamespaces: []                   # cross-namespace egress. Empty for all nine sub-applications
     allowDNS: true
+    toKeyService: false                # `audit` only [amendment 09-3]. Rendered from this value and
+    toObjectStore: false               # nothing else, so §4.4.2's egress-equality assertion still holds
 ```
+
+**`toKeyService` and `toObjectStore` render nothing for the nine domain sub-applications** — both default `false`, and the values schema in CI rejects `true` on any chart other than `audit`'s. They exist as named, typed booleans rather than a generic `toServices`/`toNamespaces` entry because Vault/HSM and the object store sit outside `fathom-sustainment`'s own namespace and outside the `toServices` peer set's assumptions; see the two new sanctioned-edge rows below `[amendment 09-3]`.
 
 #### 4.4.2 NetworkPolicy — default-deny plus explicit allow
 
@@ -644,6 +648,8 @@ spec:
 | **sub-application → sub-application, for anything other than the `changed_since` row above** | **NO** | 03 principle 2. This is the whole point of the policy |
 | `domino-compute` namespace → `gateway` | yes, **one rule** | 01 §3 correction 2: scoring Jobs write predictions through PdM's bulk ingest API. **[ESTABLISHED HERE]** they route through the gateway so PdM keeps a single ingress and the caller's workload identity is attached at one place. The alternative — a direct `domino-compute` → `pdm` rule — is rejected because it would need repeating for every future batch producer |
 | program ingress namespace → `domino-*` namespaces | yes | 01 §11, the documented coexistence seam |
+| `audit` → key service (Vault/HSM) | yes, **`audit` only** | `[amendment 09-1]` — the only service holding wrap/unwrap authority; document 03 §5.2 Decision 2 forbids exporting key material, so the module holding it must itself be reachable. ADR: `docs/adr/0001-audit-key-service-edge.md` |
+| `audit` → object store | yes, **`audit` only** | `[amendment 09-1]` — oversized payloads travel by reference, encrypted under the same envelope; `11-outbox-sync-library.md` §10.1's rule that "`payload_ref` objects are encrypted with the same KEK class — a reference is not an exemption" applies equally to audit's own oversized records. ADR: `docs/adr/0002-audit-object-store-edge.md` |
 | any service → public internet | **NO** | 01 principle 5, 01 §12 |
 
 A helm-unittest spec asserts, per service, that the rendered egress peer set is exactly the values-declared set. That is the CI-testable invariant 01 §11 promises.
@@ -1268,7 +1274,7 @@ Copy this into the service's `README.md` and tick it there.
 - [ ] The `migrations` readiness check passes: image Alembic head equals database head.
 - [ ] **Provenance recorded for every derived value published** — inputs, versions, computation reference — sufficient to trace any operator-visible figure to its sources. *(obligation 9)*
 - [ ] **Classification labels on every response and event, with `inherited_from` set as the union of inputs on every derived value.** *(03 §7.3, obligation 4, D13)*
-- [ ] A **declared purge path** for every store this service owns, stating whether it is legally immutable or operationally append-only. *(03 §13, D15)*
+- [ ] A **declared purge path** for every store this service owns, stating whether it is legally immutable or operationally append-only, **implemented as `POST /{slug}/remediations` with its conformance collection** — not merely documented. *(03 §13, §15 obligation 17, D15; amendment 09-2)*
 
 ### 8.5 Conformance and tests
 
