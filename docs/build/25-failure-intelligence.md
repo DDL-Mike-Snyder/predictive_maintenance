@@ -261,6 +261,17 @@ CREATE TABLE failure_intel.causal_hypothesis (
     published_band        failure_intel.strength_band,   -- what was actually published
     superseded_by_hypothesis_id uuid REFERENCES failure_intel.causal_hypothesis(hypothesis_id),
 
+    -- ── the claim lease itself. [AMENDMENT -- closes 52-practitioner-apps.md §13
+    -- correction 12.] POST /hypotheses/{id}/claim (§8.1) has always required one,
+    -- but no column ever held it -- the lease this whole document assumes existed
+    -- had nowhere to live. Mirrors 30-gateway.md §4.5's identical pair for proposals.
+    claimed_by             text,
+    claimed_until          timestamptz,          -- MONOTONIC deadline in application code;
+                                                  -- stored as wall-clock only for operator display
+    -- ── the second signature, for dual control at S3/S4 (§5.2). A second
+    -- adjudicator otherwise has no way to see one is outstanding.
+    second_signature_outstanding boolean NOT NULL DEFAULT false,
+
     created_at            timestamptz NOT NULL DEFAULT now(),
     classification        jsonb NOT NULL,
 
@@ -278,7 +289,10 @@ CREATE TABLE failure_intel.causal_hypothesis (
         (supersedes_hypothesis_id IS NULL) = (novelty_basis IS NULL)),
     -- 'not_applicable' is legal only for single-arm methods; also checked at registration (§3.1).
     CONSTRAINT contrast_requires_handling CHECK (
-        contrast_spec IS NULL OR treatment_handling <> 'not_applicable')
+        contrast_spec IS NULL OR treatment_handling <> 'not_applicable'),
+    -- The claim lease is paired, exactly like every other claim in this program.
+    CONSTRAINT claim_is_paired CHECK (
+        (claimed_by IS NULL) = (claimed_until IS NULL))
 );
 
 CREATE UNIQUE INDEX ch_fingerprint_live ON failure_intel.causal_hypothesis (fingerprint)
@@ -1068,7 +1082,11 @@ CREATE TABLE failure_intel.adjudication_record (
                                 'taxonomy_proposal')),
     subject_ref        text NOT NULL,
     decision           text NOT NULL
-        CHECK (decision IN ('approve','reject','downgrade','defer','retire')),
+        CHECK (decision IN ('approve','reject','downgrade','defer','retire','withdraw')),
+        -- 'withdraw' produces adjudication_state = 'withdrawn' [amendment, closes
+        -- 52-practitioner-apps.md §13 correction 14]: that state was reachable per
+        -- §7.1's "adjudicator judgment, with the reason required" prose, but no
+        -- decision value produced it -- the state existed with no path to it.
     band_before        failure_intel.strength_band,
     band_after         failure_intel.strength_band,
     authority_class    text NOT NULL,              -- 03 §7.2.1 vocabulary
@@ -1100,7 +1118,9 @@ CREATE TABLE failure_intel.adjudication_record (
 | Admit a `standing` feature (S3+) | class | `design_authority` | **Yes** |
 | Approve a taxonomy extension | class/fleet | `design_authority` (§6.2) | **Yes** — doc 12 §3.3: vocabulary blast radius is class or fleet by nature |
 
-[03 §7.2.1](../architecture/03-integration-contracts.md) permits Phase 3 to *"add finer-grained roles within a class"* but not to remove the minimum. A `reliability_engineer` role within `design_authority` is the likely refinement and is OD-5's substance.
+[03 §7.2.1](../architecture/03-integration-contracts.md) permits Phase 3 to *"add finer-grained roles within a class"* but not to remove the minimum.
+
+**OD-5 resolved.** `[amendment, closes 52-practitioner-apps.md §13 correction 17]` — the wireframe names "Reliability Engineer" as this document's adjudicating persona, but the six-member `AuthorityClass` enum (`31-auth.md` §2.4) has no such role and §13 item 12 forbids a seventh. The persona named on the sheet could not perform the sheet's primary action. Resolved exactly as anticipated above: **`reliability_engineer` is a Keycloak realm sub-role composited into `design_authority`** — it grants everything `design_authority` grants (so the authority-matrix check in `31-auth.md` §6.4 needs no change; a principal holding `reliability_engineer` satisfies any cell requiring `design_authority`) and exists purely so the identity block, the audit record, and the operator console can display the finer-grained role a Failure Intelligence adjudicator actually holds, per this table's use of it. Recorded as **realm role composition**, not a new `AuthorityClass` value — the enum stays six. Billet mapping (which humans hold `reliability_engineer` versus plain `design_authority`) is a personnel-source question, out of this document's scope. Sheet H's `RE` card and footnote need the corresponding correction, from *"review-only"* to *"adjudicates, via `reliability_engineer` composited into `design_authority`."*
 
 **Adjudication requires a claim.** `POST /hypotheses/{id}/claim` obtains a lease; adjudication requires `If-Match` on the claimed ETag and returns 412 otherwise. This is [03 §7.2](../architecture/03-integration-contracts.md)'s rule, applied here for the same reason: *"Without this the eventually-consistent queue permits two approvals."*
 
@@ -1331,7 +1351,7 @@ Base path `/api/v1/failure-intel/…` per [03 §4](../architecture/03-integratio
 |---|---|---|---|---|
 | `GET /failure-modes?equipment_class=&taxonomy_version=&changed_since=&limit=&cursor=` | FI's analysis annotations joined to the Reference Data projection. Echoes `taxonomy_version` and `code_authority` | `required` | `none` | yes |
 | `GET /failure-modes/{mode_lineage_id}?taxonomy_version=` | One mode's annotation. `{id}` is `lineage_id`, Reference Data's resolution key — never the three-letter code | `required` | `none` | yes |
-| `GET /hypotheses?niin=&installed_item_id=&mode_lineage_id=&status=&min_strength=&changed_since=&limit=&cursor=` | 04 §9's surface. `min_strength` takes a band (`S2`), and the response carries `admissible_as_*` | `required` | `none` | yes |
+| `GET /hypotheses?niin=&installed_item_id=&mode_lineage_id=&status=&min_strength=&claimed=&awaiting_second_signature=&changed_since=&limit=&cursor=` | 04 §9's surface. `min_strength` takes a band (`S2`), and the response carries `admissible_as_*`. **`claimed` (`any\|none\|me\|other`) and `awaiting_second_signature` added** `[amendment, closes 52-practitioner-apps.md §13 corrections 12 and 15]` — mirroring `30-gateway.md` §4.5's identical filters for the proposal queue. Without them a second adjudicator has no way to see a hypothesis is already claimed, or to find hypotheses awaiting their own signature | `required` | `none` | yes |
 | `GET /hypotheses/{id}` | One hypothesis with its generated `statement`, band, and limiting axis | `required` | `none` | yes |
 | `GET /hypotheses/{id}/evidence` | 04 §9's surface. Evidence records with `source_trust` and D22 definition-time fields | `required` | `none` | yes |
 | **`GET /hypotheses/{id}/treatment-census`** | **The D21 transparency surface.** The full per-arm census, gate verdict, propensity spec reference, balance diagnostics, and residual confounders behind this hypothesis | `required` | `none` | yes |
@@ -1344,7 +1364,7 @@ Base path `/api/v1/failure-intel/…` per [03 §4](../architecture/03-integratio
 | `POST /attributions/{id}/arbitrate` | Record or revise the arbitration. A revision creates a new row with a supersession link (I5) | `required` | `state-changing` | no |
 | `GET /causal-feature-sets?version=&changed_since=&limit=&cursor=` | 04 §9's surface, **with doc 12's OD-6 corrected** — see §8.2 | `required` | `none` | yes |
 | `GET /causal-feature-sets/entries?version=&feature_key=&equipment_family=&cursor=` | Entries with `definition_ref`, `definition_version`, `definition_time`, `strength_band_at_admission`, `standing`, `review_due` | `required` | `none` | yes |
-| `POST /causal-feature-set-admissions` | §5.1 step 8. A resource creation, not a verb on a version path. Three-layer gate per §5.3 | `internal` | `state-changing` | no |
+| `POST /causal-feature-set-admissions` | §5.1 step 8. A resource creation, not a verb on a version path. Three-layer gate per §5.3. **Body `{feature_key, definition_ref, definition_version, definition_time, computation_spec, source_hypothesis_id, standing, applicable_scope, review_due?}`** `[amendment, closes 52-practitioner-apps.md §13 correction 16]` — every `NOT NULL` semantic column of `causal_feature_entry` (§2.6) except the four the service derives and never accepts from the caller: `feature_set_version` (the open draft), `strength_band_at_admission` and `treatment_census_id` (both read off the source hypothesis), and `admission_record_id` (minted by the adjudication this operation itself is gated on). `review_due` defaults per §5.4's cadence if omitted | `internal` | `state-changing` | no |
 | `POST /discovery-runs` | Request a run. Applies the §3.2 gate synchronously and may return 409 with the gate problem type | `internal` | `state-changing` | no |
 | `GET /discovery-runs?status=&method_id=&cursor=` | Run register, **including `status=refused`** with the reason and census | `internal` | `none` | no |
 | `POST /discovery-runs/{id}/results` | Bulk, idempotent, **fenced** result ingest from a Domino Job under a workload identity. The only write path for discovery output ([03 §4](../architecture/03-integration-contracts.md) bulk writes, D10/C7) | `internal` | `state-changing` | no |

@@ -1177,8 +1177,9 @@ Base path `/api/v1/audit/` (document 03 §4, document 09 §7.1). Every operation
 | `GET /lineage/{record_id}` | required | none | **Forward** closure: inputs, versions, computation references. *"Sufficient to trace any operator-visible figure to its sources"* (obligation 9). Depth-limited, cursor-paginated |
 | `GET /lineage/{record_id}/dependents` | required | none | **Reverse** closure: what this contaminated. The purge-closure query |
 | `POST /lineage/closures` | required | none | Compute-only. A closure over a selector set, with per-store holder resolution from the dissemination ledger. This is what phase 3 of §6.2 calls |
+| `GET /dissemination?source_event_id=&holder_slug=&purge_id=&cursor=` | required | none | **[AMENDMENT — closes `51-operator-console.md` §22 row 67, blocking Sheet 11's "who holds a copy" box.]** §4.6 defines the dissemination-ledger table and calls it *"the single most important addition this document makes to the platform,"* but its only prior exposure was `POST /lineage/closures`, compute-only with no cache key — a mutation-shaped operation standing in for a read. This is the direct, cursor-paginated read: every holder row for a source event or an in-progress purge, with `holder_slug`, `holder_node`, `holder_store`, `applied_at`, and `materialized` |
 
-`GET /lineage/{record_id}` is the operation an operator's "why does this figure say 0.31?" ultimately resolves to, and it is why obligation 9 is a *contract* term rather than an aspiration: it is externally observable, and the conformance suite asserts that a published derived value's inputs are retrievable.
+`GET /lineage/{record_id}` is the operation an operator's "why does this figure say 0.31?" ultimately resolves to, and it is why obligation 9 is a *contract* term rather than an aspiration: it is externally observable, and the conformance suite asserts that a published derived value's inputs are retrievable. `GET /dissemination` is its purge-side counterpart: the operation "who still holds a copy" resolves to, read-only and cheap enough for an operator console to poll while a purge is in flight.
 
 ### 10.5 Remediation
 
