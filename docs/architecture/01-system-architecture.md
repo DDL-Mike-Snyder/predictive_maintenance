@@ -165,7 +165,7 @@ graph TB
         subgraph DP["Data & Infrastructure Plane"]
             direction LR
             PG[(PostgreSQL<br/>per service)]
-            TS[(TimescaleDB)]
+            TSD[(TimescaleDB)]
             OBJ[(Object store)]
             BUS[Event bus]
             VEC[(Vector store)]
@@ -629,6 +629,7 @@ The supported approach separates the training and governance plane from the exec
 - **Afloat** — a program-operated lightweight Kubernetes deployment runs a subset of Sustainment Plane services. No Domino component is required to be resident or reachable. The subset is larger than earlier revisions assumed, for two reasons established in review:
   - **Maintenance action recording is edge-authoritative.** The ship records *what it did* — action taken, findings code, parts consumed, corrective-versus-preventive determination, failure timing — as an append-only fact, while the server retains authority over what was *authorized*. Without this the design excludes label capture from precisely the operating mode where the most informative failures occur, since a submarine dark for six weeks cannot open a work order.
   - **Anomaly candidate generation is edge-resident.** The detector ensemble and a small pre-screener run afloat against exported artifacts, with the enterprise *adding* candidates on reconnect rather than being the sole source. Otherwise a returning submarine's reviews had empty candidate sets and review degraded to the open-ended authoring the design declares unreliable.
+  - **Notification has a minimal afloat presence.** Time-sensitive alerts — a raised risk flag, an adjudication-capacity admission-control breach — cannot depend on reconnect, so a local watch-log/alarm delivery path runs afloat, distinct from the ashore email/dashboard/Slack channels. Routine notifications queue in the outbox and deliver on reconnect with their original occurrence time preserved rather than presented as if just generated.
   - Also resident: Condition & Telemetry, cached predictions presented as explicitly degraded, and PMA tagging.
 - **Provisional identity** — the edge may mint an `installed_item_id` locally, marked provisional, confirmed or superseded by the Registry on reconciliation. Without it, a ship that replaces an item at sea accumulates usage against the item it removed.
 - **Reconciliation** — a transactional outbox and inbox in every service from the outset. This is the load-bearing seam; absent it, offline synchronization becomes a rewrite rather than a feature.

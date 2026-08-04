@@ -81,6 +81,7 @@ Two cycles are present and both are intentional: Scheduling and Supply negotiate
 | `InstalledItem` | A physical item currently or formerly occupying a position. Carries NIIN, serial or lot where tracked, install date, and cumulative usage at installation |
 | `ConfigurationBaseline` | A bitemporal snapshot of an asset's installed configuration |
 | `AllowanceDocument` | COSAL, APL, or AEL revision applicable to an asset |
+| `Proposal` | Edge-submitted `configuration_change` proposals awaiting enterprise confirmation. Schema fixed by document 03 §7.2; authority per §7.2.1 — maintainer submits, Registry confirms |
 
 ### Key design decisions
 
@@ -103,6 +104,7 @@ Two cycles are present and both are intentional: Scheduling and Supply negotiate
 | `GET /parts/{niin}`, `GET /parts?apl=` | Required |
 | `GET /assets/{id}/allowances` | Required |
 | `POST /assets/{id}/configuration-changes` | Required |
+| `POST /proposals` (edge-submitted `configuration_change`, per document 03 §9's edge policy), `POST /proposals/{id}/claim`, adjudication | Required |
 | `POST /assets`, `PATCH /assets/{id}`, class and template administration | Internal |
 
 **Events published:** `asset.registered`, `asset.status_changed`, `configuration.baseline_changed`, `installed_item.installed`, `installed_item.removed`, `allowance.updated`.

@@ -237,7 +237,7 @@ EventEnvelope {
                      # sequences collide and the dedup key in §5.4 silently drops an event
   correlation_id
   causation_id        # event_id of the immediately preceding event, where applicable
-  scope               # asset | system | installed_item | niin | class | mission | fleet   [C11]
+  scope               # asset | system | installed_item | niin | class | mission | tycom | fleet   [C11]
   subject {           # exactly one scope identifier required, matching `scope`,
                      # EXCEPT scope=fleet, which requires none — fleet is the one
                      # singleton scope covering the entire fleet rather than one member of it
@@ -247,6 +247,10 @@ EventEnvelope {
     niin?
     class_id?
     mission_id?      # required when scope=mission (e.g. mission.completed, mission_review.*)
+    tycom_id?         # required when scope=tycom — an administrative Navy echelon
+                     # (Type Commander), not an equipment class; added for Fleet
+                     # Status's readiness rollup, which reports at asset/tycom/fleet
+                     # echelons and has no other scope that fits the middle tier
   }
   baseline_epoch?     # monotonic per-asset configuration epoch, where applicable [D3, D4]
   classification
@@ -367,7 +371,7 @@ Batch-level rather than sample-level, deliberately. Per-sample events would cons
 |---|---|---|
 | `part_availability.changed` | NIIN, location, on-hand, due-in, allowance position, **`lead_time`, `condition_code`, interchangeable group** `[D6, D24]` | `maintenance`, `fleet-status`, `design-advisory` |
 | `requisition.status_changed` | document number, NIIN, status, projected availability | `maintenance`, `fleet-status` |
-| `allowance_shortfall.detected` | asset, NIIN, allowance versus on-hand, driver | `maintenance`, `fleet-status` |
+| `allowance_shortfall.detected` | asset, NIIN, allowance versus on-hand, driver | `maintenance`, `fleet-status`, `notification` |
 | `reservation_set.confirmed` | reservation set, NIIN quantities, expiry | `maintenance` |
 | `reservation_set.released` | reservation set, cause | `maintenance` |
 
@@ -406,7 +410,7 @@ Every sub-application accepting agent proposals publishes to `fathom.<slug>.prop
 |---|---|
 | `proposal.created` | `gateway`, `notification` |
 | `proposal.adjudicated` | `audit`, and the owning sub-application |
-| `proposal.expired` | `gateway`, `audit` |
+| `proposal.expired` | `gateway`, `audit`, `notification` |
 
 ---
 
@@ -464,7 +468,13 @@ Tier invariance survives as **shape** invariance: consumers must not branch on `
 Proposal {
   proposal_id                                                        # [C30]
   kind                   # anomaly_tag | work_candidate | requisition |
-                         # interval_change | redesign_case | configuration_change  [C39]
+                         # interval_change | redesign_case | configuration_change |  [C39]
+                         # purge | rewrap
+                         # purge and rewrap may never be created or adjudicated by an
+                         # agent principal or an accountable-autonomous identity — no
+                         # exception, regardless of x-side-effects (document 08 §5.4
+                         # places classification determinations with the OCA and SCG,
+                         # never with engineering, and never with an agent)
   target_sub_app         # slug from §3.1
   subject { … }          # scope identifiers per §5.4
   baseline_id, baseline_epoch                                        # [D16]
@@ -501,7 +511,8 @@ Four rules make this safe rather than merely descriptive:
 **This is distinct from the agent authority classes in §8.3.** §8.3 governs which credential an *agent* calls with (delegated versus accountable-autonomous); this section governs which *human organizational role* is permitted to adjudicate a proposal, given its `kind` and `blast_radius`. An agent's delegated token still carries a human's identity and roles, and it is that identity's roles that are checked here.
 
 ```
-AuthorityClass = maintainer | planner | supply_officer | design_authority | fleet_authority
+AuthorityClass = maintainer | planner | supply_officer | design_authority | fleet_authority |
+                  security_officer
 ```
 
 | Class | Organizational role (document 01 §4) | Sub-application context |
@@ -511,6 +522,7 @@ AuthorityClass = maintainer | planner | supply_officer | design_authority | flee
 | `supply_officer` | (Supply role, ship or RMC) | Requisitions, expedites |
 | `design_authority` | PEO / Design Engineer | Redesign cases |
 | `fleet_authority` | TYCOM Readiness Officer | Class- or fleet-scoped interval changes; dual control's second signature at that scope |
+| `security_officer` | ISSM / ISSO | Crypto-shred purges and re-wraps `[03-1]` — deliberately distinct from the operational and engineering roles above: document 08 §5.4 places classification determinations with the OCA and the SCG, "not… engineering," and a purge is a classification-adjacent act, not an operational one |
 
 **Minimum authority by blast radius, per proposal kind:**
 
@@ -522,8 +534,13 @@ AuthorityClass = maintainer | planner | supply_officer | design_authority | flee
 | `interval_change` | `planner` | `fleet_authority` + dual control | `fleet_authority` + dual control |
 | `redesign_case` | `design_authority` | `design_authority` | `design_authority` + dual control |
 | `configuration_change` | `maintainer` (edge-submitted) then Registry confirmation | — | — |
+| `purge` / `rewrap` | `security_officer` + dual control | `security_officer` + dual control + `fleet_authority` counter-signature | `security_officer` + dual control + `fleet_authority` counter-signature |
 
 A proposal's `authority_class` field is set by the owning sub-application at creation, from this table, and re-validated at adjudication (§7.2's re-validation rule) in case the scope was corrected between proposal and adjudication. Phase 3 per-sub-application design may add finer-grained roles within a class (e.g. splitting `planner` by RMC), but may not remove the minimum this table establishes.
+
+**Some cells accept more than one class** — `work_candidate` at item or asset scope accepts `maintainer` *or* `planner` — and a singular field cannot carry an alternative set. The **policy evaluation, not the field, is authoritative**: adjudication checks the adjudicator's held roles for membership in the cell's full allow-set, generated from this table, never a single-value equality check and never a rank comparison between classes (there is no implicit hierarchy — a `fleet_authority` does not automatically satisfy a `maintainer` requirement, since these are organizational roles, not levels of the same authority). `Proposal.authority_class` itself records one representative value from the cell — for display, audit, and queue filtering — and is re-validated against the full allow-set, not against that single recorded value, at adjudication time. **"Minimum" in the table above means minimum authority, not a hierarchy floor:** it identifies the least-privileged role or roles the cell accepts, not a rank threshold above which any higher-ranked class also qualifies.
+
+**A `purge` or `rewrap` proposal may never be created or adjudicated by an agent principal or an `accountable-autonomous` identity, with no exception** `[03-1, 03-2]`. This is stricter than every other row in the table above: those permit an agent to *propose* (subject to §8.3's authority checks) even where a human must adjudicate. Purge and rewrap admit no agent role on either side of the transaction, regardless of `x-side-effects` classification, because the act is irreversible (§13) and classification-adjacent rather than operational.
 
 ### 7.3 ClassificationLabel
 
@@ -709,6 +726,7 @@ Append-only is an integrity property, not a licence for unrecoverable data. A mi
 2. **A declared purge protocol** covering every store, including Domino-side traces and gateway-held read models, with an owner and a tested procedure.
 3. **An explicit statement per store** of whether it is legally immutable or operationally append-only. The two require different remediation.
 4. **Tombstone semantics for compacted topics** that preserve the compaction invariant.
+5. **Crypto-shred does not apply to the vector index, and this is a distinct remediation class.** An embedding used for nearest-neighbor search must remain in a plaintext-comparable form for the index to compute distances; encrypting it defeats the search it exists to serve, so there is no key to shred. Purge for this store is **physical row deletion plus a rebuild of the affected index partition** — point deletion alone is insufficient, because a graph-structured index (e.g. HNSW) can retain proximity information about a removed node in its connectivity until the graph is rebuilt. Partitioning the index by classification level, as Knowledge & Retrieval's build specification does, bounds a rebuild to the affected partition rather than the whole corpus.
 
 This is an accreditation prerequisite, not a refinement.
 

@@ -251,9 +251,25 @@ with 6-digit microseconds.  Document 03 §4 (Time)."""
 # Document 03 §3.3.  Every one of these is a wire-format constraint, not a
 # convenience: a substituting implementation is tested against them.
 
-Niin = Annotated[str, StringConstraints(pattern=r"^\d{9}$")]
-"""National Item Identification Number.  9 digits.  Document 03 §3.3 PartRef —
-`niin` is *the* join key for a part type."""
+Niin = Annotated[str, StringConstraints(pattern=r"^(\d{9}|[A-Z]{2}[A-Z0-9]{7})$")]
+"""Document 03 §3.3 PartRef — `niin` is *the* join key for a part type.
+
+NOT restricted to a true 9-digit National Item Identification Number.
+Document 07 §4.8 documents that a real shipboard catalogue is deliberately
+heterogeneous — NSN, permanent NICN, temporary NICN, LICN, and CAGE+part-number
+identifiers coexist, and "almost no synthetic dataset gets this right."
+Document 13's generator (Block A) correctly mints `LL`-prefixed alphanumeric
+NICN/LICN identifiers per that rule, and the original 9-digit-only pattern
+here rejected every one of them — the first integration run would have failed
+on the catalogue itself, caught when Supply's build document tried to
+consume it.
+
+The accepted shape is therefore: 9 digits (a true NIIN, the numeric tail of an
+NSN), OR two letters followed by 7 alphanumeric characters (the NICN/LICN
+item-portion documented in 07 §4.8 — e.g. `LL0000123`, matching the real
+example `1710 LL 0000123` there).  `niin` remains the field name everywhere in
+this package and in every build document that queries `?niin=`; only the
+accepted alphabet widened, so no consumer needs a rename."""
 
 Nsn = Annotated[str, StringConstraints(pattern=r"^\d{13}$")]
 """National Stock Number.  13 digits (4-digit FSC + 9-digit NIIN).  Human
@@ -614,6 +630,17 @@ class SystemRef(FathomModel):
             "(§3.2)."
         )
     )
+    eic: NonEmptyStr | None = Field(
+        default=None,
+        description=(
+            "Equipment Identification Code of the system, WHERE IT HAS ONE.  "
+            "Federation and human reference only — never a join key, and never "
+            "of more than four-digit specificity per NAVSEAINST 4790.8 "
+            "Appendix A: 'Where the EIC is known to more than four digits, it "
+            "should be recorded at that level.'  Document 03 §3.3 (added same "
+            "session as this package, after this field was first omitted)."
+        ),
+    )
 
 
 class PositionRef(FathomModel):
@@ -653,6 +680,14 @@ class InstalledItemRef(FathomModel):
             "Stable internal UUID; THE join key.  Identifies the PHYSICAL "
             "ITEM.  Document 03 §3.3."
         )
+    )
+    eic: NonEmptyStr | None = Field(
+        default=None,
+        description=(
+            "Equipment Identification Code of the CLASS this item instantiates, "
+            "WHERE IT HAS ONE.  Federation and human reference only — never a "
+            "join key.  Document 03 §3.3."
+        ),
     )
     iuid: NonEmptyStr | None = Field(
         default=None,
@@ -1089,13 +1124,24 @@ from .slugs import AnySlug
 class EventScope(StrEnum):
     """Document 03 §5.4 `scope`  [C11].
 
-    "asset | system | installed_item | niin | class | fleet"
+    "asset | system | installed_item | niin | class | mission | tycom | fleet"
 
     C11: the rev-1 envelope made `asset_id` mandatory, but roughly nine
     catalogued events have no asset scope — `part_availability.changed` is
     NIIN-and-location scoped, `criticality_tier.assigned` is NIIN-and-family
     scoped, `readiness.recomputed` may be fleet scoped.  Declaring the scope
     and requiring exactly one matching identifier is the fix.
+
+    `MISSION` and the `FLEET` exception below were added to document 03 in
+    the same session that closed OQ-4 (previously: `mission_id` existed in
+    `subject` with no selecting scope value, and `fleet` had no identifier at
+    all).  Both are resolved, not open, as of this revision of this package.
+
+    `TYCOM` was added when Fleet Status's build framework (document 27) flagged
+    that its `GET /readiness?scope=fleet|tycom|asset` and its `readiness.recomputed`
+    event both need a middle echelon between `asset` and `fleet` — Type
+    Commander, an administrative Navy rollup, not an equipment class, so
+    `CLASS` does not fit it.
     """
 
     ASSET = "asset"
@@ -1103,13 +1149,17 @@ class EventScope(StrEnum):
     INSTALLED_ITEM = "installed_item"
     NIIN = "niin"
     CLASS = "class"
+    MISSION = "mission"
+    TYCOM = "tycom"
     FLEET = "fleet"
 
 
 class EventSubject(FathomModel):
     """Document 03 §5.4 `subject {}`.
 
-    "exactly one scope identifier required, matching `scope`".  Every field is
+    "exactly one scope identifier required, matching `scope`, EXCEPT
+    scope=fleet, which requires none — fleet is the one singleton scope
+    covering the entire fleet rather than one member of it."  Every field is
     optional individually; the cross-field rule is enforced on the envelope,
     because only the envelope knows the declared `scope`.
     """
@@ -1120,6 +1170,7 @@ class EventSubject(FathomModel):
     niin: Niin | None = None
     class_id: NonEmptyStr | None = None
     mission_id: UUID | None = None
+    tycom_id: NonEmptyStr | None = None
 
 
 SCOPE_SUBJECT_FIELD: dict[EventScope, str | None] = {
@@ -1128,20 +1179,24 @@ SCOPE_SUBJECT_FIELD: dict[EventScope, str | None] = {
     EventScope.INSTALLED_ITEM: "installed_item_id",
     EventScope.NIIN: "niin",
     EventScope.CLASS: "class_id",
-    EventScope.FLEET: None,   # see OQ-4: `fleet` has no identifier in `subject`
+    EventScope.MISSION: "mission_id",
+    EventScope.TYCOM: "tycom_id",
+    EventScope.FLEET: None,   # the sole documented exception — see EventSubject's docstring
 }
 """Maps each `EventScope` to the `subject` field that must be populated.
 
-`FLEET` maps to None: document 03 §5.4's `subject` block declares no
-fleet-scope identifier, yet the comment requires "exactly one scope identifier
-… matching `scope`".  Resolved here as: a fleet-scoped event carries an EMPTY
-subject.  Flagged as OQ-4.
+`FLEET` maps to None by design, not by gap: document 03 §5.4 states the
+fleet-scope exception explicitly.  A fleet-scoped event carries an EMPTY
+subject.
 
-`mission_id` appears in `subject` but NO `scope` value selects it, so a
-mission-only subject is unrepresentable.  This is consistent with the catalog —
-`mission.completed` is listed as carrying "mission_id, asset, type, period",
-i.e. asset-scoped with `mission_id` in the PAYLOAD — but the field's presence in
-`subject` is then unexplained.  Also OQ-4.
+`MISSION` maps to `mission_id`, closing the OQ-4 gap in which `mission_id`
+existed in `subject` with no scope value that selected it — `mission.completed`
+and the `mission_review.*` events are scope=mission, not scope=asset with
+`mission_id` merely carried in the payload.
+
+`TYCOM` maps to `tycom_id`, closing Fleet Status's OD-2 — a real gap, not a
+naming variant of `class`: TYCOM is where a ship's chain of command sits
+administratively, orthogonal to what equipment class it operates.
 """
 
 
@@ -1312,6 +1367,19 @@ class EventEnvelope(FathomModel):
     )
     producer: "ProducerRef" = Field(
         description="Slug from §3.1, plus version.  Document 03 §5.4."
+    )
+    producer_node: NonEmptyStr = Field(
+        description=(
+            '"enterprise" | "edge:<asset_id>" — WHICH DEPLOYMENT INSTANCE of '
+            "`producer.slug` emitted this event.  Document 03 §5.4 (added same "
+            "session as this package, after this field was first omitted): a "
+            "sub-application with an edge profile runs as two independent "
+            "instances of the same slug, each minting its own `monotonic_seq`; "
+            "without this field their sequences collide and the dedup key "
+            "silently drops an event.  Ordering and deduplication use "
+            "`(producer, producer_node, monotonic_seq)` — NEVER `(producer, "
+            "monotonic_seq)` alone."
+        )
     )
     correlation_id: NonEmptyStr = Field(
         description=(
@@ -1757,14 +1825,21 @@ class FailurePrediction(FathomModel):
             "set at 3 horizons per item: 30, 90, 180 days."
         ),
     )
-    p_failure: float = Field(
+    p_failure: float | None = Field(
+        default=None,
         ge=0.0,
         le=1.0,
         description=(
-            "Calibrated WITHIN ITS DECLARED REFERENCE CLASS.  Document 03 §7.1.  "
-            "Consumers MUST NOT compare `p_failure` across reference classes; "
-            "the scheduling optimizer applies a per-class decision-theoretic "
-            "conversion to expected consequence  [D7]."
+            "Calibrated WITHIN ITS DECLARED REFERENCE CLASS.  Document 03 §7.1 "
+            "(rev 2, corrected same session as this package): NULL when "
+            "`calibration_population < 50` (document 06 §3's gate) — below the "
+            "gate `reference_class` is forced to `class_estimate` and only "
+            "`population_hazard_rate` is populated.  A consumer treating a null "
+            "`p_failure` as zero risk reintroduces the comparability defect this "
+            "field exists to prevent.  Consumers MUST NOT compare `p_failure` "
+            "across reference classes even when non-null; the scheduling "
+            "optimizer applies a per-class decision-theoretic conversion to "
+            "expected consequence  [D7]."
         ),
     )
     reference_class: ReferenceClass = Field(

@@ -102,6 +102,22 @@ Severity as assessed by the reviewer. Findings that change an approved contract 
 |---|---|---|---|
 | **D37** ⚠ | MED-HIGH | **There is not one quantitative figure in any of the four documents.** No fleet size, installed items per asset, telemetry rate, proposals per day, reviewer count, scoring window, event rate, storage envelope, or latency budget. Yet at least eight architectural decisions already depend on those numbers — batch-first scoring, per-asset partitioning, retention tiers, the unified queue, the candidate cap, per-asset event batching, rollup tiering, and the divergence budget. At least three may not survive contact with the numbers | **DECIDE** §4.6 |
 
+### 2.8 Findings surfaced during build-framework authoring (Wave 1–3)
+
+Writing an executable specification against the corrected contracts surfaced defects the four review passes did not, precisely because generating real code forces every ambiguity to resolve one way or another. Most were fixed inline in document 03 as they surfaced (envelope `producer_node`, `p_failure` gating, the §7.2.1 authority table, `eic` fields, several stale cross-references) and are not re-numbered here. One requires a program decision rather than an editorial fix.
+
+| ID | Sev | Finding | Disposition |
+|---|---|---|---|
+| **D38** | MED-HIGH | **No plan exists to generate the unstructured corpus Knowledge & Retrieval exists to serve.** The synthetic data generator (`docs/build/13`) produces structured configuration, telemetry, maintenance, and supply data in depth, but "corpus" there means that structured dataset throughout — never IETMs, 3-M maintenance narratives, CASREP text, test reports, or engineering change proposals as free text with applicability metadata. Document 04 §11 calls unstructured corpus preparation "a substantial data-preparation problem," and it has no generation plan at all, structured or otherwise. Two consequences: Knowledge & Retrieval's own build document has nothing to serve, and finding D14's adversarial golden-question sets (injection-resistance testing for agent evaluation) have no source content to draw adversarial passages from | **DECIDE** — see below |
+
+**The decision.** Whether the demonstration needs a synthetic unstructured corpus at all, and if so, at what depth: a handful of representative excerpts per source type sufficient to exercise the retrieval and classification-enforcement mechanics, or a larger library approaching what a real Knowledge & Retrieval deployment would index. This is a distinct content-generation problem from the structured generator — likely requiring either template-based synthesis of technical narrative text in correct Navy vocabulary, or LLM-authored synthetic documents with a fidelity-review pass, neither of which the structured generator's techniques (parametric distributions, degradation physics) address. Recorded here rather than decided unilaterally, in the same spirit as the ISO 14224 purchase decision and the holdout re-weighting decision in document 06.
+
+| ID | Sev | Finding | Disposition |
+|---|---|---|---|
+| **D39** | MED | **Canary-based recall measurement has no production sourcing story.** Document 06 §6 and PMA's build document (`docs/build/23`) specify seeded known-positive canaries as the mechanism that makes recall measurable, and both correctly note the mechanism depends on ground truth the *synthetic generator* holds. Nothing addresses where a fielded system — with no generator and no planted ground truth — draws canaries from. The demonstration's recall-measurement story does not transfer to production as designed | **DECIDE** — see below |
+
+**The decision.** Candidate production sourcing mechanisms, none yet evaluated: a curated gold set of historically confirmed anomalies replayed as regression canaries; a periodic SME-authored synthetic-injection set maintained outside the generator; or accepting that production recall can only be *estimated* via the double-blind re-review sampling document 06 §6 already specifies, with canary-based measurement understood as a demonstration-only validation of the mechanism rather than a fielded capability. This is a document 06 §9-style question — what the demonstration's mechanism implies the enterprise must supply to keep working after fielding — and belongs in that section's Tier B program-requirements framing once decided.
+
 ---
 
 ## 3. Consistency findings
