@@ -770,6 +770,14 @@ Every limit below is from document 02 §4.3, and each is enforced locally so a p
 - Rotation is a **program runbook item**, because Domino provides no rotation policy [02 §4.3]. The runbook lives with the `gateway` chart; this document records that the absence of platform rotation is a Domino property and not a program choice.
 - A test asserts the credential value appears in no audit record and no log line (§10, T-3d).
 
+### 5.8 Extending this shape to `apps/practitioner` — the credential gap §2.2 warned about
+
+**[AMENDMENT — closes a BLOCKING gap, `50-ui-design-system.md` §13 correction 10.]** §2.2 establishes that federation gives a Domino Workspace or App only a Domino-realm session, and warns explicitly against reasoning past the resulting gap: *"[f]ederation does not put caller identity on a Domino Endpoint invocation… that gap must not be reasoned away by pointing at federation."* The same gap exists one level up: `apps/practitioner` (`28-design-advisory.md` §2's case review, `25-failure-intel.md`'s causal exploration) has **no client ID, no token-acquisition path, and no specified credential** for calling `gateway` at all, because it holds a Domino session and a Domino session is not a `fathom`-realm credential.
+
+**Resolution: extend §5.4's two-credential shape from an Endpoint proxy call to an app→gateway hop.** The practitioner SPA holds no token — same as `apps/web` (§4.1 step 1) — and its co-resident single-container FastAPI process (`50-ui-design-system.md` §6.2's `02 §4.1`-mandated single-container shape) is the credential holder. That process authenticates to `gateway` with a client-credentials **workload identity** over the sanctioned `domino-compute → gateway` NetworkPolicy edge (09 §4.4.2), and attaches the caller's authority the same way the Endpoint proxy's `X-Fathom-Caller-Authorization` does — except the "caller's authority" here is the Domino-session-linked `fathom` `sub` from the broker's linked record (§2.2), not a delegated agent token. The gateway never accepts a claimed subject from the practitioner app's request body (§13 item 15's rule, applied identically).
+
+This is recorded as an amendment ask rather than a settled mechanism, because it repurposes a proxy built for one caller shape (a service holding a delegated/autonomous token) for a different one (an app holding a linked Domino session and nothing else) — the two are close enough that the shape transfers, but a reviewer confirming that is exactly the review this amendment asks for. Until confirmed, `apps/practitioner` is buildable as a read surface against operations its workload identity may reach; its state-changing adjudication actions (approve/reject a redesign case, admit a causal hypothesis) are blocked on this section landing, per `50-ui-design-system.md` §6.3.
+
 ---
 
 ## 6. ABAC policy evaluation

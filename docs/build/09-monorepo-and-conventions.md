@@ -143,7 +143,7 @@ Document 01 §14 fixes React + TypeScript + Vite. This section pins the toolchai
 | Framework | React | `>=18.3` |
 | Language | TypeScript, `strict: true`, `noUncheckedIndexedAccess: true` | `>=5.6` |
 | Build | Vite | `>=6.0` |
-| Package manager / workspace | **pnpm** workspaces spanning `apps/*` and `packages/ts-common` | `pnpm>=9` |
+| Package manager / workspace | **pnpm** workspaces spanning `apps/*`, `packages/ts-common`, and `packages/ui` | `pnpm>=9` |
 | Tests | **Vitest** + Testing Library | `vitest>=2.1` |
 | Lint / format | **ESLint** (flat config) + **Prettier** | — |
 | API types | **openapi-typescript** + **openapi-fetch**, generated from committed `openapi.json` | — |
@@ -219,7 +219,11 @@ Reconciled against document 01 §11's layout, document 03's package paths, and t
 │   ├── py-common/                    # Shared FastAPI middleware, problem details, idempotency, ETag,
 │   │                                 #   logging, health, OpenAPI annotations (§5) [shared-packages doc]
 │   ├── py-sync/                      # Outbox/inbox library consumed by every service [11-outbox-sync-library.md]
-│   └── ts-common/                    # Generated wire types and shared TS utilities [shared-packages doc]
+│   ├── ts-common/                    # Generated wire types and shared TS utilities [shared-packages doc]
+│   └── ui/                           # Design tokens, Radix-based components, shared by apps/web and
+│                                     #   apps/practitioner. React-permitted (unlike ts-common, which
+│                                     #   stays framework-free per 10 §9.4's identical reasoning)
+│                                     #   [50-ui-design-system.md] [amendment 50-1]
 │
 ├── data/
 │   └── synthetic/                    # Generator + generated fixtures; reference datasets for conformance
@@ -259,6 +263,7 @@ Reconciled against document 01 §11's layout, document 03's package paths, and t
 | `packages/py-common` | The shared middleware and dependency library §5 mandates | Shared-packages document; the required surface is enumerated in §5 |
 | `packages/py-sync` | Outbox, inbox, relay, conflict policy | `docs/build/11-outbox-sync-library.md` |
 | `packages/ts-common` | Generated TypeScript wire types | Shared-packages document |
+| `packages/ui` | Design tokens, Radix-based component library | `50-ui-design-system.md` [amendment 50-1] |
 | `data/synthetic` | Generator and fixtures | Synthetic-data document |
 | `deploy/helm` | Umbrella charts and the shared chart library | This document §4.4 |
 | `deploy/argocd` | Argo CD Applications and sync policy | This document §6.3 |

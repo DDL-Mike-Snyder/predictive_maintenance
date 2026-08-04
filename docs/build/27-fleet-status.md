@@ -849,6 +849,8 @@ It is also where the metric's inputs already converge — `maintenance_action.re
 
 This assignment is not made by any current architecture document — [06 §2](../architecture/06-demo-decisions-and-assumptions.md) defines the metric without naming an owner. Raised as **OD-7**, with the recommendation above.
 
+**OD-7 resolved.** `32-audit.md` §10.7 (amendment) adds `GET /effectiveness/warning-lead-time-coverage`, implementing this section's formula exactly, joined from the universal-consumer feed amendment 03-5 already gives `audit` over `risk_flag_transition` and `maintenance_action.recorded`. §7.6 below calls this operation.
+
 ### 7.4 What Fleet Status therefore owes, exactly
 
 The flag side of the metric is a genuine Fleet Status obligation, because nobody else can reconstruct it: `casrep_risk.raised` on the bus is retained 7–30 days `[03 §5.1]`, and *"the event bus is not a rebuild source"* `[D5]`. Without a durable, queryable ledger the metric is uncomputable over a 24-month history.
@@ -894,7 +896,7 @@ Rules that make the figure defensible rather than merely computable:
 
 Fleet Status may surface the metric on its own read surface — it is the readiness-facing service and the figure belongs next to the readiness picture — under three constraints:
 
-1. **Read-only and attributed.** The value is fetched from the analytics owner and returned with `"source": "effectiveness-analytics"`, `"computed_at"`, and `"definition_ref"`. Fleet Status never computes it, never caches it past its stated freshness, and never derives a variant of it.
+1. **Read-only and attributed.** The value is fetched from `audit`'s `GET /effectiveness/warning-lead-time-coverage` (§7.3's OD-7 resolution, `32-audit.md` §10.7) and returned with `"source": "audit"`, `"computed_at"`, and `"definition_ref"`. Fleet Status never computes it, never caches it past its stated freshness, and never derives a variant of it.
 2. **Never viewer-filtered.** A coverage figure computed over only the flags a given viewer can see is **not the program metric** — it is a different statistic with the same name, and it would move as clearance changes. The metric is computed high-side once and released only at scopes where the aggregate is releasable at the requester's level. If it cannot be released, the field is `null` with `suppression_reason`, exactly as in §3.9. It is **never** silently recomputed over the visible subset. This is the §3.5 leak reappearing in a metric panel, and it is easy to introduce precisely because filtering-by-clearance is the correct default everywhere else in this service.
 3. **Labelled advisory like everything else** (§8).
 

@@ -1375,7 +1375,7 @@ That the "change required" column is almost empty is the point of §2.5, and it 
 | Surface | Paths | Nature |
 |---|---|---|
 | **Pass-through** | `/api/v1/{slug}/…` for the nine sub-applications plus `tool-server`, `knowledge-retrieval`, `notification`, `reference-data` | The upstream's own contract, proxied. The gateway adds authentication, rate limiting, correlation, and audit; it changes nothing else |
-| **Gateway-owned** | `/api/v1/gateway/…` | The queue (§4.5), the composed views (§3.2), the Domino Endpoint proxy (§5.6), the agent-invocation surface (§8.1.1, **[AMENDMENT]**), health |
+| **Gateway-owned** | `/api/v1/gateway/…` | The queue (§4.5), the composed views (§3.2), the Domino Endpoint proxy (§5.6), the agent-invocation surface (§8.1.1, **[AMENDMENT]**), session identity and sign-out (§8.1.2, **[AMENDMENT]**), health |
 
 The pass-through surface is why 03 §4 requires slug-namespaced base paths: *"This prevents collision at the single gateway ingress `[C25]`."* C25 records three sub-applications defining operations under `/assets/{id}` with no namespacing; the convention is what makes one ingress possible, and the gateway is the component that would break without it.
 
@@ -1408,6 +1408,17 @@ The pass-through surface is why 03 §4 requires slug-namespaced base paths: *"Th
 - **`Idempotency-Key` required on every `POST`**, per 01 §9's *"agent invocation is idempotency-keyed"* and 09 §5.3.
 
 **Which agent uses which shape is not a free choice per runtime** — it follows from whether the interaction is a bounded conversational exchange (shape 1) or a long-running assembly with no single human waiting synchronously (shape 2). `41-pma-prescreener.md`'s enterprise path uses **neither**: it is `accountable_autonomous` and event-triggered through its own run-initiator (§5.4 below; that document's §2.2), never invoked by the gateway on a human's behalf, so it has no row here.
+
+#### 8.1.2 Session identity and sign-out — the operations `apps/web` needs and none of this document declared
+
+**[AMENDMENT — closes a BLOCKING gap.]** `31-auth.md` §4.1 step 1 establishes the BFF shape (*"the user's access token never leaves the server. `apps/web` holds a session cookie"*), which means `apps/web` cannot read the user's roles from a token it never has — yet §8.1.1's shape-1 flow, the Persona Hub, and the queue's client-side `authority_class` filter (OQ-9, corrected above) all need those roles somewhere in the browser. Nothing in this document exposed them, and nothing anywhere specifies a sign-out. Flagged by `50-ui-design-system.md` §13 correction 7.
+
+| Operation | `x-side-effects` | `x-substitution` | `x-agent-eligible` | Notes |
+|---|---|---|---|---|
+| `GET /api/v1/gateway/session` | `none` | `internal` | **false** | Returns the session's identity block (`fathom.identity`, byte-identical to §3.2's token shape) and its six `authority_classes`, read from the session cookie's server-side session store — never from a token the browser holds, because it holds none. `404` if no session |
+| `POST /api/v1/gateway/session/logout` | `state-changing` | `internal` | **false** | Destroys the server-side session and its cookie. **RP-initiated logout** at the identity provider is triggered server-side in the same call, per `31-auth.md` §2's Keycloak binding — there is no client-side `end_session_endpoint` redirect, because the browser holds no `id_token` to present to one |
+
+**The session store and cookie, stated because §1.3 of `31-auth.md` deferred them to this wave:** an opaque session identifier in an `HttpOnly`, `Secure`, `SameSite=Lax` cookie, keyed against a server-side store (Redis, TTL-bound to the underlying token's remaining life) holding the actual tokens. CSRF: `SameSite=Lax` plus a double-submit token on every state-changing gateway-owned operation, checked in the middleware order of §8.6 immediately after authentication.
 
 ### 8.2 How pass-through routes are constructed
 
@@ -2004,4 +2015,4 @@ Recorded rather than resolved locally, because each affects a document this one 
 | **OQ-6** | **Which of the nine sub-applications actually accept proposals, and of which kinds?** §14 item 7 | The gateway subscribes to all nine, which is safe but leaves the conformance contribution set partly notional for a sub-application that accepts none | Subscribe to all nine; a topic with no messages is inert. Resolved by the 04 §2–§10 amendment |
 | **OQ-7** | **Does the operator UI need a cross-sub-application proposal search** — free-text over rationale or payload? | Would require either projecting free text (a D32 violation) or a nine-way fan-out search (option (b)'s problems, scoped to search) | **Not offered.** Structured filters only (§4.5). If the requirement is real, the honest answer is a search capability in `knowledge-retrieval` over an owner-published index, not a gateway projection. Raise at the look-and-feel wave |
 | **OQ-8** | **Notification's relationship to the queue.** 03 §6 makes `notification` a co-consumer of `proposal.created`; 04 §11 gives it *"escalation … for adjudication requests"* | Two components consume the same event for adjacent purposes. Duplicated escalation logic, or a gap, is possible | The gateway serves the queue; `notification` routes and escalates. Neither reads the other's store. Confirm the boundary with `notification`'s build document |
-| **OQ-9** | **Whether the gateway should surface a per-authority-class "my queue" projection** keyed to the caller's roles | Requires the gateway to read role claims, which §5.7 forbids | **Not offered.** The UI filters by `authority_class` using the roles it already holds from its own token. Recorded so nobody adds a role-aware server-side filter and calls it presentation |
+| **OQ-9** | **Whether the gateway should surface a per-authority-class "my queue" projection** keyed to the caller's roles | Requires the gateway to read role claims, which §5.7 forbids | **Not offered.** **[CORRECTED — the premise below was wrong; flagged by `50-ui-design-system.md` §13 correction 7.]** The UI filters by `authority_class` using the roles from the session identity §8.1.2 returns — **not** "its own token," since `apps/web` is a BFF that never holds one (§5.1: *"the user's access token never leaves the server"*). Recorded so nobody adds a role-aware server-side filter and calls it presentation |

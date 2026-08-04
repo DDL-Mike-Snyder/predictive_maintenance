@@ -1208,6 +1208,18 @@ Audit implementing `POST /remediations` against itself is not symmetry for its o
 
 The last row is easy to overlook in an audit service and is a real leak: "how many tool invocations touched asset X last week" moves when a compartmented record is added, which discloses its existence. Audit is the highest-cardinality aggregation surface in the system.
 
+### 10.7 Effectiveness analytics — the home OD-7 asked for
+
+**[AMENDMENT — closes a BLOCKING gap for the operator console.]** `27-fleet-status.md` §7 determines that warning lead-time coverage — document 06 §2's primary program effectiveness metric — belongs on *"the cross-cutting effectiveness-analytics path, anchored on `audit`"* (its own **OD-7**), specifies the full computation in its §7.5 to the precision an implementer needs, and declines to compute it itself so as not to fall into 06 §6's metric trap of owning both the thresholds and the scoreboard. No document before this amendment gave that anchor an actual operation, and `50-ui-design-system.md` §13 correction 2 found the gap when the approved wireframe's Fleet Overview and Vehicle Detail sheets rendered the metric as a headline KPI with nothing to call.
+
+| Operation | `x-sub` | `x-side-effects` | Notes |
+|---|---|---|---|
+| `GET /effectiveness/warning-lead-time-coverage?scope=&id=&horizon_days=&stratum=` | required | none | Computes `27-fleet-status.md` §7.5's formula exactly — audit is already positioned to, since amendment 03-5 makes it a universal consumer of `risk_flag_transition`'s `changed_since` feed and of `maintenance_action.recorded`, the two streams the formula joins on `installed_item_id`. Response carries the coverage fraction **and** every disclosure §7.5 requires: the lead-time distribution (p10/p50/p90), the covered and uncovered counts, the chance reference and flag rate, and the achievable-ceiling fraction. `scope`/`id` per document 03 §5.4's vocabulary (`asset`, `tycom`, `fleet`); `stratum` selects `reference_class` and methodology version, per §7.5's rule that this figure is always stratified |
+
+**Why here rather than a new platform service.** Audit already receives every event this computation needs (the universal-consumer amendment), already exports evaluation figures externally (`evaluation_export.completed`, §11.1), and already carries the aggregation-is-a-classification-event discipline of §10.6 that this figure needs too — a coverage rate computed over a mixed-classification population is exactly the aggregation channel §10.6's last row warns about, and `restricted_contributors_present` applies to this response the same way it applies to every other rollup this service serves. A dedicated effectiveness-analytics service was the alternative `27-fleet-status.md` §7.3 left open; this amendment takes the smaller step of using the component already positioned to answer, rather than adding an eighth platform-service inventory row for one metric.
+
+**Response is read-only and attributed**, matching `27-fleet-status.md` §7.6's own constraint on its callers: `"source": "audit"`, `"computed_at"`, `"definition_ref"` pointing at that document's §7.5. Fleet Status's own display remains subject to that section's three constraints regardless of where the number now comes from.
+
 ---
 
 ## 11. Events
