@@ -1318,3 +1318,335 @@ this agent's recall  ──measured by──▶  canary recall (23 §5.4)
 | 6 | The joint quality report reviewed where the change reduces volume (§8.4) |
 
 ---
+
+## 13. Artifact layout, pinning, and promotion mechanics
+
+### 13.1 The directory
+
+01 §11 fixes the contents: *"each: prompt, manifest pin, API version pin, evaluation set, deployment spec."* 09 §3.2 assigns governance of `agents/<name>` to 01 §8 and 03 §8 — *"Not this document"* — so the tree below is this document's to specify.
+
+```
+agents/pma-prescreener/
+├── agent.yaml                     # identity, accountable owner, LLM pin, budget defaults. §13.2
+├── tool-pins.yaml                 # 34 §2.2. Compiled into the tool-server bundle
+├── prompt/
+│   ├── system.md                  # The instruction region. Version-hashed
+│   ├── data-regions.md            # The structural separation of §10.2 item 1, as a template
+│   └── prompt.lock                # sha256 of every file above, in sorted order. CI-gated
+├── src/prescreener/
+│   ├── run.py                     # The run loop: stages 1-9 of §5.1, in order
+│   ├── initiator/                 # §2.2 — the run-initiator. NO prompt, NO LLM, NO tool call
+│   │   ├── consumer.py            #   inbox over fathom.telemetry.mission.completed only
+│   │   └── grants.py              #   POST /auth/autonomous-grants, POST /auth/agent-runs
+│   ├── evidence.py                # §5.1 stages 1-7; the only module that calls tools
+│   ├── selection.py               # §6.4's caps. Pure function of (candidates, config)
+│   ├── proposal.py                # §7 construction. Imports Proposal from canonical-schemas
+│   ├── llm.py                     # LLMPort adapter. The only module that reaches a model
+│   ├── reduced/                   # §9.3's deterministic afloat mode. NO import of llm.py
+│   └── observability/             # §15
+├── eval/
+│   ├── golden-missions.yaml       # §12.2's observably-stratified selection
+│   ├── adversarial/               # §12.1 G4. Synthesised; marked as such (D38)
+│   ├── prohibited-language.yaml   # §12.1 G5's assertions
+│   └── expected/                  # Per-mission expected candidate references
+├── deploy/
+│   ├── domino-job.yaml            # §14.1 — the enterprise runtime
+│   ├── helm/                      # §14.3 — the run-initiator, and the reduced mode
+│   └── argocd/
+├── tests/
+└── README.md                      # Definition of Done, ticked here (§19)
+```
+
+Two structural rules asserted by `import-linter`, following 34 §11.3's precedent:
+
+- **`reduced/` may not import `llm.py`.** §9.3's afloat mode contains no language model, and a contract makes it true rather than intended.
+- **`initiator/` may not import `evidence.py`, `llm.py`, `proposal.py`, or `selection.py`.** The bridge of §2.2 is not the agent, and the only way to keep that claim honest is to make the agent's modules unreachable from it.
+
+### 13.2 `agent.yaml`
+
+```yaml
+# agents/pma-prescreener/agent.yaml
+agent_id: pma-prescreener
+agent_version: 1.0.0                      # SemVer. Travels on every Proposal (03 §7.2)
+authority:
+  class: accountable_autonomous            # 03 §8.3; snake_case per 31 §2.5
+  accountable_owner: <realm subject>       # 03 §8.3; must equal tool-pins.yaml. CI-asserted
+  declared_scope_template:                 # §3.3. `assets` is filled per run from the trigger
+    aggregates: [mission, telemetry_batch, anomaly_candidate, health_indicator,
+                 usage_counter, installed_item, configuration_baseline,
+                 prediction, anomaly_tag]  # document_chunk added only when §4.7 is enabled
+    fleet: false
+    clearance_ceiling: { level: U, compartments: [] }
+llm:
+  port: LLMPort                            # 01 §8.6
+  pin: <model identifier + version>        # travels as `llm_version` on every Proposal
+  provider_profile: domino-ai-gateway      # 01 §8.6 demonstration row
+prompt:
+  lock: prompt/prompt.lock                 # sha256 set; CI fails on drift
+trigger:
+  event_type: fathom.telemetry.mission.completed     # 03 §6, Telemetry row
+budget:
+  proposal_budget_per_mission: null        # NO DEFAULT. Helm value; derivation in §6.2
+  max_uncorroborated: null                 # NO DEFAULT. §6.5
+  max_per_installed_item: 2                # §6.4; must be < 23 §3.4's 3. CI-asserted
+  max_per_equipment_family: 3              # §6.4; must be < 23 §3.4's 6. CI-asserted
+evaluation:
+  golden_set: eval/golden-missions.yaml
+  gates: [G1, G2, G3, G4, G5, G6, G7, G8, G9]        # §12.1; all blocking
+```
+
+**The two budget values have no defaults.** 09 §4.5's discipline, applied as 34 §12.2 applies it to its safety parameters: *"A defaulted freshness bound is the mechanism by which §4.3's fail-closed rule would quietly become fail-open in one environment."* A defaulted proposal budget is the mechanism by which a reviewer's set is quietly flooded in one environment. Startup fails without them.
+
+### 13.3 One promotion unit
+
+03 §8.4: *"An agent artifact pins **both** [manifest version and API major], plus its prompt and model version, promoted together as one registered unit. Manifest changes are subject to the same regression gates as prompt changes."*
+
+The registered unit is the tuple, and CI asserts it is internally consistent before any of it ships:
+
+```
+(agent_version, prompt.lock, llm.pin,
+ [(manifest_name, manifest_version, target_slug, api_major) × 5],
+ proposal_budget_per_mission, max_uncorroborated)
+```
+
+| Gate | Assertion |
+|---|---|
+| `ps-prompt-lock` | Every file in `prompt/` hashes to `prompt.lock`. A prompt edit without a version record is *"not auditable"* (01 §8.6) |
+| `ps-pin-resolves` | Every `(name, version, slug, api_major)` in `tool-pins.yaml` resolves to a committed descriptor — 34 §2.2 rule B1, enforced in the tool-server compiler, re-asserted here so a broken pin fails in this artifact's own CI too |
+| `ps-owner-agrees` | `agent.yaml`'s `accountable_owner` equals `tool-pins.yaml`'s, and resolves in the realm |
+| `ps-caps-below-pma` | `max_per_installed_item < 3` and `max_per_equipment_family < 6`, read from 23 §3.4's declared constants rather than duplicated |
+| `ps-budget-under-ceiling` | `proposal_budget_per_mission × (missions_per_month / 30.4) < 20`, using 06 §6's mission count and 06 §7's proposal ceiling. §6.2's derivation, as a test |
+| `ps-no-truth-reference` | No file in `agents/pma-prescreener/` outside `eval/` references a `*.truth.parquet` path or the truth prefix — 13 §8.6's repository scan, applied to this directory |
+| `ps-version-bumped` | Any change to `prompt/`, `tool-pins.yaml`, or `llm.pin` requires an `agent_version` bump in the same commit |
+
+---
+
+## 14. Deployment
+
+### 14.1 Where the runtime runs: Domino, as a Job
+
+01 §3 puts agent runtimes in the Intelligence Plane, Domino-hosted and Domino-governed. Two documented constraints then decide the *form*.
+
+**Constraint 1 — the M2M dependency binds this agent hardest.** 01 §8.7: *"Agent runtimes hosted as Domino applications must be invocable programmatically by the Sustainment Plane API gateway. Domino's application authorization model currently offers public access or interactive session authentication, with no documented token-based intermediate suitable for programmatic callers."* 01 §8.7 calls this *"the single open dependency capable of altering the agentic design."* For an interactive agent there is a human session to lean on. **This agent has no human session by definition** (03 §8.3), so an app-hosted pre-screener depends entirely on the unresolved capability.
+
+**Constraint 2 — the workload shape is a Job's, not an app's.** 01 §9's capabilities-verified table gives the fallback directly: *"long-running assembly work runs as a **Job** with a polled result rather than a synchronous request; agent invocation is idempotency-keyed."* It also records the app constraints that make an app the wrong vehicle: *"Ten apps and four active runs per project by default; 300 s timeout; restart by maintenance; eviction by consolidation."* A pre-screen run performs a dozen tool calls and an LLM turn; a 300-second synchronous ceiling with restart-by-maintenance is a poor fit, and §2.3's quiesce window already makes the result polled rather than awaited.
+
+**Decision: the enterprise runtime is a Domino Job, triggered programmatically by the run-initiator. [ESTABLISHED HERE], with one [VERIFY].**
+
+| Element | Position |
+|---|---|
+| Vehicle | Domino Job. 01 §9 lists Jobs and Flows as GA |
+| Trigger | Programmatic start by the run-initiator (§2.2), idempotency-keyed on `event_id` (01 §9) |
+| Result | Polled. The initiator records the run's terminal outcome; PMA learns of completion through the quiesce signal (§2.3), never by calling the agent |
+| **[VERIFY]** | That the pinned Domino version exposes a programmatic Job-start API usable by an in-cluster workload holding a program identity. 01 §8.7's documented gap is about **application** invocation; this document does not assert that the Job surface has the same gap, and it does not assert that it does not. Following 08 §8's discipline, it is marked and routed to the program. **PS-OQ-11** |
+| Fallback if [VERIFY] fails | 01 §8.7's own contingency, which it calls *"architecturally acceptable"*: relocate the orchestration runtime to the Sustainment Plane while continuing to consume Domino LLM Endpoints and AI Gateway for inference and continuing to emit MLflow traces for evaluation and governance. Under the contingency the program *"retains governed inference, tracing, and evaluation, and forgoes only Domino-managed agent hosting"* |
+| Why the fallback is cheap **for this agent specifically** | 34 §2.3: the tool server *"is indifferent to which one applies"* — *"Same binding key, different issuer path, **no change to this service**."* And 31 §2.2 keeps the identity in the `fathom` realm regardless, so a relocation is not an identity migration |
+
+**Air gap.** 01 §9 records air-gapped agent hosting as a **platform blocker**, not a program discipline: the Domino application runtime installs packages at container start, which *"internal engineering describes as categorically incompatible with air gap, with no workaround,"* recorded as platform request D13, and *"air-gapped agent hosting is not assumed until it is resolved."* This document therefore asserts nothing about air-gapped operation of the runtime. All dependencies are baked at build time (01 §12, 09 DO-NOT 25, **D26**), which is necessary and — per D13 — not sufficient on the Domino app path.
+
+### 14.2 Inference
+
+`LLMPort` (01 §8.6), with the three profiles 01 §8.6 names and no fourth:
+
+| Profile | Position |
+|---|---|
+| Demonstration | Domino AI Gateway fronting a hosted frontier model. Governed access, centralized key custody, six-month audit retention (01 §9) |
+| Production path | Claude via AWS Bedrock in GovCloud — *"the realistic accredited route at IL4 and IL5"* |
+| Air-gapped | Self-hosted open-weight models on in-cluster GPU through Domino's vLLM-based LLM Endpoints. GA, GPU required, no autoscaling, **not supported on remote data planes** (01 §9) |
+
+Two prohibitions: **no public-internet model call at runtime** (01 principle 5, 09 DO-NOT 26), and **no fallback model that is not pinned** — a proposal carries `llm_version` (03 §7.2), so an unpinned fallback produces an unauditable proposal (§17 item 9).
+
+### 14.3 The Sustainment-Plane pieces
+
+Two workloads deploy from `agents/pma-prescreener/deploy/helm/`, both following 09 §4's scaffold and 09 §4.4's mandatory `values.yaml` shape.
+
+| Workload | Profile | Notes |
+|---|---|---|
+| **run-initiator** | Enterprise only | One replica is sufficient — the trigger rate is ~2.3 missions/day (06 §6). KEDA on consumer lag is available but unnecessary at that rate; HPA is disabled |
+| **reduced mode** (§9.3) | Edge only, deployed inside PMA's edge release | No model, no tool server, no grant. Deployed with `values-edge.yaml`, alongside `pma`'s own edge workloads |
+
+NetworkPolicy, default-deny plus explicit allow, rendered from values only (09 §4.4.2):
+
+| Workload | Egress peers | Sanctioned by |
+|---|---|---|
+| run-initiator | `kube-dns`, Redpanda (brokers + schema registry), `auth`, `audit` | All four are existing rows in 09 §4.4.2 — *any service → `auth`*, *any service → `audit`*, *any service → Redpanda*, *any service → `kube-dns`*. **No new edge is required** |
+| run-initiator | **No database peer** | It owns no database (§13.1). The helm-unittest egress-equality assertion (09 §4.4.2) therefore also asserts that it reaches no datastore — the same deliberately strong statement 34 §12.1 makes |
+| reduced mode | Its host release's peers only | It is a component of PMA's edge deployment, not an independent service |
+| **Domino runtime → program services** | `domino-compute → gateway`, already sanctioned | 09 §4.4.2's existing row. Tool calls route runtime → `tool-server` → `gateway` (34 §5.1), and `tool-server → gateway` is also an existing row |
+
+**Two things this deployment does *not* need, recorded so nobody adds them.** No `tool-server → telemetry` or `→ pma` edge: 34 §5.1 routes through the gateway precisely to avoid *"nine direct edges… a second ingress to every sub-application."* And no `agents/* → auth` row beyond the existing *any service → `auth`*: the initiator's grant call is an ordinary `auth` call.
+
+### 14.4 Configuration
+
+```dotenv
+# agents/pma-prescreener/.env.example — every variable, no real values (09 §4.5)
+FATHOM_APP__LOG_LEVEL=INFO
+FATHOM_AUTH__ISSUER=https://keycloak.internal/realms/fathom
+FATHOM_AUTH__JWKS_URL=https://keycloak.internal/realms/fathom/protocol/openid-connect/certs
+FATHOM_AUDIT__BASE_URL=http://audit.fathom-sustainment.svc.cluster.local:8000
+FATHOM_TOOL_SERVER__BASE_URL=http://tool-server.fathom-sustainment.svc.cluster.local:8000
+FATHOM_PRESCREENER__PROPOSAL_BUDGET_PER_MISSION=      # NO DEFAULT — §6.2, §13.2
+FATHOM_PRESCREENER__MAX_UNCORROBORATED=               # NO DEFAULT — §6.5
+FATHOM_PRESCREENER__RUN_DEADLINE_SECONDS=             # NO DEFAULT — must be < the grant TTL
+FATHOM_PRESCREENER__TOOL_DEADLINE_SECONDS=            # NO DEFAULT — monotonic, per call
+FATHOM_PRESCREENER__NARRATIVE_ENABLED=false           # §4.7, gated on D38
+FATHOM_LLM__PIN=                                      # NO DEFAULT. Travels as llm_version
+FATHOM_OTEL__ENABLED=false
+```
+
+`RUN_DEADLINE_SECONDS` must be **strictly less than** the grant TTL, so the run finishes inside its own authority rather than lapsing (§3.5). Asserted at startup, not documented and hoped for.
+
+---
+
+## 15. Observability
+
+### 15.1 Metrics
+
+Following 09 §5.6's fixed naming and 34 §10.1's precedent. All durations monotonic-measured (09 §4.8, **D29**).
+
+```
+fathom_prescreener_runs_total{outcome}                       # the six outcomes of §2.6
+fathom_prescreener_run_duration_seconds                      # histogram, monotonic
+fathom_prescreener_proposals_total{class,outcome}             # class=corroborated|uncorroborated
+                                                             # outcome=accepted|refused_429|refused_422|error
+fathom_prescreener_budget_utilisation                        # emitted / budget, per run
+fathom_prescreener_uncorroborated_share                      # per run
+fathom_prescreener_admission_deferrals_total
+fathom_prescreener_authority_lapses_total{cause}
+fathom_prescreener_tool_calls_total{slug,operation_id,outcome}
+fathom_prescreener_tool_call_duration_seconds{slug,operation_id}
+fathom_prescreener_items_shortlisted                         # per run
+fathom_prescreener_items_unobservable_total{reason}           # §5.9's four reasons
+fathom_prescreener_missions_skipped_total{reason}
+fathom_prescreener_evidence_items_per_proposal               # histogram
+fathom_prescreener_quiesce_signal_latency_seconds            # trigger -> run complete
+```
+
+Three alerting conditions, each with a stated reason:
+
+| Alert | Condition | Why it is not a dashboard curiosity |
+|---|---|---|
+| `PrescreenerRunsFailing` | `outcome="terminated_error"` rate above a bound for 30 m | A failing pre-screener is invisible in PMA's metrics — reviews still open, precision is unaffected, and the candidate set is quietly thinner |
+| `PrescreenerAllRunsZeroProposals` | `outcome="completed_zero_proposals"` at 100% over 7 days | A zero-proposal run is legitimate; *every* run producing zero is either a broken shortlist or a broken model, and it is exactly the D18-shaped failure — candidate sets that are empty for a reason nobody notices |
+| `PrescreenerQuiesceLatencyExceedsWindow` | p95 of `quiesce_signal_latency_seconds` above the configured quiesce window | The agent has become too slow to contribute to the primary review. Its proposals are landing in `queued_unadmitted` and it is doing work that reaches no reviewer |
+
+**One metric deliberately absent: there is no agent-side precision or recall gauge.** Quality is measured against adjudication, by PMA, in one operation that cannot serve precision alone (23 §5.5). An agent-side precision gauge would be exactly the self-optimisation surface §8.3 forbids, and §4.6 already withholds the operation that would populate it.
+
+### 15.2 Tracing and the Audit record
+
+| Channel | Content |
+|---|---|
+| MLflow trace, via Domino's agent tracing SDK (01 §8.8, §9) | The run: tool calls, the LLM turn, the selection decision. `trace_ref` travels on every proposal (03 §7.2) and correlates the Domino trace to the Audit record (03 §8.5) |
+| `audit.tool_invocation` (32 §4.3) | Per tool call: `agent_id`, `agent_version`, `manifest_name`, `manifest_version`, `llm_version`, `prompt_version`, `target_slug`, `operation_id`, `api_major`, `declared_side_effects`, `authority_class`, `accountable_owner`, `http_status`, `duration_ms`, `outcome`, and full request and response as encrypted payload. Written two-phase by the tool server (34 §4.6) |
+| `audit` delegation/run records (31 §4.6) | `autonomous_grant.issued`, `agent_run.started`, `agent_run.terminated_*`, with the accountable owner and the declared scope |
+| `X-Correlation-Id` | Minted from the triggering event's `correlation_id` and propagated to every tool call, every log line, and into the proposal's own correlation chain (03 §4) |
+
+**Structured JSON logging with `correlation_id` on every line** (09 §4.8, obligation 15), and two content prohibitions: **no bearer token** anywhere (09 §4.8, 31 DO-NOT 5) and **no retrieved corpus text** in a log line (09 §4.8, which lists retrieved corpus text among the things never logged; 35 §8 gives the same reasoning for using `POST` rather than `GET` for retrieval).
+
+### 15.3 Readiness
+
+The run-initiator exposes `/healthz`, `/readyz`, `/metrics` per 09 §5.6. `/readyz` aggregates the mandatory checks that apply — `broker`, `inbox_lag`, and reachability of `auth` — plus two of its own:
+
+| Check | Fails or degrades when |
+|---|---|
+| `grant_issuance` | `POST /auth/autonomous-grants` has failed for longer than a bound, or the accountable owner no longer resolves. **Fails**, because an initiator that cannot mint a grant will silently stop pre-screening every mission |
+| `tool_server_reachable` | `tool-server` has been unreachable beyond a bound. **Degrades**, not fails: the initiator's own job is to consume and invoke, and a run that cannot make tool calls terminates with a recorded error rather than being prevented |
+
+There is no `migrations` check and no `database` check: no database (§13.1). Their absence is asserted by test, following 34 §12's precedent, so a later contributor adding one has to argue for it.
+
+---
+
+## 16. Testing
+
+Four tiers per 09 §4.7, plus this agent's own evaluation tier. Test IDs are stable suite names.
+
+### 16.1 The five tests the design turns on
+
+A review that finds these missing should stop there.
+
+| ID | Test | Asserts |
+|---|---|---|
+| **PS-T1** | **No proposal after authority lapse.** Issue a grant with a very short TTL, start a run, let it lapse mid-assembly, then let the run attempt `POST /proposals` | `401 …:authority-lapsed`; run terminated with a checkpoint; **no proposal exists created after `exp`**; no retry attempted; no other credential requested. The mirror of 31 T-2a, from the agent's side (**D12**) |
+| **PS-T2** | **The 429 path stops the run and does not retry.** Drive PMA into admission control (23 §5.6.1's exact boundary), then run the agent | First `POST /proposals` returns `429` with `Retry-After`; **zero further proposals are attempted in that run**; outcome is `deferred_admission_control`; the checkpoint holds the assembled set; already-accepted proposals stand |
+| **PS-T3** | **No detector attribution is ever synthesised.** Run over a mission whose detections are known, including an uncorroborated candidate | Every corroborated proposal's `detector_version` and `detector_score` equal the source `anomaly.detected`'s **byte-for-byte**; every uncorroborated proposal has both **null**; no code path writes a detector version the agent produced. The agent-side twin of 23 §9.4's `pma-canary-no-synthesis` (13 §13.1) |
+| **PS-T4** | **The budget and every cap hold, and every cap is below PMA's.** Property test over generated missions with up to 200 detections | No run exceeds `PROPOSAL_BUDGET_PER_MISSION`; no item exceeds 2; no family exceeds 3; uncorroborated never exceeds its cap **or** the corroborated count; and the caps are read from 23 §3.4's constants and asserted strictly less than them |
+| **PS-T5** | **Holdout neutrality.** Run over paired missions differing only in `policy_frozen` on otherwise matched items (13 §10.2 makes the flag visible through Registry) | The proposal count, the class mix, and the candidate windows are statistically indistinguishable across the pair, and no module reads `policy_frozen` for any purpose. **A behavioural difference here is D1 reintroduced through the labeling path** (§12.2 rule 5) |
+
+### 16.2 Authority and surface tests
+
+| ID | Asserts |
+|---|---|
+| PS-T6 | The runtime's token carries `fathom.agent.authority = "accountable_autonomous"`, `authority_classes = []`, a non-empty `declared_scope` with exactly one asset, and `fleet: false` (31 §3.3) |
+| PS-T7 | A read for an asset outside `declared_scope` is refused `403 …:outside-declared-scope`, and a read of an aggregate outside `declared_scope.aggregates` likewise (31 §6.6, T-12) |
+| PS-T8 | Every attempt to call a `state-changing` operation is refused, with a **validly signed** token carrying `sfx:state-changing` injected — proving the *receiver* refuses (31 T-1a's discipline applied to this agent's manifests) |
+| PS-T9 | No adjudication operation is reachable: `POST /pma/proposals/{id}/adjudicate` and `…/claim` are refused for both agent classes regardless of roles (31 T-6) |
+| PS-T10 | The compiled binding contains exactly the five manifests of §4.2 and no other tool; a call to a tool outside the pin is `403 tool-not-in-pinned-manifest` (34 gate 4) |
+| PS-T11 | `GET /pma/reviews/{id}/candidates`, `GET /pma/quality-metrics`, `GET /pma/labels/export`, every `audit` operation, and every `auth` operation are **absent from the binding**, asserted from the committed descriptors rather than from intent (§4.6, §4.8) |
+| PS-T12 | `agent_id` is never taken from a request-supplied field (34 §2.3's `test_agent_id_is_never_taken_from_the_request`, from the caller's side: the runtime asserts no header it sets is honoured as identity) |
+| PS-T13 | A live `x-side-effects` change on a target produces `409 side-effects-mismatch` and the run **fails** rather than proceeding on the cached descriptor (34 §4.3) |
+
+### 16.3 Proposal well-formedness tests
+
+| ID | Asserts |
+|---|---|
+| PS-T14 | Every emitted proposal validates against `packages/canonical-schemas`' `Proposal`, with `kind = anomaly_tag`, `target_sub_app = pma`, `blast_radius = item`, `authority_class = maintainer`, `requires_dual_control = false`, a non-null `valid_until` (10 §4.7) |
+| PS-T15 | A proposal with `blast_radius` of `class` or `fleet` is never constructed, and one injected into the submission path is rejected `422 …:blast-radius-not-permitted` by PMA (23 §2.8) |
+| PS-T16 | `evidence[]` is non-empty, every `ref` resolves through the operation §5.3 rule 1 names, and at least one item is structured with `source_trust: program` |
+| PS-T17 | A proposal whose evidence is narrative-only is **never emitted** (§5.3 rule 3), and the run records the suppression |
+| PS-T18 | `classification` equals `ClassificationLabel.union()` over its inputs, with `inherited_from` matching the evidence refs (03 §7.3; 10 §4.8) |
+| PS-T19 | `suggested_signature`, where present, quotes a key from `GET /pma/taxonomy` at the pinned version, carries `is_suggestion_only: true`, and is **never** the `is_novel_escape` row (§7.3) |
+| PS-T20 | An ambiguous crosswalk yields either an omitted suggestion or the full set — never a scalar collapse or a `LIMIT 1` (12 DO-NOT-2, 23 §9.5's `pma-corrupt-3m-set-valued`) |
+| PS-T21 | `position_id` and `installed_item_id` are distinct fields in every payload, and no proposal attributes an anomaly to a position (**C10**, **D9**) |
+| PS-T22 | Idempotency keys are stable across an `agent_version` bump for the same `(mission_id, installed_item_id, window)` and differ for a different window (§2.5) |
+
+### 16.4 Evidence-assembly tests, against the generator's corruptions
+
+13 §9.10 emits eight label-corruption classes and 13 §9.2–§9.11 ten noise stages. 23 §9.5 tests PMA's behaviour under them; these test the agent's.
+
+| ID | Generator condition | Required behaviour |
+|---|---|---|
+| PS-T23 | **Stuck-at-value channel** (13 §9.6) | No equipment-degradation candidate rests on it. A candidate may be raised with `attributed_to: sensor` where the quality record supports it (§5.7) |
+| PS-T24 | **Recalibration step** (13 §9.4) | A step at recalibration is not proposed as an event. 21 §7.2 excludes it as a shared input filter; the agent must not reintroduce it from the indicator series |
+| PS-T25 | **Structural gap** — subsurface channels delivering nothing until reconnect (13 §9.6) | No proposal on a window inside a `gap_interval`; recorded as unobservable, not as a miss (§5.9) |
+| PS-T26 | **Operating-condition confounding** (13 §9.5) | A load-change-explained excursion is either not proposed or proposed with the covariate cited so the reviewer can see the confound. **A rationale that attributes a load change to degradation fails G5** |
+| PS-T27 | **Missing-not-at-random dropout** (13 §9.11) | `mnar_indicator` is disclosed as a caveat, never corrected for (21 §3.8) |
+| PS-T28 | **Timebase corruption / clock step** (13 §9.8, §15.3) | No ordering decision consults a wall clock; every duration is monotonic (**D29**) |
+| PS-T29 | **Shared-channel attribution ambiguity** (13 §8.7, 21 §9.1) | One of §5.8's three permitted actions; never a silent single-item pick, never a widened radius |
+| PS-T30 | **Provisional identity** (13 §15.2 case 1, sub-cases 1a/1b/1c) | A proposal against a provisional `installed_item_id` is well-formed, marked provisional, and resolves through the alias table without rewriting (11 §8.4) |
+
+### 16.5 The edge and reconnect test
+
+`ps-edge-six-week`, consuming 13 §15's scenario fixtures directly — primarily `edge-ssn-6wk-*`, case 3 (13 §15.2), with 13 §15.3's cross-cutting mechanics layered on. 13 §15.4 fixes the protocol and the golden-file rule.
+
+| Assertion | Source |
+|---|---|
+| The LLM-backed runtime does not run afloat: no grant is minted, no tool server is reached, no model is called during the 42-day partition | §9.2 |
+| The reduced mode (§9.3) runs afloat, imports no LLM module, creates **no proposal**, and shapes candidates for the two while-dark reviews | §9.3, 06 §4 |
+| After reconnect the enterprise run produces candidates that **deliberately overlap** the edge set, and edge-only candidates **survive** | 13 §15.2 case 3, 03 §11, 21 §7.4 |
+| Overlaps form candidate groups with both origins preserved; the edge representative is preferred | 23 §3.4, §7.5 |
+| An already-adjudicated edge candidate is **not re-proposed** | §9.4 obligation 4 |
+| A shore disagreement produces a **new** tag with `supersedes_tag_id`; the afloat tag survives unmodified | 23 §2.4, §7.5 |
+| Enterprise proposals never traverse the ship-to-shore link, and the agent asserts no drain priority | 11 §9.3, §9.4 |
+| The backward clock step at reconnect changes no outcome; `dispersion_ms` exceeding the inter-write interval forces causal-only ordering | 13 §15.3, 03 §5.4 |
+| No PMA divergence budget is breached, and the edge admission gate does not engage, during the scripted scenario | 23 §7.4, §7.6 |
+
+### 16.6 Manifest conformance
+
+Per 03 §8.4 and 10 §6.8, contributed into each target's suite so that a conformant substitution is automatically a conformant tool surface (01 §8.0):
+
+| Contributed into | Asserts |
+|---|---|
+| `conformance/telemetry/manifests/telemetry-mission-context/` | Every selected operation exists at `api_major: 1`, is `x-agent-eligible`, has a task-scoped description; `as_of` and `as_known_at` defaults are valid; **`GET /missions/{id}/telemetry` is absent from the selection** (§4.3) |
+| `conformance/registry/manifests/registry-configuration-lookup/` | Same, over §4.4's four operations |
+| `conformance/pdm/manifests/pdm-equipment-deepdive/` | Same; and that `rul`'s absence in a response instance is not an error (34 §4.7, **D19**) |
+| `conformance/pma/manifests/pma-prescreen/` | Same; and that `GET /reviews/{id}/candidates`, `GET /quality-metrics`, and `GET /labels/export` are **not** selected and not eligible (§4.6, 23 §3.7) |
+| `conformance/knowledge-retrieval/manifests/kr-failure-signature-lookup/` | Same; `mode: asset_scoped` only; no field exists in which the applicability envelope could be widened (35 §4.1) |
+
+### 16.7 Evaluation tier
+
+`tests/evaluation/` runs the nine gates of §12.1 as its own blocking CI job, following 21 §10.1's precedent of a fifth tier that *"must not be selectable away."* Two properties:
+
+- **G9 (holdout boundary) runs first**, because a leak invalidates every figure the other gates produce.
+- **A vacuous gate is a failing gate.** G4 with an empty adversarial set fails; G2 with no rationale to score fails; G6 with fewer adjudicated proposals than its declared minimum reports `insufficient_data` and blocks promotion rather than passing. 21 §14.1 states the same rule for its leakage suite: *"a vacuous test is a failing test."*
+
+---

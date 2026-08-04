@@ -1,0 +1,1178 @@
+<title>FATHOM Operator Console — Landing Page Wireframes</title>
+<meta name="description" content="Low-fidelity wireframes for the nine sub-application landing pages, a fleet map with a per-vehicle drill-down, a security officer's remediation queue, the app shell, and the unified adjudication queue.">
+<style>
+  :root {
+    --paper: #EDEFEA;
+    --paper-2: #E3E6DF;
+    --ink: #1E2422;
+    --ink-soft: #4A5450;
+    --line: #9CA79E;
+    --line-soft: #C4CBC2;
+    --accent: #2F6E6A;
+    --accent-ink: #FFFFFF;
+    --annotation: #8A5A2B;
+    --annotation-bg: #E9E1D3;
+    --critical: #9C3F35;
+    --critical-bg: #E9D8D3;
+    --warning: #8A6A1E;
+    --warning-bg: #EBE1C3;
+    --good: #4C6440;
+    --good-bg: #DCE3D3;
+    --neutral: #6B7570;
+    --neutral-bg: #DDE1DA;
+    --hatch: repeating-linear-gradient(135deg, var(--line-soft) 0 1px, transparent 1px 8px);
+  }
+  :root[data-theme="dark"] {
+    --paper: #141917;
+    --paper-2: #1B2220;
+    --ink: #DCE3DE;
+    --ink-soft: #9BA8A1;
+    --line: #4B5850;
+    --line-soft: #313C36;
+    --accent: #56ACA5;
+    --accent-ink: #0B1210;
+    --annotation: #D0A15F;
+    --annotation-bg: #2A2419;
+    --critical: #D97D71;
+    --critical-bg: #33201D;
+    --warning: #D3B15A;
+    --warning-bg: #322C18;
+    --good: #93B481;
+    --good-bg: #202A1C;
+    --neutral: #8B958E;
+    --neutral-bg: #232A26;
+    --hatch: repeating-linear-gradient(135deg, var(--line-soft) 0 1px, transparent 1px 8px);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #141917;
+      --paper-2: #1B2220;
+      --ink: #DCE3DE;
+      --ink-soft: #9BA8A1;
+      --line: #4B5850;
+      --line-soft: #313C36;
+      --accent: #56ACA5;
+      --accent-ink: #0B1210;
+      --annotation: #D0A15F;
+      --annotation-bg: #2A2419;
+      --critical: #D97D71;
+      --critical-bg: #33201D;
+      --warning: #D3B15A;
+      --warning-bg: #322C18;
+      --good: #93B481;
+      --good-bg: #202A1C;
+      --neutral: #8B958E;
+      --neutral-bg: #232A26;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--font-mono);
+    font-size: 13.5px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  :root {
+    --font-mono: ui-monospace, "SF Mono", "Cascadia Code", "Roboto Mono", "JetBrains Mono", Consolas, monospace;
+    --font-annotation: ui-serif, "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
+  }
+  a { color: var(--accent); }
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 28px 20px 120px; }
+
+  /* ---- masthead ---- */
+  .masthead {
+    display: flex; flex-direction: column; gap: 10px;
+    padding-bottom: 20px; margin-bottom: 28px;
+    border-bottom: 2px solid var(--ink);
+  }
+  .masthead .kicker {
+    font-family: var(--font-annotation); font-style: italic; color: var(--ink-soft);
+    font-size: 13px;
+  }
+  .masthead h1 {
+    font-size: 25px; letter-spacing: 0.01em; margin: 0; text-wrap: balance;
+    text-transform: uppercase;
+  }
+  .masthead .sub {
+    font-family: var(--font-annotation); font-size: 15px; color: var(--ink-soft);
+    max-width: 640px; text-wrap: pretty;
+  }
+  .classbar {
+    display: inline-flex; align-self: flex-start; align-items: center; gap: 8px;
+    border: 1px solid var(--line); padding: 3px 10px; font-size: 11px;
+    letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-soft);
+  }
+  .classbar .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--good); }
+
+  /* ---- legend / cover ---- */
+  .legend {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    gap: 14px; margin: 20px 0 8px;
+  }
+  .legend-item { display: flex; align-items: flex-start; gap: 10px; }
+  .legend-swatch { flex: 0 0 auto; margin-top: 2px; }
+  .legend-label { font-size: 12px; color: var(--ink-soft); }
+  .legend-label b { color: var(--ink); font-weight: 600; }
+
+  .callout {
+    font-family: var(--font-annotation); font-size: 14px;
+    background: var(--annotation-bg); color: var(--ink);
+    border-left: 3px solid var(--annotation);
+    padding: 12px 16px; margin: 18px 0; text-wrap: pretty;
+  }
+  .callout b { color: var(--annotation); font-family: var(--font-mono); text-transform: uppercase; font-size: 11px; letter-spacing: .06em; }
+
+  .toc {
+    border: 1px solid var(--line); padding: 14px 16px 16px; margin-top: 22px;
+  }
+  .toc-title { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--ink-soft); margin-bottom: 10px; }
+  .toc ol { margin: 0; padding: 0; list-style: none; columns: 2; column-gap: 24px; }
+  .toc li { margin-bottom: 6px; break-inside: avoid; }
+  .toc a { text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+  .toc .n { color: var(--ink-soft); display: inline-block; width: 1.6em; }
+
+  /* ---- sheet (drawing-sheet metaphor) ---- */
+  .sheet {
+    border: 1.5px solid var(--ink);
+    margin: 40px 0;
+    position: relative;
+    background: var(--paper);
+    scroll-margin-top: 20px;
+  }
+  .titleblock {
+    display: flex; justify-content: space-between; align-items: flex-start;
+    gap: 16px; padding: 12px 16px; border-bottom: 1.5px solid var(--ink);
+    background: var(--paper-2);
+  }
+  .titleblock .tb-left { display: flex; flex-direction: column; gap: 3px; }
+  .titleblock .sheet-no {
+    font-size: 11px; color: var(--accent); letter-spacing: .08em; font-weight: 700;
+  }
+  .titleblock h2 {
+    margin: 0; font-size: 17px; letter-spacing: .01em; text-transform: uppercase;
+  }
+  .titleblock .persona {
+    font-family: var(--font-annotation); font-style: italic; font-size: 12.5px; color: var(--ink-soft);
+  }
+  .titleblock .tb-right {
+    text-align: right; font-size: 10.5px; color: var(--ink-soft); line-height: 1.6;
+    white-space: nowrap;
+  }
+  .titleblock .tb-right b { color: var(--ink); }
+
+  .sheet-body { padding: 18px 16px 20px; display: flex; flex-direction: column; gap: 16px; }
+  .sheet-note {
+    font-family: var(--font-annotation); font-size: 13px; color: var(--annotation);
+    background: var(--annotation-bg); border-left: 3px solid var(--annotation);
+    padding: 8px 12px; margin: 0;
+  }
+  .sheet-note code { font-family: var(--font-mono); font-size: 11.5px; }
+
+  /* ---- generic wireframe primitives ---- */
+  .box {
+    border: 1px solid var(--line); padding: 10px 12px; position: relative;
+  }
+  .box > .box-label {
+    position: absolute; top: -9px; left: 8px; background: var(--paper);
+    padding: 0 5px; font-size: 10px; letter-spacing: .06em; text-transform: uppercase;
+    color: var(--ink-soft);
+  }
+  .box-content { margin-top: 6px; }
+  .row { display: flex; gap: 14px; align-items: flex-start; }
+  .row.wrap-mobile { flex-wrap: wrap; }
+  .col { flex: 1; min-width: 0; }
+  .grid { display: grid; gap: 14px; }
+  .grid.cols-2 { grid-template-columns: 1fr 1fr; }
+  .grid.cols-3 { grid-template-columns: repeat(3, 1fr); }
+  .grid.cols-4 { grid-template-columns: repeat(4, 1fr); }
+  @media (max-width: 720px) {
+    .grid.cols-2, .grid.cols-3, .grid.cols-4 { grid-template-columns: 1fr; }
+    .row { flex-wrap: wrap; }
+  }
+
+  .kpi { border: 1px solid var(--line); padding: 12px; display: flex; flex-direction: column; gap: 6px; }
+  .kpi .k-label { font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-soft); }
+  .kpi .k-value { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .kpi .k-value.critical { color: var(--critical); }
+  .kpi .k-value.good { color: var(--good); }
+  .kpi .k-sub { font-size: 11px; color: var(--ink-soft); }
+
+  .chip {
+    display: inline-flex; align-items: center; gap: 5px; font-size: 10.5px;
+    padding: 2px 8px; border-radius: 3px; text-transform: uppercase; letter-spacing: .04em;
+    white-space: nowrap; font-weight: 600;
+  }
+  .chip.critical { background: var(--critical-bg); color: var(--critical); }
+  .chip.warning  { background: var(--warning-bg); color: var(--warning); }
+  .chip.good     { background: var(--good-bg); color: var(--good); }
+  .chip.neutral  { background: var(--neutral-bg); color: var(--ink-soft); }
+  .chip.accent   { background: var(--accent); color: var(--accent-ink); }
+  .chip .dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+
+  table.wf { width: 100%; border-collapse: collapse; font-size: 12px; }
+  table.wf th, table.wf td { border-bottom: 1px solid var(--line-soft); padding: 6px 8px; text-align: left; vertical-align: top; }
+  table.wf th { font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; color: var(--ink-soft); border-bottom: 1px solid var(--ink); }
+  table.wf td.num { font-variant-numeric: tabular-nums; text-align: right; }
+  .table-scroll { overflow-x: auto; }
+
+  .btn {
+    display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--ink);
+    padding: 5px 12px; font-size: 11px; text-transform: uppercase; letter-spacing: .05em;
+    background: transparent; color: var(--ink); cursor: pointer; font-family: var(--font-mono);
+  }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+  .btn.ghost { border-style: dashed; color: var(--ink-soft); }
+  .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .hatch { background-image: var(--hatch); }
+  .placeholder-fig {
+    border: 1px dashed var(--line); padding: 14px; text-align: center;
+    color: var(--ink-soft); font-size: 11px; font-style: italic; font-family: var(--font-annotation);
+  }
+
+  .tree { font-size: 12px; }
+  .tree ul { list-style: none; margin: 4px 0 4px 18px; padding-left: 12px; border-left: 1px dashed var(--line-soft); }
+  .tree li { margin: 3px 0; }
+  .tree .tag { color: var(--ink-soft); font-size: 10.5px; margin-left: 6px; }
+
+  .nav-shell {
+    display: grid; grid-template-columns: 190px 1fr; border: 1px solid var(--line);
+    min-height: 260px;
+  }
+  .nav-shell .side { border-right: 1px solid var(--line); padding: 10px; display: flex; flex-direction: column; gap: 2px; }
+  .nav-shell .side .group-label { font-size: 9.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-soft); margin: 10px 0 3px; }
+  .nav-shell .side .item { padding: 5px 8px; font-size: 12px; border: 1px solid transparent; }
+  .nav-shell .side .item.active { border-color: var(--line); background: var(--paper-2); font-weight: 700; }
+  .nav-shell .main { padding: 14px; color: var(--ink-soft); font-size: 12px; }
+  .topbar {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    border: 1px solid var(--line); border-bottom: none; padding: 8px 12px;
+  }
+  .topbar .word { font-weight: 700; letter-spacing: .04em; }
+  .topbar .search { flex: 1; max-width: 320px; border: 1px solid var(--line-soft); padding: 4px 8px; color: var(--ink-soft); font-size: 11px; }
+  .topbar .id { font-size: 11px; color: var(--ink-soft); }
+
+  svg.spark { display: block; }
+  svg.spark .line { fill: none; stroke: var(--accent); stroke-width: 1.6; }
+  svg.spark .area { fill: var(--accent); opacity: .08; }
+  svg.spark .end { fill: var(--accent); }
+  svg.spark .grid { stroke: var(--line-soft); stroke-width: 1; }
+
+  .foot {
+    margin-top: 60px; padding-top: 16px; border-top: 1px solid var(--line);
+    font-family: var(--font-annotation); font-size: 12.5px; color: var(--ink-soft);
+  }
+
+  .skip { position: absolute; left: -9999px; }
+  .skip:focus { left: 8px; top: 8px; background: var(--accent); color: var(--accent-ink); padding: 4px 10px; z-index: 10; }
+  @media (prefers-reduced-motion: no-preference) {
+    .sheet { transition: border-color .15s ease; }
+  }
+
+  /* ---- map (CENTCOM AOR schematic) ---- */
+  .map-box { padding: 0; overflow: hidden; }
+  .map-box > .box-label { top: 9px; }
+  .map-frame { position: relative; background: var(--paper-2); }
+  svg.aor { display: block; width: 100%; height: auto; }
+  svg.aor .water { fill: var(--paper); }
+  svg.aor .land { fill: var(--paper-2); stroke: var(--line); stroke-width: 1; }
+  svg.aor .grat { stroke: var(--line-soft); stroke-width: .75; stroke-dasharray: 2 3; }
+  svg.aor .grat-label { font-family: var(--font-mono); font-size: 7.5px; fill: var(--ink-soft); }
+  svg.aor .aor-label { font-family: var(--font-annotation); font-style: italic; font-size: 9.5px; fill: var(--ink-soft); }
+  svg.aor .place-label { font-family: var(--font-mono); font-size: 7px; letter-spacing: .03em; fill: var(--ink-soft); text-transform: uppercase; }
+  svg.aor .marker { stroke: var(--paper-2); stroke-width: 1; }
+  svg.aor .marker.critical { fill: var(--critical); }
+  svg.aor .marker.warning { fill: var(--warning); }
+  svg.aor .marker.good { fill: var(--good); }
+  svg.aor .marker.neutral { fill: var(--ink-soft); }
+  svg.aor .marker.selected { stroke: var(--accent); stroke-width: 2; }
+  svg.aor .sel-ring { fill: none; stroke: var(--accent); stroke-width: 1; stroke-dasharray: 2 2; }
+  svg.aor .leader { stroke: var(--accent); stroke-width: 1; stroke-dasharray: 3 2; }
+  svg.aor .sel-label-bg { fill: var(--paper); stroke: var(--accent); stroke-width: 1; }
+  svg.aor .sel-label { font-family: var(--font-mono); font-size: 8.5px; fill: var(--ink); font-weight: 700; }
+  svg.aor .sel-sub { font-family: var(--font-mono); font-size: 7px; fill: var(--ink-soft); }
+  .map-key {
+    display: flex; flex-wrap: wrap; gap: 12px; align-items: center;
+    padding: 8px 12px; border-top: 1px solid var(--line); font-size: 10.5px; color: var(--ink-soft);
+  }
+  .map-key .mk-item { display: inline-flex; align-items: center; gap: 5px; }
+  .map-key .mk-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .map-key .mk-dot.critical { background: var(--critical); }
+  .map-key .mk-dot.warning { background: var(--warning); }
+  .map-key .mk-dot.good { background: var(--good); }
+  .map-key .mk-dot.neutral { background: var(--ink-soft); }
+  .map-key .mk-shape { font-size: 12px; line-height: 1; }
+
+  /* ---- persona hub (pre-landing) ---- */
+  .hub-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 14px; }
+  .p-card { border: 1px solid var(--line); padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
+  .p-card .p-glyph {
+    width: 26px; height: 26px; border: 1.5px solid var(--ink); border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 700; color: var(--ink); flex: 0 0 auto;
+  }
+  .p-card .p-head { display: flex; align-items: center; gap: 10px; }
+  .p-card h3 { margin: 0; font-size: 13.5px; line-height: 1.25; }
+  .p-card .p-func {
+    font-family: var(--font-annotation); font-style: italic; font-size: 11.5px;
+    color: var(--ink-soft); margin: 0; flex: 1;
+  }
+  .p-card .p-primary { align-self: flex-start; }
+  .p-card .p-also { font-size: 10.5px; color: var(--ink-soft); }
+  .p-card .p-also a { color: var(--ink-soft); }
+  .p-card.is-new { border-style: solid; border-color: var(--annotation); }
+  .p-card.is-new .p-glyph { border-color: var(--annotation); color: var(--annotation); }
+
+  .hub-cross {
+    border: 1px dashed var(--line); padding: 12px 14px; margin-top: 6px;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 14px;
+  }
+  .hub-cross .hc-label {
+    font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-soft);
+    flex: 0 0 100%;
+  }
+</style>
+
+<a class="skip" href="#sh">Skip to first wireframe</a>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <span class="classbar"><span class="dot"></span> Unclassified — demonstration data — internal working draft</span>
+    <span class="kicker">FATHOM · Fleet Asset Tracking, Health &amp; Operational Maintenance</span>
+    <h1>Operator Console — Landing Page Wireframes</h1>
+    <p class="sub">Structural sketches of the primary landing view for each of the nine sub-applications, plus the shared app shell and the cross-cutting adjudication queue. Boxes and labels are drawn from the actual data model in documents 03/04/06/07 — nothing here is an invented feature.</p>
+  </header>
+
+  <div class="callout">
+    <b>Persona pass — rev 3</b> — Document 01 §16's open persona question now resolves at login, not on every sheet: a new <a href="#sh">Persona Hub</a> (drawn as sheet H, ahead of the app shell) is where a role is chosen or confirmed and its one or two relevant views are one click away. The <b>Executive / Commander</b> role's view is the redrawn Fleet Overview (sheet 01, confirmed default landing for that role specifically) with a fleet map between its four top-line metrics; selecting a hull there drills into a per-vehicle equivalent (sheet 01B) for a <b>Vehicle Readiness Officer</b>. Say if a card on the hub is missing, wrongly scoped, or should be merged with another.
+  </div>
+
+  <div class="legend" aria-label="Wireframe drawing conventions">
+    <div class="legend-item"><span class="legend-swatch"><span class="chip critical">critical</span></span><span class="legend-label">Semantic status — <b>independent of the accent color</b>, used only for state (critical / warning / good / neutral)</span></div>
+    <div class="legend-item"><span class="legend-swatch"><span class="chip accent">action</span></span><span class="legend-label">Primary interactive control — accent-filled</span></div>
+    <div class="legend-item"><span class="legend-swatch" style="display:inline-block;width:26px;height:16px;" class="hatch"></span><span class="legend-label">Placeholder for a chart, image, or graph not yet rendered</span></div>
+    <div class="legend-item"><span class="legend-swatch" style="font-family:var(--font-annotation);color:var(--annotation);font-style:italic;">note</span><span class="legend-label">Design rationale or doc citation — <b>not part of the UI itself</b></span></div>
+  </div>
+
+  <nav class="toc" aria-label="Sheet index">
+    <div class="toc-title">Sheet index</div>
+    <ol>
+      <li><span class="n">H</span> <a href="#sh">Persona hub <i style="color:var(--annotation);">· new</i></a></li>
+      <li><span class="n">00</span> <a href="#s0">App shell &amp; navigation</a></li>
+      <li><span class="n">01</span> <a href="#s1">Fleet Status &amp; Readiness</a></li>
+      <li><span class="n">01B</span> <a href="#s1b">Vehicle Detail <i style="color:var(--annotation);">· new</i></a></li>
+      <li><span class="n">02</span> <a href="#s2">Asset &amp; Configuration Registry</a></li>
+      <li><span class="n">03</span> <a href="#s3">Condition &amp; Telemetry</a></li>
+      <li><span class="n">04</span> <a href="#s4">Predictive Maintenance</a></li>
+      <li><span class="n">05</span> <a href="#s5">Maintenance Execution &amp; Scheduling</a></li>
+      <li><span class="n">06</span> <a href="#s6">Supply Chain &amp; Inventory</a></li>
+      <li><span class="n">07</span> <a href="#s7">Post-Mission Analysis</a></li>
+      <li><span class="n">08</span> <a href="#s8">Failure Intelligence</a></li>
+      <li><span class="n">09</span> <a href="#s9">System Test &amp; Design Advisory</a></li>
+      <li><span class="n">10</span> <a href="#s10">Unified Adjudication Queue</a></li>
+      <li><span class="n">11</span> <a href="#s11">Audit — Remediation Queue <i style="color:var(--annotation);">· new</i></a></li>
+    </ol>
+  </nav>
+
+  <!-- ===================== SHEET H — PERSONA HUB ===================== -->
+  <section class="sheet" id="sh">
+    <div class="titleblock">
+      <div class="tb-left">
+        <span class="sheet-no">SHEET H / PRE-LANDING</span>
+        <h2>Persona Hub</h2>
+        <span class="persona">Every role — shown at login, or on demand from the app shell</span>
+      </div>
+      <div class="tb-right">Doc 01 §8.1<br>Doc 03 §7.2.1</div>
+    </div>
+    <div class="sheet-body">
+      <p class="sheet-note">One card per audience the corpus supports. The card's button is that role's confirmed default landing view; <b>also:</b> lists what else that role reaches most often — not every sheet, and not a nav replacement. Two cards (Vehicle Readiness Officer, Security Officer) didn't exist before this round of feedback and are outlined rather than filled.</p>
+      <div class="hub-grid">
+        <div class="p-card">
+          <div class="p-head"><span class="p-glyph">EC</span><h3>Executive / Commander</h3></div>
+          <p class="p-func">TYCOM Readiness Officer — fleet-wide rollup and risk posture</p>
+          <a class="btn primary p-primary" href="#s1">Open Fleet Overview</a>
+          <span class="p-also">also: <a href="#s1b">Vehicle Detail</a> · <a href="#s10">Adjudication Queue</a></span>
+        </div>
+        <div class="p-card is-new">
+          <div class="p-head"><span class="p-glyph">VR</span><h3>Vehicle Readiness Officer</h3></div>
+          <p class="p-func">Owns one hull's readiness and open risk in depth</p>
+          <a class="btn primary p-primary" href="#s1b">Open Vehicle Detail</a>
+          <span class="p-also">also: <a href="#s1">Fleet Overview</a> · <a href="#s2">Asset Browser</a></span>
+        </div>
+        <div class="p-card">
+          <div class="p-head"><span class="p-glyph">SF</span><h3>Ship's Force Maintainer</h3></div>
+          <p class="p-func">Confirms anomaly tags; deckplate condition monitoring</p>
+          <a class="btn primary p-primary" href="#s7">Open Bounded Review Queue</a>
+          <span class="p-also">also: <a href="#s3">Channel &amp; Health</a> · <a href="#s4">Risk Triage</a> · <a href="#s2">Asset Browser</a></span>
+        </div>
+        <div class="p-card">
+          <div class="p-head"><span class="p-glyph">AP</span><h3>RMC / Availability Planner</h3></div>
+          <p class="p-func">Assembles work packages from predictions and parts</p>
+          <a class="btn primary p-primary" href="#s5">Open Work Package Planner</a>
+          <span class="p-also">also: <a href="#s4">Risk Triage</a> · <a href="#s6">Stock &amp; Requisition</a></span>
+        </div>
+        <div class="p-card">
+          <div class="p-head"><span class="p-glyph">SO</span><h3>Supply Officer</h3></div>
+          <p class="p-func">Requisitions, expedites, stock and allowance position</p>
+          <a class="btn primary p-primary" href="#s6">Open Stock &amp; Requisition View</a>
+          <span class="p-also">also: <a href="#s5">Work Package Planner</a></span>
+        </div>
+        <div class="p-card">
+          <div class="p-head"><span class="p-glyph">RE</span><h3>Reliability Engineer</h3></div>
+          <p class="p-func">Adjudicates causal failure-mode hypotheses</p>
+          <a class="btn primary p-primary" href="#s8">Open Hypothesis Adjudication</a>
+          <span class="p-also">also: <a href="#s9">Redesign Case Builder</a></span>
+        </div>
+        <div class="p-card">
+          <div class="p-head"><span class="p-glyph">DE</span><h3>PEO / Design Engineer</h3></div>
+          <p class="p-func">Reviews redesign business cases and dependency impact</p>
+          <a class="btn primary p-primary" href="#s9">Open Redesign Case Builder</a>
+          <span class="p-also">also: <a href="#s8">Hypothesis Adjudication</a> · <a href="#s10">Adjudication Queue</a></span>
+        </div>
+        <div class="p-card is-new">
+          <div class="p-head"><span class="p-glyph">SC</span><h3>Security Officer (ISSM / ISSO)</h3></div>
+          <p class="p-func">Dual-control crypto-shred purge and rewrap adjudication</p>
+          <a class="btn primary p-primary" href="#s11">Open Remediation &amp; Purge Queue</a>
+          <span class="p-also">no secondary view — scope is deliberately narrow</span>
+        </div>
+      </div>
+      <div class="hub-cross">
+        <span class="hc-label">Cross-cutting — reachable from every role above, owned by none of them</span>
+        <a class="btn" href="#s2">Asset Browser</a>
+        <a class="btn" href="#s10">Unified Adjudication Queue</a>
+      </div>
+      <p style="font-size:11px;color:var(--ink-soft);font-family:var(--font-annotation);margin:2px 0 0;">Eight persona cards plus two cross-cutting utilities cover twelve sheets. The roster is exactly document 03 §7.2.1's six adjudicating authority classes (maintainer, planner, supply_officer, design_authority, fleet_authority, security_officer) plus two review-only roles (Ship's Force Maintainer-as-reviewer, Reliability Engineer) document 04 names without granting them adjudication authority. A role outside that set — a TYCOM staff Readiness Narrative reader, a Diagnostic Assistant user — is a scope question (those agents are outside document 01 §8.1's three-agent demonstration set), not a drawing one.</p>
+    </div>
+  </section>
+
+  <!-- ===================== SHEET 00 — SHELL ===================== -->
+  <section class="sheet" id="s0">
+    <div class="titleblock">
+      <div class="tb-left">
+        <span class="sheet-no">SHEET 00 / SHELL</span>
+        <h2>App Shell &amp; Navigation</h2>
+        <span class="persona">All operator personas — shared frame</span>
+      </div>
+      <div class="tb-right">Doc 01 §4, §12<br>Doc 03 §4 (auth, classification)</div>
+    </div>
+    <div class="sheet-body">
+      <p class="sheet-note">Shown once — every sheet below (01–10) renders inside this frame's content area. Left nav groups by discipline; role-based visibility and default landing sheet are a configuration layer once a persona is chosen (see callout above).</p>
+      <div class="topbar">
+        <span class="word">FATHOM</span>
+        <span class="search">search asset, NIIN, hull…</span>
+        <span class="id">CDR J. RIVERA · Ship's Force · <span class="chip neutral">delegated</span></span>
+      </div>
+      <div class="nav-shell">
+        <div class="side">
+          <div class="item active">Fleet Status</div>
+          <div class="group-label">Asset &amp; Condition</div>
+          <div class="item">Registry</div>
+          <div class="item">Telemetry</div>
+          <div class="group-label">Maintenance</div>
+          <div class="item">Predictions</div>
+          <div class="item">Scheduling</div>
+          <div class="item">Supply</div>
+          <div class="group-label">Analysis</div>
+          <div class="item">Post-Mission Review</div>
+          <div class="item">Failure Intelligence</div>
+          <div class="item">Design Advisory</div>
+          <div class="group-label">Cross-cutting</div>
+          <div class="item">Adjudication Queue <span class="chip warning" style="margin-left:6px;">7</span></div>
+        </div>
+        <div class="main">→ selected sub-application's landing sheet renders here (see 01–09)</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== SHEET 01 — FLEET STATUS ===================== -->
+  <section class="sheet" id="s1">
+    <div class="titleblock">
+      <div class="tb-left">
+        <span class="sheet-no">SHEET 01 / FLEET STATUS &amp; READINESS</span>
+        <h2>Fleet Overview</h2>
+        <span class="persona">Executive / Commander (TYCOM Readiness Officer) — confirmed default landing</span>
+      </div>
+      <div class="tb-right">Doc 04 §5<br>Doc 06 §2</div>
+    </div>
+    <div class="sheet-body">
+      <p class="sheet-note"><b>Advisory — not an authoritative readiness report.</b> Document 04 §5's key decision: this view must never be mistaken for formal Navy readiness reporting. That label is a persistent banner, not a tooltip.</p>
+      <div class="grid cols-2">
+        <div class="kpi"><span class="k-label">Fleet Readiness</span><span class="k-value good">78%</span><span class="k-sub">▲ 2pt / 30d</span></div>
+        <div class="kpi"><span class="k-label">Warning Lead-Time Coverage</span><span class="k-value">64%</span><span class="k-sub">primary effectiveness metric — doc 06 §2</span></div>
+      </div>
+
+      <div class="box map-box">
+        <span class="box-label">Fleet map — CENTCOM AOR (scope=fleet)</span>
+        <div class="box-content">
+          <div class="map-frame">
+            <svg class="aor" viewBox="0 0 640 300" role="img" aria-label="Schematic map of simulated fleet positions across the CENTCOM area of responsibility">
+              <rect class="water" x="0" y="0" width="640" height="300"></rect>
+              <polygon class="land" points="0,0 640,0 640,70 520,60 480,90 430,75 380,95 340,80 300,100 250,85 210,100 170,80 120,95 70,70 0,80"></polygon>
+              <polygon class="land" points="150,95 250,90 300,100 340,85 380,95 430,110 460,140 440,170 400,190 420,220 380,245 320,255 260,250 210,240 170,220 140,190 120,150 130,115"></polygon>
+              <polygon class="land" points="0,150 60,140 100,160 130,190 120,220 90,250 40,260 0,240"></polygon>
+              <polygon class="land" points="460,60 560,50 640,60 640,180 580,190 520,175 480,150 460,110"></polygon>
+
+              <line class="grat" x1="0" y1="90" x2="640" y2="90"></line>
+              <line class="grat" x1="0" y1="180" x2="640" y2="180"></line>
+              <line class="grat" x1="220" y1="0" x2="220" y2="300"></line>
+              <line class="grat" x1="420" y1="0" x2="420" y2="300"></line>
+              <text class="grat-label" x="4" y="87">20°N</text>
+              <text class="grat-label" x="4" y="177">10°N</text>
+              <text class="grat-label" x="212" y="14">50°E</text>
+              <text class="grat-label" x="412" y="14">60°E</text>
+
+              <text class="place-label" x="150" y="145">Red Sea</text>
+              <text class="place-label" x="345" y="128">Persian Gulf</text>
+              <text class="place-label" x="360" y="205">Str. of Hormuz</text>
+              <text class="place-label" x="430" y="235">Gulf of Oman</text>
+              <text class="place-label" x="270" y="235">Arabian Sea</text>
+              <text class="place-label" x="55" y="185">Gulf of Aden</text>
+
+              <circle class="marker good" cx="140" cy="130" r="4.5"></circle>
+              <circle class="marker good" cx="100" cy="170" r="4.5"></circle>
+              <polygon class="marker good" points="250,222 245,231 255,231"></polygon>
+              <rect class="marker neutral" x="266" y="196" width="8" height="8"></rect>
+              <polygon class="marker warning" points="300,206 295,215 305,215"></polygon>
+              <rect class="marker good" x="326" y="186" width="8" height="8"></rect>
+              <circle class="marker good" cx="395" cy="150" r="4.5"></circle>
+              <circle class="marker critical" cx="480" cy="190" r="4.5"></circle>
+
+              <circle class="sel-ring" cx="410" cy="135" r="10"></circle>
+              <circle class="marker good selected" cx="410" cy="135" r="4.5"></circle>
+              <line class="leader" x1="418" y1="128" x2="470" y2="60"></line>
+              <rect class="sel-label-bg" x="470" y="34" width="150" height="30"></rect>
+              <text class="sel-label" x="478" y="49">DDG 113 · 78%</text>
+              <text class="sel-sub" x="478" y="59">selected → sheet 01B</text>
+
+              <text class="aor-label" x="8" y="294">Simulated positions — CENTCOM AOR, not to scale</text>
+            </svg>
+          </div>
+          <div class="map-key">
+            <span class="mk-item"><span class="mk-shape">●</span> surface</span>
+            <span class="mk-item"><span class="mk-shape">▲</span> subsurface</span>
+            <span class="mk-item"><span class="mk-shape">■</span> unmanned</span>
+            <span class="mk-item"><span class="mk-dot good"></span> nominal</span>
+            <span class="mk-item"><span class="mk-dot warning"></span> warning flag</span>
+            <span class="mk-item"><span class="mk-dot critical"></span> critical flag</span>
+            <span class="mk-item"><span class="mk-dot neutral"></span> no recent contact</span>
+          </div>
+        </div>
+      </div>
+      <p class="sheet-note" style="margin-top:-4px;">Click any marker → sheet 01B, scoped to that hull (<code>GET /readiness?scope=asset&amp;id=</code>, doc 04 §5). Positions are generated for this demonstration only — document 07 records no public source for real fleet disposition, and none is used here.</p>
+
+      <div class="grid cols-2">
+        <div class="kpi"><span class="k-label">Open Risk Flags</span><span class="k-value critical">11</span><span class="k-sub">4 critical · 7 warning</span></div>
+        <div class="kpi"><span class="k-label">Restricted Contributors</span><span class="k-value">—</span><span class="k-sub">present: <b>no</b> — doc 03 §7.3</span></div>
+      </div>
+
+      <div class="box">
+        <span class="box-label">Risk flags</span>
+        <div class="box-content table-scroll">
+          <table class="wf">
+            <thead><tr><th>Hull</th><th>Installed item</th><th>Predicted category</th><th>Horizon</th><th>State</th></tr></thead>
+            <tbody>
+              <tr><td>DDG 113</td><td>SSDG No. 2</td><td>CAT 3</td><td>18d</td><td><span class="chip critical"><span class="dot"></span>raised</span></td></tr>
+              <tr><td>SSN 796</td><td>Trim pump A</td><td>CAT 2</td><td>41d</td><td><span class="chip warning"><span class="dot"></span>raised</span></td></tr>
+              <tr><td>DDG 51</td><td>Main feed pump</td><td>CAT 3</td><td>—</td><td><span class="chip good"><span class="dot"></span>cleared</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="row wrap-mobile">
+        <div class="col box">
+          <span class="box-label">Rollup by TYCOM / class</span>
+          <div class="box-content">
+            <table class="wf">
+              <thead><tr><th>Class</th><th>Hulls</th><th class="num">Readiness</th></tr></thead>
+              <tbody>
+                <tr><td>DDG 51 Flt IIA</td><td>5</td><td class="num">81%</td></tr>
+                <tr><td>VIRGINIA Blk IV</td><td>3</td><td class="num">72%</td></tr>
+                <tr><td>Unmanned (UUV/USV)</td><td>4</td><td class="num">85%</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="col box">
+          <span class="box-label">Explanation graph — click any score</span>
+          <div class="box-content placeholder-fig">score → contributing degradations → source predictions / casualties / shortfalls (doc 04 §5 decomposability)</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== SHEET 01B — VEHICLE DETAIL ===================== -->
+  <section class="sheet" id="s1b">
+    <div class="titleblock">
+      <div class="tb-left">
+        <span class="sheet-no">SHEET 01B / FLEET STATUS &amp; READINESS — DRILL-DOWN</span>
+        <h2>Vehicle Detail</h2>
+        <span class="persona">Vehicle Readiness Officer — reached by selecting a hull on sheet 01</span>
+      </div>
+      <div class="tb-right">Doc 04 §5<br><code>scope=asset</code></div>
+    </div>
+    <div class="sheet-body">
+      <p class="sheet-note">Same four-metric shape as the Fleet Overview, re-scoped to one hull rather than the fleet — <code>GET /readiness?scope=asset&amp;id=</code> against the identical rollup formula (doc 04 §5, the weight-renormalized power mean, exclusion-stable when a compartmented contributor is not visible to this viewer). Nothing here is a second mechanism.</p>
+      <div class="row wrap-mobile">
+        <span class="chip neutral">DDG 113 · UIC 21487</span>
+        <span class="chip neutral">Class DDG 51 Flt IIA</span>
+        <span class="chip good">OFRP: Sustainment</span>
+        <button class="btn ghost" style="margin-left:auto;">← back to fleet map</button>
+      </div>
+      <div class="grid cols-4">
+        <div class="kpi"><span class="k-label">Hull Readiness</span><span class="k-value good">78%</span><span class="k-sub">rank 6 of 12 in class</span></div>
+        <div class="kpi"><span class="k-label">Warning Lead-Time Coverage</span><span class="k-value">71%</span><span class="k-sub">this hull vs. 64% fleet-wide</span></div>
+        <div class="kpi"><span class="k-label">Open Risk Flags</span><span class="k-value warning">2</span><span class="k-sub">0 critical · 2 warning</span></div>
+        <div class="kpi"><span class="k-label">Restricted Contributors</span><span class="k-value">—</span><span class="k-sub">present: <b>no</b></span></div>
+      </div>
+      <div class="row wrap-mobile">
+        <div class="col box">
+          <span class="box-label">This hull's risk flags</span>
+          <div class="box-content">
+            <table class="wf">
+              <thead><tr><th>Installed item</th><th>Predicted category</th><th>Horizon</th><th>State</th></tr></thead>
+              <tbody>
+                <tr><td>SSDG No. 2</td><td>CAT 3</td><td>18d</td><td><span class="chip critical"><span class="dot"></span>raised</span></td></tr>
+                <tr><td>Aux seawater vlv</td><td>class_estimate</td><td>90d</td><td><span class="chip warning"><span class="dot"></span>raised</span></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="col box">
+          <span class="box-label">Rollup by system (ESWBS)</span>
+          <div class="box-content">
+            <table class="wf">
+              <thead><tr><th>System</th><th class="num">Readiness</th></tr></thead>
+              <tbody>
+                <tr><td>233 — Propulsion</td><td class="num">64%</td></tr>
+                <tr><td>300 — Electrical</td><td class="num">91%</td></tr>
+                <tr><td>500 — Auxiliary</td><td class="num">85%</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      <div class="row wrap-mobile">
+        <button class="btn primary">Open full asset browser →</button>
+        <button class="btn">View maintenance history</button>
+        <button class="btn">View predictions</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== SHEET 02 — REGISTRY ===================== -->
+  <section class="sheet" id="s2">
+    <div class="titleblock">
+      <div class="tb-left">
+        <span class="sheet-no">SHEET 02 / ASSET &amp; CONFIGURATION REGISTRY</span>
+        <h2>Asset Browser</h2>
+        <span class="persona">Maintainer, Planner, Vehicle Readiness Officer — entry point to a specific hull</span>
+      </div>
+      <div class="tb-right">Doc 04 §2<br>Doc 07 §3</div>
+    </div>
+    <div class="sheet-body">
+      <div class="row wrap-mobile">
+        <div class="col box" style="flex: 0 0 260px;">
+          <span class="box-label">Asset search</span>
+          <div class="box-content">
+            <table class="wf">
+              <thead><tr><th>Hull</th><th>Domain</th></tr></thead>
+              <tbody>
+                <tr><td><b>DDG 113</b></td><td>surface</td></tr>
+                <tr><td>SSN 796</td><td>subsurface</td></tr>
+                <tr><td>UUV-004</td><td>unmanned</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="col box">
+          <span class="box-label">Selected asset — DDG 113 · UIC 21487</span>
+          <div class="box-content">
+            <div class="row wrap-mobile">
+              <span class="chip neutral">Class DDG 51 Flt IIA</span>
+              <span class="chip neutral">Domain: surface</span>
+              <span class="chip good">OFRP: Sustainment</span>
+            </div>
+            <p style="font-size:11px;color:var(--ink-soft);margin:8px 0 0;">Hull rendered with a space, never a hyphen — SECNAVINST 5030.8D. (doc 07 §3.5)</p>
+          </div>
+        </div>
+      </div>
+      <div class="row wrap-mobile">
+        <div class="col box">
+          <span class="box-label">System / position / installed-item tree</span>
+          <div class="box-content tree">
+            <ul>
+              <li>233 — Propulsion <span class="tag">ESWBS, HSC-variant per HSCI</span>
+                <ul>
+                  <li>Position 233-04-A <span class="tag">outlives items</span>
+                    <ul><li>Installed item: Feed pump #A19381 <span class="tag">IUID</span></li></ul>
+                  </li>
+                </ul>
+              </li>
+              <li>300 — Electrical
+                <ul><li>Position 300-11-B</li></ul>
+              </li>
+            </ul>
+          </div>
+        </div>
+        <div class="col box">
+          <span class="box-label">Configuration baseline</span>
+          <div class="box-content">
+            <div class="row" style="gap:8px;">
+              <span class="chip neutral">as_of: 2026-08-01</span>
+              <span class="chip neutral">as_known_at: today</span>
+            </div>
+            <p style="font-size:11px;color:var(--ink-soft);margin:8px 0 0;">Bitemporal toggle — "what was installed" vs. "what we believed was installed" (doc 03 §4). Baseline epoch: <b>17</b>.</p>
+            <div style="margin-top:8px;"><span class="chip neutral">Allowance docs: COSAL · APL · AEL</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== SHEET 03 — TELEMETRY ===================== -->
+  <section class="sheet" id="s3">
+    <div class="titleblock">
+      <div class="tb-left">
+        <span class="sheet-no">SHEET 03 / CONDITION &amp; TELEMETRY</span>
+        <h2>Channel &amp; Health View</h2>
+        <span class="persona">Maintainer — per-item condition monitoring</span>
+      </div>
+      <div class="tb-right">Doc 04 §3</div>
+    </div>
+    <div class="sheet-body">
+      <p class="sheet-note">Domain note: submarine channels arrive burst-on-reconnect (gaps expected); unmanned channels exist only within sortie windows. Completeness is shown, not hidden.</p>
+      <div class="box">
+        <span class="box-label">Channels — Feed pump #A19381</span>
+        <div class="box-content table-scroll">
+          <table class="wf">
+            <thead><tr><th>Health indicator</th><th>Current</th><th>Trend</th><th>Completeness</th></tr></thead>
+            <tbody>
+              <tr>
+                <td>Bearing vibration RMS</td><td class="num">3.4 mm/s</td>
+                <td>
+                  <svg class="spark" width="90" height="26" viewBox="0 0 90 26">
+                    <line class="grid" x1="0" y1="20" x2="90" y2="20"></line>
+                    <path class="area" d="M0,18 L15,17 L30,14 L45,15 L60,9 L75,7 L90,4 L90,26 L0,26 Z"></path>
+                    <polyline class="line" points="0,18 15,17 30,14 45,15 60,9 75,7 90,4"></polyline>
+                    <circle class="end" cx="90" cy="4" r="2.4"></circle>
+                  </svg>
+                </td>
+                <td><span class="chip good">98%</span></td>
+              </tr>
+              <tr><td>Lube-oil temperature</td><td class="num">61°C</td><td class="hatch" style="height:26px;"></td><td><span class="chip warning">71%</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="box">
+        <span class="box-label">Recent missions</span>
+        <div class="box-content">
+          <table class="wf">
+            <thead><tr><th>Mission</th><th>Type</th><th>Period</th><th>Completeness</th></tr></thead>
+            <tbody>
+              <tr><td>Patrol 26-3</td><td>underway</td><td>14d</td><td><span class="chip good">100%</span></td></tr>
+              <tr><td>Sortie 0442</td><td>UUV sortie</td><td>6h</td><td><span class="chip good">100%</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== SHEET 04 — PdM ===================== -->
+  <section class="sheet" id="s4">
+    <div class="titleblock">
+      <div class="tb-left">
+        <span class="sheet-no">SHEET 04 / PREDICTIVE MAINTENANCE</span>
+        <h2>Fleet-Risk Triage</h2>
+        <span class="persona">Maintainer, Planner — ranked prediction review</span>
+      </div>
+      <div class="tb-right">Doc 03 §7.1<br>Doc 06 §3</div>
+    </div>
+    <div class="sheet-body">
+      <div class="box">
+        <span class="box-label">Triage — ranked by expected consequence</span>
+        <div class="box-content table-scroll">
+          <table class="wf">
+            <thead><tr><th>NIIN</th><th>Installed item</th><th>Tier</th><th>Reference class</th><th>P(failure) / rate</th><th>Horizon</th><th>Top factor</th></tr></thead>
+            <tbody>
+              <tr><td>013479201</td><td>SSDG No. 2</td><td>3</td><td>item</td><td class="num">0.31</td><td class="num">18d</td><td>bearing vibration ↑</td></tr>
+              <tr><td>004821190</td><td>Trim pump A</td><td>2</td><td>item</td><td class="num">0.12</td><td class="num">41d</td><td>lube temp drift</td></tr>
+              <tr><td>070991002</td><td>Aux seawater vlv</td><td>0</td><td>class_estimate</td><td><span class="chip neutral">uncalibrated<br><span style="font-weight:400;">pop. hazard only</span></span></td><td class="num">90d</td><td>—</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p style="font-size:11px;color:var(--annotation);font-family:var(--font-annotation);margin-top:6px;">A null <code>p_failure</code> (calibration population &lt; 50) renders as "uncalibrated," never as zero risk — doc 03 §7.1.</p>
+      </div>
+      <div class="row wrap-mobile">
+        <div class="col box">
+          <span class="box-label">Item deep-dive — SSDG No. 2</span>
+          <div class="box-content placeholder-fig">RUL distribution — p10 / p50 / p90 range bar, unit: engine operating hours</div>
+          <div class="box-content" style="margin-top:8px;">
+            <table class="wf">
+              <thead><tr><th>Contributing factor</th><th class="num">Stability</th></tr></thead>
+              <tbody>
+                <tr><td>Bearing vibration RMS</td><td class="num">0.86</td></tr>
+                <tr><td>Lube-oil temperature</td><td class="num">0.52</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="col box">
+          <span class="box-label">What-if scenario <span class="chip accent" style="margin-left:6px;">tier-3 · interactive</span></span>
+          <div class="box-content placeholder-fig">adjust usage / deferral inputs → recomputed RUL (Domino Endpoint)</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== SHEET 05 — SCHEDULING ===================== -->
+  <section class="sheet" id="s5">
+    <div class="titleblock">
+      <div class="tb-left">
+        <span class="sheet-no">SHEET 05 / MAINTENANCE EXECUTION &amp; SCHEDULING</span>
+        <h2>Work Package Planner</h2>
+        <span class="persona">RMC / Availability Planner</span>
+      </div>
+      <div class="tb-right">Doc 04 §6</div>
+    </div>
+    <div class="sheet-body">
+      <div class="box">
+        <span class="box-label">Work candidates</span>
+        <div class="box-content table-scroll">
+          <table class="wf">
+            <thead><tr><th>Item</th><th>Driver</th><th>Priority</th></tr></thead>
+            <tbody>
+              <tr><td>SSDG No. 2 bearing</td><td><span class="chip accent">prediction</span></td><td>high</td></tr>
+              <tr><td>Feed pump PMS</td><td><span class="chip neutral">PMS</span></td><td>routine</td></tr>
+              <tr><td>Trim pump A</td><td><span class="chip critical">casualty</span></td><td>urgent</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="box">
+        <span class="box-label">Availability: DSRA 26-1 — candidate assignment</span>
+        <div class="box-content table-scroll">
+          <table class="wf">
+            <thead><tr><th>Item</th><th>Status</th><th>Reason</th></tr></thead>
+            <tbody>
+              <tr><td>SSDG No. 2 bearing</td><td><span class="chip good">included</span></td><td>within window, parts on hand</td></tr>
+              <tr><td>Feed pump PMS</td><td><span class="chip critical">excluded</span></td><td>merged into bearing job — same position</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p style="font-size:11px;color:var(--ink-soft);margin-top:6px;">Every included <em>and</em> excluded candidate carries a reason — doc 04 §6.</p>
+      </div>
+      <div class="box">
+        <span class="box-label">Deferral log</span>
+        <div class="box-content">
+          <table class="wf">
+            <thead><tr><th>Item</th><th>Reason class</th></tr></thead>
+            <tbody><tr><td>Aux seawater valve</td><td><span class="chip neutral">capacity</span></td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== SHEET 06 — SUPPLY ===================== -->
+  <section class="sheet" id="s6">
+    <div class="titleblock">
+      <div class="tb-left">
+        <span class="sheet-no">SHEET 06 / SUPPLY CHAIN &amp; INVENTORY</span>
+        <h2>Stock &amp; Requisition View</h2>
+        <span class="persona">Supply Officer, Planner</span>
+      </div>
+      <div class="tb-right">Doc 04 §7<br>Doc 07 §4</div>
+    </div>
+    <div class="sheet-body">
+      <div class="row wrap-mobile">
+        <div class="col box">
+          <span class="box-label">Stock / allowance — NIIN 013479201</span>
+          <div class="box-content">
+            <table class="wf">
+              <tbody>
+                <tr><td>On-hand</td><td class="num">2</td></tr>
+                <tr><td>Allowance</td><td class="num">3</td></tr>
+                <tr><td>Condition</td><td><span class="chip good">A</span></td></tr>
+                <tr><td>Lead time</td><td class="num">14d</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="col box">
+          <span class="box-label">Reservation set — RS-00219 <span class="chip warning" style="margin-left:6px;">TTL 03:58:02</span></span>
+          <div class="box-content">
+            <table class="wf">
+              <thead><tr><th>NIIN</th><th class="num">Qty</th></tr></thead>
+              <tbody><tr><td>013479201</td><td class="num">1</td></tr></tbody>
+            </table>
+            <p style="font-size:11px;color:var(--ink-soft);margin-top:6px;">Atomic confirm — all lines succeed or the set rolls back.</p>
+          </div>
+        </div>
+      </div>
+      <div class="box">
+        <span class="box-label">Requisition tracker</span>
+        <div class="box-content table-scroll">
+          <table class="wf">
+            <thead><tr><th>Doc no.</th><th>NIIN</th><th>Status</th><th>Priority</th></tr></thead>
+            <tbody><tr><td>N0021826058A102</td><td>013479201</td><td><span class="chip warning">BB — backordered</span></td><td>02</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="box"><span class="box-label">Demand forecast</span><div class="box-content placeholder-fig">predicted consumption, 90-day horizon — feeds allowance review</div></div>
+    </div>
+  </section>
+
+  <!-- ===================== SHEET 07 — PMA ===================== -->
+  <section class="sheet" id="s7">
+    <div class="titleblock">
+      <div class="tb-left">
+        <span class="sheet-no">SHEET 07 / POST-MISSION ANALYSIS</span>
+        <h2>Bounded Review Queue</h2>
+        <span class="persona">Ship's Force Maintainer</span>
+      </div>
+      <div class="tb-right">Doc 06 §6<br>Cap: 12 · ~45s/candidate</div>
+    </div>
+    <div class="sheet-body">
+      <p class="sheet-note">15% of candidates are seeded canaries with planted ground truth, presented <em>indistinguishably</em> from real candidates — this is how recall is measured. (doc 06 §6)</p>
+      <div class="box">
+        <span class="box-label">Mission: Patrol 26-3 — candidate 3 of 9</span>
+        <div class="box-content">
+          <div class="row wrap-mobile">
+            <div class="col placeholder-fig" style="flex:0 0 220px;">evidence — telemetry window snippet</div>
+            <div class="col">
+              <p style="margin:0 0 8px;">Window 04:12–04:19 · Feed pump #A19381 · vibration + temperature co-excursion</p>
+              <div class="row" style="gap:8px;">
+                <button class="btn primary">Confirm</button>
+                <button class="btn">Reject</button>
+                <button class="btn ghost">Escalate</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="box">
+        <span class="box-label">Review history</span>
+        <div class="box-content">
+          <table class="wf">
+            <thead><tr><th>Mission</th><th>Tags confirmed</th><th>Duration</th><th>Reviewer</th></tr></thead>
+            <tbody><tr><td>Sortie 0441</td><td class="num">4</td><td class="num">8m 20s</td><td>PO2 Alvarez <span class="chip neutral">qualified</span></td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== SHEET 08 — FAILURE INTELLIGENCE ===================== -->
+  <section class="sheet" id="s8">
+    <div class="titleblock">
+      <div class="tb-left">
+        <span class="sheet-no">SHEET 08 / FAILURE INTELLIGENCE</span>
+        <h2>Hypothesis Adjudication</h2>
+        <span class="persona">Reliability Engineer (practitioner)</span>
+      </div>
+      <div class="tb-right">Doc 04 §9</div>
+    </div>
+    <div class="sheet-body">
+      <p class="sheet-note">Outputs are <b>adjudicated hypotheses</b>, never automated conclusions — a strength scale is shown, not a bare "confidence" number. (doc 04 §9)</p>
+      <div class="box">
+        <span class="box-label">Open hypotheses</span>
+        <div class="box-content table-scroll">
+          <table class="wf">
+            <thead><tr><th>Failure mode</th><th>Method</th><th>Evidence strength</th><th>State</th></tr></thead>
+            <tbody>
+              <tr><td>ELP — external leakage, process</td><td>survival + covariates</td><td>
+                <div style="display:flex;gap:2px;">
+                  <span style="width:14px;height:8px;background:var(--accent);display:inline-block;"></span>
+                  <span style="width:14px;height:8px;background:var(--accent);display:inline-block;"></span>
+                  <span style="width:14px;height:8px;background:var(--line-soft);display:inline-block;"></span>
+                </div>
+              </td><td><span class="chip warning">pending adjudication</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="box">
+        <span class="box-label">Adjudication panel — ELP hypothesis</span>
+        <div class="box-content">
+          <span class="chip good">confounding check: propensity modeled</span>
+          <div class="row" style="gap:8px;margin-top:10px;">
+            <button class="btn primary">Approve → admit as causal feature</button>
+            <button class="btn">Reject — retain as negative finding</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== SHEET 09 — DESIGN ADVISORY ===================== -->
+  <section class="sheet" id="s9">
+    <div class="titleblock">
+      <div class="tb-left">
+        <span class="sheet-no">SHEET 09 / SYSTEM TEST &amp; DESIGN ADVISORY</span>
+        <h2>Redesign Case Builder</h2>
+        <span class="persona">PEO / Design Engineer</span>
+      </div>
+      <div class="tb-right">Doc 04 §10</div>
+    </div>
+    <div class="sheet-body">
+      <p class="sheet-note">This sub-application assembles a <b>decision package</b>, never a decision. Causal findings are cited at their original evidence strength — never upgraded.</p>
+      <div class="row wrap-mobile">
+        <div class="col box">
+          <span class="box-label">Dossier — NIIN 013479201</span>
+          <div class="box-content">
+            <ul style="margin:0;padding-left:18px;font-size:12px;">
+              <li>Field failures: 6 over 24mo</li>
+              <li>Causal finding: ELP hypothesis <span class="chip warning" style="margin-left:4px;">strength: moderate</span> (cited, not restated)</li>
+              <li>Test data: <span class="chip critical">no qualification record found</span></li>
+            </ul>
+          </div>
+        </div>
+        <div class="col box">
+          <span class="box-label">Dependency impact <span class="chip neutral" style="margin-left:6px;">72% graph completeness</span></span>
+          <div class="box-content">
+            <svg width="100%" height="90" viewBox="0 0 260 90" role="img" aria-label="dependency graph placeholder">
+              <circle cx="40" cy="45" r="14" fill="none" stroke="var(--ink)"></circle>
+              <circle cx="130" cy="20" r="10" fill="none" stroke="var(--line)"></circle>
+              <circle cx="130" cy="70" r="10" fill="none" stroke="var(--line)"></circle>
+              <circle cx="220" cy="45" r="10" fill="none" stroke="var(--line)" stroke-dasharray="3 3"></circle>
+              <line x1="54" y1="45" x2="120" y2="24" stroke="var(--line)"></line>
+              <line x1="54" y1="45" x2="120" y2="65" stroke="var(--line)"></line>
+              <line x1="140" y1="22" x2="210" y2="42" stroke="var(--line)" stroke-dasharray="3 3"></line>
+            </svg>
+          </div>
+        </div>
+      </div>
+      <div class="box">
+        <span class="box-label">Cost estimate — two-stage</span>
+        <div class="box-content">
+          <div class="row" style="gap:14px;align-items:center;">
+            <span class="chip good">parametric: qualified</span>
+            <span>→</span>
+            <span class="chip accent">gate: priority ≥ threshold</span>
+            <span>→</span>
+            <span class="chip neutral">detailed: pending</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== SHEET 10 — ADJUDICATION QUEUE ===================== -->
+  <section class="sheet" id="s10">
+    <div class="titleblock">
+      <div class="tb-left">
+        <span class="sheet-no">SHEET 10 / CROSS-CUTTING</span>
+        <h2>Unified Adjudication Queue</h2>
+        <span class="persona">All roles — gateway-composed</span>
+      </div>
+      <div class="tb-right">Doc 03 §7.2, §7.2.1</div>
+    </div>
+    <div class="sheet-body">
+      <div class="box">
+        <span class="box-label">Pending proposals — 7</span>
+        <div class="box-content table-scroll">
+          <table class="wf">
+            <thead><tr><th>Kind</th><th>Target</th><th>Authority required</th><th>Blast radius</th><th>Status</th></tr></thead>
+            <tbody>
+              <tr><td>anomaly_tag</td><td>PMA</td><td>maintainer</td><td>item</td><td><span class="chip warning">proposed</span></td></tr>
+              <tr><td>interval_change</td><td>Scheduling</td><td>fleet_authority <span class="chip critical" style="margin-left:4px;">dual control</span></td><td>class</td><td><span class="chip neutral">claimed</span></td></tr>
+              <tr><td>redesign_case</td><td>Design Advisory</td><td>design_authority</td><td>asset</td><td><span class="chip warning">proposed</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="box">
+        <span class="box-label">Adjudication panel — interval_change (class scope)</span>
+        <div class="box-content">
+          <p style="font-size:12px;margin:0 0 8px;">Evidence: 3 records · 1 causal finding (moderate strength) · source_trust: program</p>
+          <div class="row" style="gap:8px;">
+            <button class="btn primary">Approve — signature 1 of 2</button>
+            <button class="btn">Reject</button>
+          </div>
+          <p style="font-size:11px;color:var(--ink-soft);margin-top:6px;">Dual control required at class/fleet scope — doc 03 §7.2.1.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== SHEET 11 — AUDIT REMEDIATION ===================== -->
+  <section class="sheet" id="s11">
+    <div class="titleblock">
+      <div class="tb-left">
+        <span class="sheet-no">SHEET 11 / AUDIT &amp; PROVENANCE</span>
+        <h2>Remediation &amp; Purge Queue</h2>
+        <span class="persona">Security Officer (ISSM / ISSO) — new authority class</span>
+      </div>
+      <div class="tb-right">Doc 03 §7.2.1<br>Amendments 03-1, 03-2</div>
+    </div>
+    <div class="sheet-body">
+      <p class="sheet-note"><b>No agent may ever create or adjudicate a <code>purge</code> or <code>rewrap</code> proposal — no exception.</b> Every other proposal kind in this system permits an agent to propose while a human adjudicates; this is the one row where the standing rule blocks the agent on both ends, because the act is classification-adjacent and irreversible, not operational (doc 03 §7.2.1, §7.2).</p>
+      <div class="box">
+        <span class="box-label">Pending remediations — 2</span>
+        <div class="box-content table-scroll">
+          <table class="wf">
+            <thead><tr><th>Kind</th><th>Store</th><th>Blast radius</th><th>Signatures</th><th>Status</th></tr></thead>
+            <tbody>
+              <tr><td>purge</td><td>telemetry read model</td><td>item</td><td>security_officer — 1 of 1</td><td><span class="chip warning">proposed</span></td></tr>
+              <tr><td>rewrap</td><td>audit + 4 read models</td><td>class</td><td>security_officer + <span class="chip critical" style="margin-left:2px;">fleet_authority ctr-sig</span></td><td><span class="chip neutral">claimed</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="row wrap-mobile">
+        <div class="col box">
+          <span class="box-label">Adjudication panel — purge, item scope</span>
+          <div class="box-content">
+            <p style="font-size:12px;margin:0 0 8px;">Selector: installed_item_id = A19381 · classification: spillage remediation · reason: mislabeled payload</p>
+            <div class="row" style="gap:8px;">
+              <button class="btn primary">Approve — execute purge</button>
+              <button class="btn">Reject</button>
+            </div>
+            <p style="font-size:11px;color:var(--ink-soft);margin-top:6px;">Item/asset scope: <code>security_officer</code> + dual control. Class/fleet scope adds a <code>fleet_authority</code> counter-signature (doc 03 §7.2.1 minimum-authority table).</p>
+          </div>
+        </div>
+        <div class="col box">
+          <span class="box-label">Dissemination ledger — who holds a copy</span>
+          <div class="box-content">
+            <table class="wf">
+              <thead><tr><th>Holder store</th><th>Node</th><th>Materialized</th></tr></thead>
+              <tbody>
+                <tr><td>telemetry read model</td><td>enterprise</td><td><span class="chip good">yes</span></td></tr>
+                <tr><td>pdm read model</td><td>enterprise</td><td><span class="chip good">yes</span></td></tr>
+                <tr><td>telemetry read model</td><td>edge:SSN-796</td><td><span class="chip neutral">pending ack</span></td></tr>
+              </tbody>
+            </table>
+            <p style="font-size:11px;color:var(--ink-soft);margin-top:6px;">Populated from every inbox apply and every <code>changed_since</code> rebuild — not omniscient, and the receipt says so (doc 32-audit.md §4.6, doc 11 §10.5).</p>
+          </div>
+        </div>
+      </div>
+      <div class="box">
+        <span class="box-label">Signed receipt — purge PRG-00441</span>
+        <div class="box-content">
+          <table class="wf">
+            <thead><tr><th>Store</th><th>Legally immutable / append-only</th><th>Mechanism</th></tr></thead>
+            <tbody>
+              <tr><td>telemetry read model</td><td>append-only</td><td>crypto-shred (KEK destroyed)</td></tr>
+              <tr><td>vector index (knowledge-retrieval)</td><td>append-only</td><td>physical row delete + partition rebuild</td></tr>
+              <tr><td>audit ledger</td><td><span class="chip warning">legally immutable</span></td><td>re-wrapped upward, never shredded</td></tr>
+            </tbody>
+          </table>
+          <p style="font-size:11px;color:var(--annotation);font-family:var(--font-annotation);margin-top:6px;">Vector embeddings are the one documented exception to crypto-shred — encryption would defeat the nearest-neighbor search it exists to serve, so purge here is physical deletion, never a key destroyed (doc 03 §13 item 5).</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer class="foot">
+    Drawn against docs 01 / 03 / 04 / 06 / 07 / 32 as of the current session. Every field, chip, and table column above corresponds to a real schema element — where a value looks specific (an EIC, a NIIN, a hull number, a map position), it is illustrative, not a claim about real Navy data or real fleet disposition. Rev 2 adds the fleet map (01), the vehicle drill-down (01B), and the security officer's remediation queue (11) against this round's feedback — say if any persona is missing, wrongly scoped, or should be merged with another, and this gets redrawn again.
+  </footer>
+
+</div>
