@@ -781,6 +781,23 @@ with `target_sub_app = audit`, published on `fathom.audit.proposal.v1` per docum
               Legally-immutable members -> convert to re-wrap (§5.10). Legal hold ->
               REFUSE.
 
+ 4a COUNTER-SIGN  [AMENDMENT] At class or fleet blast radius ONLY (§6.1's table):
+              a THIRD, distinct signatory holding `fleet_authority` calls
+              POST /purges/{id}/counter-sign, an operation separate from
+              adjudicate (10 §4.7's `requires_counter_signature`; 31-auth.md
+              §6.4's dedicated `counter_sign` action and Rego rule). NOT a
+              substitute for phase 4's two security_officer signatures and not
+              satisfiable by either of them (10 §4.7 rejects a
+              counter-signature identical to either adjudicator). At item/asset
+              scope this phase is skipped entirely -- dual control alone is
+              sufficient there, and `requires_counter_signature` is false by
+              construction (10 §4.7's `_counter_signature_required_at_scope`).
+              Phase 5 does not begin until this phase's gate passes wherever
+              it applies -- the same "no execution before authority is
+              complete" property phase 4 already enforces for dual control,
+              extended to the third signature the table itself already
+              required but no operation existed to record.
+
  5 EXECUTE    Per §6.3's order: leaves inward, audit last, HSM key destruction last
               of all. Each holder returns a signed purge receipt; each receipt is an
               append-only audit record.
@@ -1200,6 +1217,7 @@ Base path `/api/v1/audit/` (document 03 §4, document 09 §7.1). Every operation
 | `GET /proposals?changed_since=&cursor=` | required | none | **[AMENDMENT]** Missing until now — the rebuild path `30-gateway.md` §4.3/§4.7 requires of every producer under 03 §4 obligation 5, now that the gateway's queue actually subscribes to this service's proposals (§6.1) |
 | `POST /proposals/{id}/claim` | required | state-changing | Lease. Triggers phase 2 containment (§6.2) |
 | `PATCH /proposals/{id}` | required | state-changing | Adjudication. `If-Match` required (D16, document 09 §5.4). Dual control enforced per §6.1 |
+| `POST /purges/{id}/counter-sign` **[AMENDMENT]** | required | state-changing | Phase 4a (§6.2). Distinct from `PATCH /proposals/{id}` — a `fleet_authority` counter-signature is a THIRD action from a THIRD person, never satisfiable by either dual-control adjudicator (10 §4.7). Refuses `409` `already-counter-signed` (idempotency-keyed), `422` `counter-signature-not-required` where `requires_counter_signature` is false (item/asset scope), and `403` where the caller is `adjudicated_by` or `second_adjudicator`. `If-Match` required, same reason as adjudication (D16) |
 | `GET /purges` · `GET /purges/{id}` | required | none | State machine, sealed closure, per-store receipts, pending nodes |
 | `GET /purges/{id}/certificate` | required | none | The certificate of §6.6, with §5.9's four proofs. **Query projection carve-out** |
 | `POST /audit/remediation-receipts` | required | state-changing | A holder reporting a receipt for a purge it learned of via the **event** rather than the command (§6.5) |

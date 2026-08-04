@@ -2325,6 +2325,15 @@ reasoning is data-destruction/re-encryption safety, not external legal
 effect — so the two are never merged into one bucket even though both feed
 `_dual_control_required_at_scope` below."""
 
+COUNTER_SIGNATURE_REQUIRED_KINDS: frozenset[ProposalKind] = frozenset(
+    {ProposalKind.PURGE, ProposalKind.REWRAP}
+)
+"""Kinds requiring a THIRD, additional `fleet_authority` counter-signature —
+never a substitute for `ALWAYS_DUAL_CONTROL_KINDS`'s two `security_officer`
+signatures, always on top of them — at class or fleet blast radius only
+(32-audit.md §6.1's table; item/asset scope needs dual control alone).  Feeds
+`_counter_signature_required_at_scope` below."""
+
 
 class Proposal(FathomModel):
     """Document 03 §7.2 `Proposal`.
@@ -2480,6 +2489,19 @@ class Proposal(FathomModel):
     counter_signature_at: UtcDateTime | None = Field(
         default=None, description="Counter-signature.  Document 03 §7.2."
     )
+    requires_counter_signature: bool = Field(
+        description=(
+            "[AMENDMENT] True for `purge`/`rewrap` at class or fleet blast "
+            "radius only (32-audit.md §6.1's table) — never a substitute for "
+            "`requires_dual_control`, always in addition to it. Previously "
+            "absent from this model entirely: `31-auth.md`'s Rego policy "
+            "reads `input.resource.requires_counter_signature` (§6.4's "
+            "`counter_signature_required` rule) against a field the resource "
+            "it is evaluating never carried, so the policy input's own "
+            "authoritative source for this flag did not exist. Enforced by "
+            "`_counter_signature_required_at_scope` below."
+        )
+    )
     classification: ClassificationLabel = Field(
         description="Document 03 §7.2 and principle 7."
     )
@@ -2514,6 +2536,34 @@ class Proposal(FathomModel):
                 f"{self.kind.value!r}: dual control is mandatory at class and "
                 "fleet scope, for any kind with external legal effect, and for "
                 "purge/rewrap at every scope (document 03 §7.2 rule 4  [D16])"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _counter_signature_required_at_scope(self) -> Self:
+        """[AMENDMENT] `32-audit.md` §6.1's table: purge/rewrap at class or
+        fleet scope requires a fleet_authority counter-signature ON TOP OF
+        dual control's two security_officers, never instead of them.  Mirrors
+        `_dual_control_required_at_scope` above so a malformed row (one
+        claiming the counter-signature is not required when the matrix says
+        it is) is rejected at construction."""
+        mandatory = (
+            self.kind in COUNTER_SIGNATURE_REQUIRED_KINDS
+            and self.blast_radius in (BlastRadius.CLASS, BlastRadius.FLEET)
+        )
+        if mandatory and not self.requires_counter_signature:
+            raise ValueError(
+                f"blast_radius={self.blast_radius.value!r}, kind="
+                f"{self.kind.value!r}: a fleet_authority counter-signature is "
+                "mandatory for purge/rewrap at class or fleet scope, on top "
+                "of dual control (32-audit.md §6.1)"
+            )
+        if self.requires_counter_signature and not mandatory:
+            raise ValueError(
+                f"blast_radius={self.blast_radius.value!r}, kind="
+                f"{self.kind.value!r}: requires_counter_signature=True is not "
+                "valid here — only purge/rewrap at class/fleet scope carries "
+                "this requirement (32-audit.md §6.1)"
             )
         return self
 
@@ -2590,11 +2640,32 @@ class Proposal(FathomModel):
                         f"{self.adjudicated_by!r} appears as both (document 03 "
                         "§7.2 rule 4  [D16])"
                     )
+            if self.requires_counter_signature:
+                if not (self.counter_signature_by and self.counter_signature_at):
+                    raise ValueError(
+                        f"status={self.status.value!r} with "
+                        "requires_counter_signature=True requires "
+                        "`counter_signature_by` and `counter_signature_at` "
+                        "(32-audit.md §6.1) — approval must not proceed on "
+                        "dual control alone when a counter-signature is "
+                        "also mandatory"
+                    )
+                if self.counter_signature_by in (self.adjudicated_by, self.second_adjudicator):
+                    raise ValueError(
+                        "the counter-signature must be a THIRD, distinct "
+                        f"signatory; {self.counter_signature_by!r} already "
+                        "appears as an adjudicator (32-audit.md §6.1)"
+                    )
         else:
             if self.second_adjudicator or self.second_adjudicated_at:
                 raise ValueError(
                     f"status={self.status.value!r} is not adjudicated, so no "
                     "second-adjudicator fields may be set (document 03 §7.2)"
+                )
+            if self.counter_signature_by or self.counter_signature_at:
+                raise ValueError(
+                    f"status={self.status.value!r} is not adjudicated, so no "
+                    "counter-signature fields may be set (32-audit.md §6.1)"
                 )
         return self
 

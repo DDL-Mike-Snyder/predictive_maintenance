@@ -166,6 +166,8 @@ CREATE TABLE proposal_queue (
   authority_class            text        NOT NULL,                 -- 03 §7.2.1 vocabulary [D16]
   blast_radius               text        NOT NULL,                 -- item|asset|class|fleet [D16]
   requires_dual_control      boolean     NOT NULL,                 -- 03 §7.2 rule 4 [D16]
+  requires_counter_signature boolean     NOT NULL,                 -- [AMENDMENT] 32-audit.md §6.1;
+                                                                    --   10 §4.7's field of the same name
 
   -- ── scope, for filtering a queue to a hull, a system, or an item ──────────
   scope                      text        NOT NULL,                 -- 03 §5.4 `scope` [C11]
@@ -242,6 +244,16 @@ CREATE TABLE proposal_queue (
     CHECK (requires_dual_control OR (blast_radius NOT IN ('class', 'fleet')
                                      AND kind NOT IN ('requisition', 'purge', 'rewrap'))),
 
+  -- [AMENDMENT] Mirrors 10-shared-packages.md's new
+  -- _counter_signature_required_at_scope validator, same reason as the
+  -- dual-control CHECK above: a malformed upstream row must not enter the
+  -- queue looking like it needs no third signature when 32-audit.md §6.1's
+  -- table says it does.
+  CONSTRAINT proposal_queue_counter_signature_at_scope
+    CHECK (requires_counter_signature = (
+             kind IN ('purge', 'rewrap') AND blast_radius IN ('class', 'fleet')
+           )),
+
   -- [AMENDMENT] Mirrors 10-shared-packages.md's _agent_provenance_consistent:
   -- agent_id/agent_version/llm_version travel together or not at all. (No
   -- llm_version column here — it is provenance CONTENT, not a routing/filter
@@ -293,6 +305,7 @@ CREATE INDEX proposal_queue_dual_control
 PROJECTED_COLUMNS: frozenset[str] = frozenset({
     "proposal_id", "target_sub_app", "detail_fetch_path",
     "kind", "authority_class", "blast_radius", "requires_dual_control",
+    "requires_counter_signature",                     # [AMENDMENT] 32-audit.md §6.1
     "scope", "asset_id", "system_id", "installed_item_id", "niin",
     "class_id", "mission_id", "subject_provisional",
     "status", "valid_until", "baseline_id", "baseline_epoch",
@@ -919,6 +932,7 @@ Response, per row, is exactly the `PROJECTED_COLUMNS` allowlist rendered as wire
       "authority_class": "design_authority",
       "blast_radius": "fleet",
       "requires_dual_control": true,
+      "requires_counter_signature": false,
       "status": "proposed",
       "scope": "fleet",
       "subject": {},
@@ -2060,7 +2074,7 @@ Two edges need attention:
 - [ ] `test_d32_read_model_rebuild_with_bus_down` green — rebuild identical to projection, with Redpanda stopped.
 - [ ] `test_d32_purge_is_truncate_and_rebuild` green; the §4.7 purge protocol documented in the README with a named owner *(03 §13 item 2, D15)*.
 - [ ] `test_d32_gateway_publishes_nothing`, `test_d32_no_domain_readmodel_other_than_the_queue`, `test_d32_stale_projection_cannot_cause_a_wrong_adjudication`, `test_no_cross_level_read_path` green.
-- [ ] The `proposal_queue` DDL carries all four CHECK constraints of §2.4, including `proposal_queue_owner_is_producer`.
+- [ ] The `proposal_queue` DDL carries all five CHECK constraints of §2.4 **[AMENDMENT — was four; `proposal_queue_counter_signature_at_scope` added]**, including `proposal_queue_owner_is_producer`.
 
 **Composition (§3)**
 
