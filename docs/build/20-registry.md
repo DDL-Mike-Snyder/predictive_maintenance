@@ -2041,7 +2041,19 @@ CHANGED_ITEM_INLINE_MAX = 200
 sets", and 09 §8.2's DoD item "No event carries a result set that could exceed
 the broker message limit."  An initial baseline or an allowance import touches
 every position on a hull — ~1,200 on a surface asset [06 §7] — which inlined
-would be a multi-megabyte event against a 1 MB default broker limit."""
+would be a multi-megabyte event against a 1 MB default broker limit.
+
+**[AMENDMENT]** Unlike every other D27 reference in this corpus
+(`prediction.updated`, `telemetry.batch_ingested`), which are reference-ONLY,
+this field is a union: EXACTLY one of `changed_items` / `changed_items_ref` is
+set (`_exactly_one_changed_set_representation` above), never both, never
+neither. A consumer that reads `changed_items` unconditionally works on every
+routine change and breaks on exactly the two cases that matter most — an
+initial baseline (~1,200 positions) and a bulk allowance import — either
+raising on `None` or, worse, silently iterating zero items and treating a
+full-hull change as a no-op. Every consumer of `configuration.baseline_changed`
+(21, 22, 26, 27) MUST branch on which field is set and fetch `changed_items_ref`
+before applying, not assume the inline shape."""
 
 
 class ConfigurationBaselineChanged(FathomModel):

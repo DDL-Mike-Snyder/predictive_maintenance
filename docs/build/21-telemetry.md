@@ -1764,7 +1764,7 @@ All handlers run under document 11 §3.4's consume loop: record and apply in **o
 | `asset.registered` | Create the asset read-model row; provision channel bindings and mappings from the class template as `review_state = 'draft'` (§3.1.5). **Nothing computes from a draft mapping.** Set the domain profile, which selects the ingest adapter |
 | `installed_item.installed` | **Open counter epoch 1** per counter type, seeded at `usage_at_install`, `carry_forward_total = 0` (§3.5.1). Activate position→item resolution from `installed_at`. **The new item inherits nothing** — not counters, not indicator history, not candidates `[D9]` |
 | `installed_item.removed` | Close the open epoch; freeze `final_value`. Stop attributing samples on that position to that item from the removal date. Do **not** delete the item's samples, indicators, or candidates: they are the observations that item generated |
-| `configuration.baseline_changed` | Epoch-fence first (11 §3.5). Re-resolve position→item attribution for affected positions. **See the rule below** |
+| `configuration.baseline_changed` | **[AMENDMENT]** Resolve `changed_items` vs `changed_items_ref` first (20 §6.2 — exactly one is set; an initial baseline is always the ref form, not inline). Epoch-fence first (11 §3.5). Re-resolve position→item attribution for affected positions. **See the rule below** |
 
 **The `configuration.baseline_changed` rule, because it is where two findings compose.**
 

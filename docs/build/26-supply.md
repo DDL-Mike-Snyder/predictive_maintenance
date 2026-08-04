@@ -1397,7 +1397,7 @@ Exactly document 04 §7's list, every type named explicitly — **no wildcard su
 
 | Event | What Supply does with it |
 |---|---|
-| `configuration.baseline_changed` | **The most consequential event in the system** (03 §6). Re-evaluates APL authorization and allowance position for affected items; bumps the local `baseline_epoch`; invalidates forecasts computed under the superseded epoch. Inbox semantics are D2-critical here |
+| `configuration.baseline_changed` | **The most consequential event in the system** (03 §6). **[AMENDMENT]** Resolves `changed_items` vs `changed_items_ref` first (20 §6.2 — exactly one is set; a bulk allowance import is always the ref form, never inline). Re-evaluates APL authorization and allowance position for affected items; bumps the local `baseline_epoch`; invalidates forecasts computed under the superseded epoch. Inbox semantics are D2-critical here |
 | `allowance.updated` | Replaces `allowance_qty`, `derivation_code`, `sparing_model`, `cosal_revision` **as received**. Recomputes `allowance_state`; emits `allowance_shortfall.detected` where the revision creates one, with driver `allowance_revision` |
 | `installed_item.installed` / `.removed` | Updates the installed population feeding `POP`. **`removed` with a failure indicator and a repairable SMR opens a `CarcassObligation`** |
 | `maintenance_action.recorded` | Parts consumed → stock issue, reservation-set `consumed` transition, and the **BRF** input. This is where the documented loop closes: 3-M usage → BRF → allowance |

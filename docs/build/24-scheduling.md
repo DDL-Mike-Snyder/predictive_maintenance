@@ -1994,7 +1994,7 @@ events:
     - fathom.supply.reservation_set.v1
     - fathom.registry.asset.v1
     - fathom.registry.configuration_baseline.v1
-    - fathom.registry.allowance.v1
+    - fathom.registry.allowance_document.v1     # [AMENDMENT] was allowance.v1, a topic Registry never publishes on (20 §3.1)
     - fathom.telemetry.usage_counter.v1
     - fathom.failure-intel.causal_finding.v1
     - fathom.reference-data.taxonomy.v1          # pending OQ-5
