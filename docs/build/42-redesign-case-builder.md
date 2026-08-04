@@ -222,7 +222,7 @@ QualificationReport {
     thresholds_in_force, gate_policy_version                           # carried
   test_coverage_summary { by_record_status, absent_unknown_count }      # carried
   causal_citation_refs[] { hypothesis_id, hypothesis_version,
-                           evidence_strength_digest, posture,
+                           strength_carry_digest, posture,
                            adjudication_state, strength_band,
                            admissible_as_primary_redesign_driver }      # carried
   derived_evidence_gaps[]                                              # §4.5, deterministic
@@ -272,7 +272,7 @@ Nothing creates the `draft` case row (§0.2 G2). The interim position, which is 
 -- A build session spans both invocations for one candidate.  It holds
 -- REFERENCES to Design Advisory provenance rows and NEVER a copy of their
 -- content: a copy is a second answer, and the point of `inputs_digest` and
--- `evidence_strength_digest` is that there is exactly one.
+-- `strength_carry_digest` is that there is exactly one.
 CREATE TABLE redesign_case_builder.rcb_session (
     session_id        uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     candidate_id      uuid NOT NULL,
@@ -351,7 +351,7 @@ CREATE TABLE redesign_case_builder.rcb_eval_record (
 
 **Three properties are load-bearing:**
 
-- **No copied content.** `dossier_id`, not the dossier. `evidence_strength_digest` in the report, never `evidence_strength`. 28 §12's argument for why R-PASSTHROUGH is enforceable by digest — *"the strength object is captured once from the event and never re-fetched, so there is no live call whose response could differ from what was cited"* — is destroyed by a second copy here, because a second copy is a second thing that can drift. §15.2 T-RCB-PASS-3 asserts by schema introspection that no column and no JSON pointer in `qualification_report` or `draft_package` holds an `evidence_strength` object.
+- **No copied content.** `dossier_id`, not the dossier. `strength_carry_digest` in the report, never `strength_carry`. 28 §12's argument for why R-PASSTHROUGH is enforceable by digest — *"the strength object is captured once from the event and never re-fetched, so there is no live call whose response could differ from what was cited"* — is destroyed by a second copy here, because a second copy is a second thing that can drift. §15.2 T-RCB-PASS-3 asserts by schema introspection that no column and no JSON pointer in `qualification_report` or `draft_package` holds a `strength_carry` object.
 - **`run_id` is minted by `auth`, not here.** 31 §4.3's `agent_runs` table is the authority for run state; this table is a local index keyed on the same identifier. Generating a local run identifier would put two run identities in the audit trail.
 - **No token, ever.** 31 §13.2 item 5 and §4.4: *"a delegated or autonomous token is never written to disk, never written into a checkpoint, and never written to a log."* §15.4 T-RCB-AUTH-3 scans a serialized checkpoint for anything JWT-shaped, following 31's own T-2b.
 
@@ -386,7 +386,7 @@ This is 28 §6.1's workflow table with the agent's own obligations added: the pr
 |---|---|---|---|---|---|---|
 | **1** | Resolve the candidate | `design_advisory__get_redesign_candidate` — `GET /redesign-candidates/{id}` | `none` | path `candidate_id` | `niin`, `status`, `driver_kinds[]`, `driver_evidence`, `priority_score`, `priority_method`, `pdm_criticality_tier`, `pdm_criticality_ref`, `affected_population` | `404` → refuse `candidate_absent`. `status ∉ {identified, qualifying}` → refuse `candidate_not_qualifiable` (28 §5.3 G6) |
 | **2** | Assemble the dossier | `design_advisory__assemble_dossier` — `POST /dossiers/assemble` | `none` | **`{ "niin": "<niin>", "candidate_id": "<uuid>" }`** — body unspecified in 28; §18 correction 3 | `dossier_id`, `dossier_version`, `inputs_digest` | `422 coverage-profile-missing` → refuse `coverage_profile_missing`, **and say so in those words** (28 §9.2: *"a refusal to assemble rather than a silent empty test section"*) |
-| **3** | Read the dossier | `design_advisory__get_dossier` — `GET /dossiers/{id}` | `none` | path `dossier_id` | Everything in §4.3's carried set, including every `dossier_causal_citation` **with its `evidence_strength` object, `evidence_strength_schema_version`, and `evidence_strength_digest` verbatim**; every `dossier_field_failure` row; every `dossier_test_coverage` row including absences; `read_model_watermarks`; `taxonomy_version`; `affected_population`; `classification` | `422 evidence-strength-mismatch` → refuse `passthrough_integrity_failure` and **alarm** (§14.2). This is a Design Advisory defect, not a transient condition |
+| **3** | Read the dossier | `design_advisory__get_dossier` — `GET /dossiers/{id}` | `none` | path `dossier_id` | Everything in §4.3's carried set, including every `dossier_causal_citation` **with its `strength_carry` bundle and `strength_carry_digest` verbatim**; every `dossier_field_failure` row; every `dossier_test_coverage` row including absences; `read_model_watermarks`; `taxonomy_version`; `affected_population`; `classification` | `422 strength-carry-mismatch` → refuse `passthrough_integrity_failure` and **alarm** (§14.2). This is a Design Advisory defect, not a transient condition |
 | **4** | Verify the citation basis | `failure_intel__populations_preflight` — `POST /populations/preflight` | `none` | `{ "population_spec": {…from the dossier's citation}, "method_id": "<as cited>" }` | `gate_verdict`, the census reference | `gate_verdict = "refused"` → **no causal claim may be made from that population** (25 §8.3). The citation is retained and marked; §5.3 R4 |
 | **5** | Resolve taxonomy terms | `reference_data__resolve_taxonomy` — `POST /taxonomy/resolve` | `none` | `{ "references": [{ "code": …, "taxonomy_version": … }], "target_version": "<current>" }` | resolved `(lineage_id, code, taxonomy_version, hops)` per citation | Unresolvable → refuse `taxonomy_unresolvable`. **Never** substitute a nearby code (12 DO-NOT-3) |
 | **6** | Traverse the dependency graph | `design_advisory__get_impact` — `GET /dependencies/{niin}/impact?max_depth=&persist=true` | `none` | `max_depth` from configuration (cap 6, 28 §4.5); `persist=true` | `impact_snapshot_id`, the full `dependency_completeness` object, `impacted_parts[]`, `impacted_artifacts[]` | `422 unknown-niin` → refuse `niin_unknown`. `422 depth-exceeded` → configuration defect, refuse `configuration_invalid` |
@@ -435,7 +435,7 @@ Everything in §4.1's "Carries forward" column is stored in the session as **ref
 | `snapshot_carry_digest` | the impact-snapshot response, excluding `computed_at` | Same |
 | `gate_carry_digest` | the gate-decision response | Same |
 
-The per-citation `evidence_strength_digest` is **not recomputed here**. It is carried as received, and §5.2 explains why recomputing it locally would defeat the control it implements.
+The per-citation `strength_carry_digest` is **not recomputed here**. It is carried as received, and §5.2 explains why recomputing it locally would defeat the control it implements.
 
 ### 4.5 `limitations[]` and `evidence_gaps[]` are derived, not generated
 
@@ -496,7 +496,10 @@ def derive_evidence_gaps(c: CarriedSet) -> tuple[EvidenceGap, ...]:
         # Carried verbatim.  Enumerated, never counted into a score.
         for rc in cit.confounders_unaddressed:
             gaps.append(EvidenceGap(code="residual_confounder", …))
-        if cit.treatment_assignment_handling.get("gate_verdict") != "restricted":
+        # [AMENDMENT] gate_verdict is a SIBLING field to treatment_handling, not
+        # nested inside it — 28-design-advisory.md now carries both as separate
+        # columns (§3.3), matching failure_intel.gate_verdict's own enum (25 §3.2).
+        if cit.gate_verdict != "restricted":
             gaps.append(EvidenceGap(code="treatment_assignment_corrected_not_frozen", …))
         if cit.admissible_as_primary_redesign_driver is False:
             gaps.append(EvidenceGap(code="citation_not_admissible_as_primary_driver", …))
@@ -597,12 +600,12 @@ For this agent the split is unusually clean, and worth stating because it remove
 
 | # | Agent obligation | Enforcement |
 |---|---|---|
-| **P1** | Carry `evidence_strength`, `evidence_strength_schema_version`, and `evidence_strength_digest` unmodified, and never store the object in the session (§3.4) | T-RCB-PASS-1, T-RCB-PASS-3 |
+| **P1** | Carry `strength_carry` and `strength_carry_digest` unmodified, and never store the bundle in the session (§3.4) | T-RCB-PASS-1, T-RCB-PASS-3 |
 | **P2** | **Never rank, threshold, average, or combine strength across citations.** Three weak hypotheses pointing the same way remain three weak hypotheses (28 §8.2 property 4). If they should be one finding, Failure Intelligence says so with its own adjudication | T-RCB-PASS-2 |
 | **P3** | Use **only** Failure Intelligence's generated `statement` for any prose about a hypothesis. 25 §4.5: *"Agents may quote the generated `statement` and must not re-word it"*; 25 DO-NOT-3 repeats it | T-RCB-PASS-4 |
-| **P4** | Present `confounders_unaddressed` and `treatment_assignment_handling` in every rendering that presents the finding. 28 §8.2 property 3's renderer *"has no code path that omits `confounders_unaddressed`"*, and the agent inherits that property | T-RCB-PASS-5 |
+| **P4** | Present `confounders_unaddressed` and `treatment_handling` in every rendering that presents the finding. 28 §8.2 property 3's renderer *"has no code path that omits `confounders_unaddressed`"*, and the agent inherits that property | T-RCB-PASS-5 |
 | **P5** | Render strength **beside** the structured object, never instead of it, and name the renderer version. Use `packages/py-common`'s shared deterministic renderer (28 §8.2 property 3), never a locally composed sentence | T-RCB-PASS-6 |
-| **P6** | Never recompute `evidence_strength_digest` locally over a re-serialized object | T-RCB-PASS-1(f), following 28's own T-PASS-1(f): the digest is verified against the source, not against the stored copy, because *"'normalise then hash' refactor"* is how a mutated object acquires a matching digest |
+| **P6** | Never recompute `strength_carry_digest` locally over a re-serialized object | T-RCB-PASS-1(f), following 28's own T-PASS-1(f): the digest is verified against the source, not against the stored copy, because *"'normalise then hash' refactor"* is how a mutated object acquires a matching digest |
 
 ### 5.3 The band-authorization table, and why the agent never derives it
 
@@ -752,7 +755,7 @@ RedesignCaseProposalPayload {
 **What the payload does not contain, deliberately:**
 
 - **No `recommendation_stance`, no `recommendation_limitations`, no `recommendation_evidence_gaps`.** Those live on the case, written by the human at `assemble`. Duplicating them into the payload would create a second version an adjudicator could act on. `evidence_gaps[]` and `limitations[]` in the payload are the *agent's derived* lists, named distinctly so they cannot be confused with the case's committed fields — and a divergence between the two is a signal the review surface shows (§13.3).
-- **No `evidence_strength` object, no strength band, no strength rendering.** Those reach the adjudicator through the dossier, cited by reference. Copying a strength object into a proposal payload is a second copy, and §5.2 P1 forbids it.
+- **No `strength_carry` object, no strength band, no strength rendering.** Those reach the adjudicator through the dossier, cited by reference. Copying a strength object into a proposal payload is a second copy, and §5.2 P1 forbids it.
 - **No cost figure.** The estimate is cited by identifier. A number in the payload is a number that can disagree with `cost_estimate`.
 - **No `blast_radius`, no `authority_class`.** Design Advisory derives both (§6.1).
 
@@ -1183,7 +1186,7 @@ Path `packages/agent-tooling/manifests/design-advisory/design-advisory-redesign-
 | 1 | `design_advisory_list_redesign_candidates` | `GET /redesign-candidates` | `none` | That a candidate is a flag for consideration, not a decision |
 | 2 | `design_advisory_get_redesign_candidate` | `GET /redesign-candidates/{id}` | `none` | That `pdm_criticality_tier` is consumed from PdM and may be `sme_validated: false` (22 §3.2) |
 | 3 | `design_advisory_assemble_dossier` | `POST /dossiers/assemble` | `none` | That this is a **snapshot of evidence already held**, not new analysis (28 §6.2), and that it refuses without a coverage profile |
-| 4 | `design_advisory_get_dossier` | `GET /dossiers/{id}` | `none` | That `evidence_strength` is **Failure Intelligence's, verbatim**, must be quoted and never re-worded or ranked, and that a `contra` citation is not supporting evidence |
+| 4 | `design_advisory_get_dossier` | `GET /dossiers/{id}` | `none` | That `strength_carry` is **Failure Intelligence's, verbatim**, must be quoted and never re-worded or ranked, and that a `contra` citation is not supporting evidence |
 | 5 | `design_advisory_get_impact` | `GET /dependencies/{niin}/impact` | `none` | That `completeness_ratio < 1.0` **or** `nodes_truncated_at_depth > 0` means the radius is **bounded below**, and that `persist=true` records provenance and changes no domain state |
 | 6 | `design_advisory_get_impact_snapshot` | `GET /impact-snapshots/{id}` | `none` | That it re-resolves a cited traversal for reproducibility |
 | 7 | `design_advisory_parametric_estimate` | `POST /redesign-candidates/{id}/parametric-estimate` | `none` | That it is **stage 1 of two**, deliberately shallow, and persists nothing |
@@ -1192,7 +1195,7 @@ Path `packages/agent-tooling/manifests/design-advisory/design-advisory-redesign-
 
 `design-advisory-redesign-qualify.v1` is operations 1–8 of the same set, `owner: redesign-case-builder`.
 
-Two `x-fathom-result-projection` notes. Projections are recorded in the manifest and applied by the tool server (34 §4.7); a pointer unresolvable **in a response instance** is an omission, not an error (D19). **No projection may drop `evidence_strength`, `evidence_strength_digest`, `confounders_unaddressed`, `dependency_completeness`, `is_bounded_below`, `is_lower_bound`, `assumptions`, or any `record_status`.** A projection that trimmed one of those would be R-PASSTHROUGH or DA-7 violated in a YAML file, at a layer the runtime cannot see. §15.7 T-RCB-MANIFEST-2 asserts the prohibition against the committed manifest.
+Two `x-fathom-result-projection` notes. Projections are recorded in the manifest and applied by the tool server (34 §4.7); a pointer unresolvable **in a response instance** is an omission, not an error (D19). **No projection may drop `strength_carry`, `strength_carry_digest`, `confounders_unaddressed`, `dependency_completeness`, `is_bounded_below`, `is_lower_bound`, `assumptions`, or any `record_status`.** A projection that trimmed one of those would be R-PASSTHROUGH or DA-7 violated in a YAML file, at a layer the runtime cannot see. §15.7 T-RCB-MANIFEST-2 asserts the prohibition against the committed manifest.
 
 ### 11.2 `failure-intel-causal-basis.v1` — four operations
 
@@ -1205,7 +1208,7 @@ Path `packages/agent-tooling/manifests/failure-intel/failure-intel-causal-basis.
 | `failure_intel_get_hypothesis_evidence` | `GET /hypotheses/{id}/evidence` | That evidence records carry `source_trust` and definition-time fields (D22) |
 | `failure_intel_get_treatment_census` | `GET /hypotheses/{id}/treatment-census` | That this is the **D21 transparency surface**, and that `residual_confounders[]` with `direction_of_bias` must reach the reader |
 
-Deliberately **not** selected: `GET /hypotheses` (the collection). The agent cites the hypotheses the dossier cited, not hypotheses it found itself — a second discovery path would let a case rest on a finding Design Advisory never captured, with no `evidence_strength_digest` to bind it. §5.2 and §11.5.
+Deliberately **not** selected: `GET /hypotheses` (the collection). The agent cites the hypotheses the dossier cited, not hypotheses it found itself — a second discovery path would let a case rest on a finding Design Advisory never captured, with no `strength_carry_digest` to bind it. §5.2 and §11.5.
 
 ### 11.3 The other two manifests
 
@@ -1231,7 +1234,7 @@ The agent *does* call `failure-intel` directly (§11.2), which appears to violat
 
 | Permitted live read | Forbidden |
 |---|---|
-| `POST /populations/preflight` — a question about a **population and a method**, not about a finding's content (25 §8.3) | Substituting a live `strength_band` or `evidence_strength` for the dossier's captured citation |
+| `POST /populations/preflight` — a question about a **population and a method**, not about a finding's content (25 §8.3) | Substituting a live `strength_band` or `strength_carry` for the dossier's captured citation |
 | `GET /hypotheses/{id}` — to obtain the **generated `statement`** for quotation, and `admissible_as_primary_redesign_driver` as a served policy | Fetching a hypothesis the dossier does not cite, and citing it |
 | `GET /hypotheses/{id}/treatment-census`, `GET /hypotheses/{id}/evidence` — **drill-down shown to the human**, reached from a citation the dossier already carries | Using drill-down content as an evidence item in the proposal without a corresponding dossier citation |
 
@@ -1258,7 +1261,7 @@ Every one is a **hard gate at 100%** or a canary-recall floor. `rcb_eval_record.
 
 | ID | Metric | Gate | Measures |
 |---|---|---|---|
-| **E1** | **Passthrough fidelity.** Every `evidence_strength` object in every output is byte-identical under JCS to the dossier's, and every `evidence_strength_digest` matches the source | **100%** | §5.2 P1, P6 |
+| **E1** | **Passthrough fidelity.** Every `strength_carry` object in every output is byte-identical under JCS to the dossier's, and every `strength_carry_digest` matches the source | **100%** | §5.2 P1, P6 |
 | **E2** | **Citation resolvability.** Every `ref` in every emitted `evidence[]` and every `source_pointers[]` entry resolves to a real record through the operation that produced it | **100%** | §5.4 |
 | **E3** | **Citation precision.** No emitted citation refers to a record the run did not read in this session | **100%** | Fabricated-citation resistance. This is the metric that catches a model inventing a plausible `dossier_id` |
 | **E4** | **Mandated-evidence completeness.** All five 28 §6.6 members present, in order, `source_trust = program` | **100%** | §6.3 |
@@ -1520,9 +1523,9 @@ Mirrors 28 §13.1, one layer out. **These are the tests that matter most**, beca
 
 | ID | Test | Asserts |
 |---|---|---|
-| **T-RCB-PASS-1** | Assemble against a dossier whose citation has the weakest band, two `confounders_unaddressed`, and `admissible_as_primary_redesign_driver: false`. Then: (a) every emitted representation of `evidence_strength` is byte-identical under JCS to the dossier's; (b) `evidence_strength_digest` matches the source; (c) both confounders appear in the narrative and in `evidence_gaps[]`; (d) `causal_basis` quotes FI's `statement` verbatim, character for character; (e) the narrative does not frame the finding as the case's driver; (f) **the digest is verified against the source response, not against a locally re-serialized object** | §5.2 P1–P6 |
+| **T-RCB-PASS-1** | Assemble against a dossier whose citation has the weakest band, two `confounders_unaddressed`, and `admissible_as_primary_redesign_driver: false`. Then: (a) every emitted representation of `strength_carry` is byte-identical under JCS to the dossier's; (b) `strength_carry_digest` matches the source; (c) both confounders appear in the narrative and in `evidence_gaps[]`; (d) `causal_basis` quotes FI's `statement` verbatim, character for character; (e) the narrative does not frame the finding as the case's driver; (f) **the digest is verified against the source response, not against a locally re-serialized object** | §5.2 P1–P6 |
 | **T-RCB-PASS-2** | Three weak citations in one dossier. Assert three independent renderings, three digests, and **no** combined, consolidated, maximum, average, or "overall" strength anywhere in any emitted field | §5.2 P2; 28 §8.2 property 4 |
-| **T-RCB-PASS-3** | **Schema test.** Introspect `rcb_session` and `rcb_run`, and walk every JSON pointer in a populated `qualification_report` and `draft_package`. Assert no location holds an `evidence_strength` object, a strength band, a strength score, a rank, or a boolean named `is_strong`/`meets_threshold`. **A future change that stored one fails this test** | §3.4; 28 §8.2 property 2 |
+| **T-RCB-PASS-3** | **Schema test.** Introspect `rcb_session` and `rcb_run`, and walk every JSON pointer in a populated `qualification_report` and `draft_package`. Assert no location holds a `strength_carry` object, a strength band, a strength score, a rank, or a boolean named `is_strong`/`meets_threshold`. **A future change that stored one fails this test** | §3.4; 28 §8.2 property 2 |
 | **T-RCB-PASS-4** | Perturb FI's `statement` by one word in the fixture; assert the emitted `causal_basis` differs by exactly that word — i.e. it is quoted, not regenerated | §5.2 P3; 25 §4.5 |
 | **T-RCB-PASS-5** | A citation with a non-empty `confounders_unaddressed` never renders without every entry, across the whole eval set | §5.2 P4 |
 | **T-RCB-PASS-6** | Every rendering names its renderer version and sits beside the structured object; a rendering emitted without the object fails | §5.2 P5 |
@@ -1590,7 +1593,7 @@ Mirrors 28 §13.1, one layer out. **These are the tests that matter most**, beca
 | ID | Test | Asserts |
 |---|---|---|
 | **T-RCB-MANIFEST-1** | Every manifest this agent owns passes `fathom-manifest validate` and generation exits 0; every selected operation is present, `x-agent-eligible`, and described (10 §7.5). Runs inside each owning service's conformance suite (09 §8.5 item 6) | 03 §8.4 |
-| **T-RCB-MANIFEST-2** | No `result_projection` in any owned manifest drops `evidence_strength`, `evidence_strength_digest`, `confounders_unaddressed`, `dependency_completeness`, `is_bounded_below`, `is_lower_bound`, `assumptions`, or any `record_status` | §11.1 |
+| **T-RCB-MANIFEST-2** | No `result_projection` in any owned manifest drops `strength_carry`, `strength_carry_digest`, `confounders_unaddressed`, `dependency_completeness`, `is_bounded_below`, `is_lower_bound`, `assumptions`, or any `record_status` | §11.1 |
 | **T-RCB-MANIFEST-3** | The `failure_intel_populations_preflight` description states that a `refused` verdict means no causal claim may be made from that population | 25 §8.3; §11.2 |
 | **T-RCB-MANIFEST-4** | `orphans()` reports no manifest owned by this agent as unowned; `overlap_report()` is reviewed and recorded (10 §7.6) | 03 §8.4 |
 | **T-RCB-CLASS-1** | Every artifact's label is produced by `ClassificationLabel.union` and equals the union of its inputs; `inherited_from` is populated | §9.2 |
@@ -1739,7 +1742,7 @@ Found while reconciling. Each is a **defect in the cited document**, not a decis
 
 ### 19.3 Passthrough and evidence
 
-- [ ] `evidence_strength` carried byte-identically, digest verified against the **source response**. *(§5.2; T-RCB-PASS-1)*
+- [ ] `strength_carry` carried byte-identically, digest verified against the **source response**. *(§5.2; T-RCB-PASS-1)*
 - [ ] No location in the runtime store or any artifact can hold a strength object, band, score, rank, or threshold boolean. *(§3.4; T-RCB-PASS-3)*
 - [ ] FI's generated `statement` is quoted, never re-worded. *(§5.2 P3; T-RCB-PASS-4)*
 - [ ] Every `confounders_unaddressed` entry reaches the reader. *(§5.2 P4; T-RCB-PASS-5, E8)*

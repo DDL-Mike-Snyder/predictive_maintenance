@@ -623,7 +623,7 @@ Every contributor resolves to a source record held by its owning sub-application
 | `planned_mitigation` | `work_candidate.created`, `work_order.opened`, `work_package.proposed`, `work_package.approved` | `record` | work candidate / work order / work package | `maintenance` |
 | `parts_shortfall` | `allowance_shortfall.detected` | `record` | shortfall record: allowance vs on-hand, driver | `supply` |
 | `requisition_delay` | `part_availability.changed`, `requisition.status_changed` | `record` | requisition document number, projected availability, `lead_time`, `condition_code` | `supply` |
-| `causal_finding` | `causal_finding.published` | `record` | adjudicated hypothesis; evidence strength; treatment-assignment handling | `failure-intel` |
+| `causal_finding` | `causal_finding.published` | `record` | adjudicated hypothesis; `strength_band`/`band_limiting_axis`/`strength_rule_version`; `treatment_handling` | `failure-intel` |
 | `redesign_signal` | `redesign_candidate.created`, `redesign_case.published` | `record` | candidate / case | `design-advisory` |
 | `child_scope` | *(internal)* | `record` | the child `ReadinessAssessment` | *(this service)* |
 
@@ -1049,7 +1049,7 @@ Column meanings: **Contributor** = does this event create, update, or delete a `
 | 16 | `requisition.status_changed` | Upsert `rm_supply` requisition with status and projected availability | Upsert `requisition_delay` | Yes |
 | 17 | `allowance_shortfall.detected` | Upsert `rm_supply` shortfall with allowance vs on-hand and driver | Upsert `parts_shortfall` — one of the four terminal kinds [04 §5](../architecture/04-subapplication-architectures.md) names | Yes, item → fleet |
 | 18 | `mission_review.completed` | Insert `rm_context` review row with tag counts, duration, reviewer, canary outcomes | No — context. Canary outcomes belong to the recall metric `[06 §6]`, not to readiness | No |
-| 19 | `causal_finding.published` | Insert `rm_context` adjudicated hypothesis with evidence strength, affected population, treatment-assignment handling | Insert `causal_finding` as a **qualitative annotation**, `degradation = null`, weight excluded. Never a quantitative contribution (§5.2) | No. Annotates the prediction contributors it explains |
+| 19 | `causal_finding.published` | Insert `rm_context` adjudicated hypothesis with `strength_band`, affected population, `treatment_handling` | Insert `causal_finding` as a **qualitative annotation**, `degradation = null`, weight excluded. Never a quantitative contribution (§5.2) | No. Annotates the prediction contributors it explains |
 | 20 | `redesign_candidate.created` | Insert `rm_context` candidate with driver evidence and preliminary priority | Insert `redesign_signal`, qualitative | No |
 | 21 | `redesign_case.published` | Insert `rm_context` case with dependency impact and recommendation | Update `redesign_signal`, qualitative | No |
 
@@ -1296,7 +1296,7 @@ Every test here runs over **one** stored contributor set, evaluated at two clear
 | `maintenance/consumers/fleet-status/` | `deferral.recorded` carries `deferral_reason_class` from the four-value vocabulary `[D34]`; `work_package.approved` is published only after reservation confirmation `[D6]` |
 | `supply/consumers/fleet-status/` | `part_availability.changed` carries `lead_time`, `condition_code`, and the interchangeable group `[D24]` |
 | `pma/consumers/fleet-status/` | `mission_review.completed` carries tag counts and canary outcomes |
-| `failure-intel/consumers/fleet-status/` | `causal_finding.published` carries evidence strength and treatment-assignment handling |
+| `failure-intel/consumers/fleet-status/` | `causal_finding.published` carries `strength_band` and `treatment_handling` |
 | `design-advisory/consumers/fleet-status/` | `redesign_candidate.created` and `redesign_case.published` carry the affected population |
 
 A shared conformance test is never edited, skipped, xfailed, or subclassed here; if one is wrong it is fixed in `packages/contracts` for everyone `[09 §4.7]`.

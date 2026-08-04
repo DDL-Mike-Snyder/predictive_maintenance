@@ -73,7 +73,7 @@ Design Advisory sits at the end of: telemetry → anomaly candidate → **human 
 
 Two human gates precede this sub-application and one follows it. It must not weaken any of them.
 
-**Finding D21 (05 §2, HIGH) — the confounded causal loop** — applies transitively. Failure Intelligence's comparative population analysis compares hulls whose intervention histories were assigned by the model under test. 05 §4.1's recommendation is a policy-frozen holdout plus statistical correction, and `maintenance_action.recorded` now carries `triggering_driver`, `triggering_prediction_id`, and `policy_version` so that treatment assignment is conditionable. **Design Advisory's obligation is narrower and absolute:** it consumes Failure Intelligence's output as *adjudicated hypotheses with declared strength and declared unaddressed confounders*, and it may not present them as anything else. The `treatment_assignment_handling` field of `causal_finding.published` is carried into every dossier citation (§3.3) precisely so that a design authority reading a business case can see whether the causal claim behind it was corrected for confounding by indication.
+**Finding D21 (05 §2, HIGH) — the confounded causal loop** — applies transitively. Failure Intelligence's comparative population analysis compares hulls whose intervention histories were assigned by the model under test. 05 §4.1's recommendation is a policy-frozen holdout plus statistical correction, and `maintenance_action.recorded` now carries `triggering_driver`, `triggering_prediction_id`, and `policy_version` so that treatment assignment is conditionable. **Design Advisory's obligation is narrower and absolute:** it consumes Failure Intelligence's output as *adjudicated hypotheses with declared strength and declared unaddressed confounders*, and it may not present them as anything else. The `treatment_handling` field of `causal_finding.published` is carried into every dossier citation (§3.3) precisely so that a design authority reading a business case can see whether the causal claim behind it was corrected for confounding by indication.
 
 **And the loop must not be closed here.** Design Advisory consumes `prediction.updated` and `prediction.invalidated`. It uses them for population and consequence context only. It **never** uses a prediction as evidence for a causal claim in a dossier — the same restriction 04 §9 places on Failure Intelligence's own use of `prediction.updated`, for the same reason. See DO-NOT-DA-6.
 
@@ -431,14 +431,36 @@ CREATE TABLE design_advisory.dossier_causal_citation (
     source_event_id   uuid NOT NULL,         -- the causal_finding.published event_id
 
     -- --- THE VERBATIM CARRY.  §8. -----------------------------------------
-    -- The structured evidence-strength object exactly as served by failure-intel.
-    -- Opaque here BY DESIGN: this service does not parse it, rank it, threshold
-    -- it, summarise it into a column, or combine it with another citation's.
-    evidence_strength         jsonb    NOT NULL,
-    evidence_strength_schema_version text NOT NULL,
-    evidence_strength_digest  char(64) NOT NULL,   -- SHA-256 over canonical JSON
-    confounders_unaddressed   jsonb    NOT NULL,   -- as received.  Empty array is a CLAIM
-    treatment_assignment_handling jsonb NOT NULL,  -- 03 §6; D21
+    -- [AMENDMENT — corrected.] This block previously named four fields —
+    -- evidence_strength, evidence_strength_schema_version,
+    -- confounders_unaddressed, treatment_assignment_handling — that
+    -- 25-failure-intelligence.md's causal_finding.published does not publish
+    -- under those names, and in one case does not publish inline at all. The
+    -- actual publish (25 §9.1) carries strength_band, band_limiting_axis,
+    -- strength_rule_version, treatment_handling, and gate_verdict inline, plus
+    -- a resolvable treatment_census_ref; residual_confounders[] (the field
+    -- this block called confounders_unaddressed) lives on the CENSUS that ref
+    -- resolves to, not on the event itself.
+    --
+    -- strength_carry bundles the three inline strength fields into one object
+    -- FOR DIGEST PURPOSES ONLY — a canonicalisation this service constructs,
+    -- not a field failure-intel publishes under that name. Named "carry", not
+    -- "summary", precisely to avoid the forbidden-column collision §3.3.1
+    -- below already guards against (no `strength_summary` column, because
+    -- that name reads as a LOCAL judgment — this one is a verbatim bundle).
+    -- Opaque here BY DESIGN: this service does not parse it, rank it,
+    -- threshold it, summarise it into a column, or combine it with another
+    -- citation's.
+    strength_carry            jsonb    NOT NULL,   -- {strength_band, band_limiting_axis, strength_rule_version}, as received
+    strength_carry_digest     char(64) NOT NULL,   -- SHA-256 over canonical JSON of the three source fields
+    confounders_unaddressed   jsonb    NOT NULL,   -- residual_confounders[], fetched by resolving treatment_census_ref. Empty array is a CLAIM
+    treatment_handling        text     NOT NULL,   -- 03 §6; D21. As received, verbatim — not a JSONB object
+    gate_verdict              text     NOT NULL,   -- [AMENDMENT] failure_intel.gate_verdict (25 §3.2):
+                                                    --   proceed|proceed_corrected|restricted|refused.
+                                                    --   A SIBLING field to treatment_handling, not nested
+                                                    --   inside it — previously uncarried entirely, though
+                                                    --   42-redesign-case-builder.md's own gap-detection
+                                                    --   logic already assumed it was present
 
     -- --- taxonomy binding, per doc 12 --------------------------------------
     failure_mode_lineage_id uuid NOT NULL,   -- doc 12 §2.3: lineage_id, NOT code, resolves
@@ -1414,7 +1436,7 @@ RedesignCaseProposalPayload {
 }
 ```
 
-**Deliberately absent:** `recommendation_stance`, `recommendation_limitations`, `recommendation_evidence_gaps` (those exist only on the case, written by the human at `assemble` — duplicating them into the payload would create a second, agent-authored version an adjudicator could act on instead of the committed one); `evidence_strength` or any strength band (cited by reference to the dossier, never copied, per §6.3's rules above); a cost figure (cited by `cost_estimate_id`, never restated as a number that could disagree with it); `blast_radius` and `authority_class` (this service derives both, per the function above — never caller-supplied).
+**Deliberately absent:** `recommendation_stance`, `recommendation_limitations`, `recommendation_evidence_gaps` (those exist only on the case, written by the human at `assemble` — duplicating them into the payload would create a second, agent-authored version an adjudicator could act on instead of the committed one); `strength_carry` or any strength band (cited by reference to the dossier, never copied, per §6.3's rules above); a cost figure (cited by `cost_estimate_id`, never restated as a number that could disagree with it); `blast_radius` and `authority_class` (this service derives both, per the function above — never caller-supplied).
 
 Added to `packages/canonical-schemas` alongside `Proposal`, with golden vectors per `10-shared-packages.md` §4.9's convention for the other typed payload shapes.
 
@@ -1592,30 +1614,35 @@ The failure mode is not malice; it is ordinary summarisation. A structured stren
 
 ### 8.2 The mechanism — four properties, each independently sufficient to catch a violation
 
-**(1) Verbatim carry with a digest.** `dossier_causal_citation.evidence_strength` is `jsonb NOT NULL`, stored exactly as received on `causal_finding.published`. `evidence_strength_digest` is SHA-256 over its **canonical JSON** — the same canonicalisation `packages/canonical-schemas` uses for byte-stable serialization (doc 10 §4.1). The invariant:
+**(1) Verbatim carry with a digest.** **[AMENDMENT — corrected.]** `dossier_causal_citation.strength_carry` is `jsonb NOT NULL` — not a single field `causal_finding.published` serves under one name, but the canonical bundle `{strength_band, band_limiting_axis, strength_rule_version}` of the three fields the event actually carries inline (25 §9.1), constructed here and nowhere else. `strength_carry_digest` is SHA-256 over that bundle's **canonical JSON** — the same canonicalisation `packages/canonical-schemas` uses for byte-stable serialization (doc 10 §4.1). The invariant:
 
 ```
-digest(citation.evidence_strength) == citation.evidence_strength_digest
-   ∧  citation.evidence_strength_digest == digest(source_finding.evidence_strength)
+digest(citation.strength_carry) == citation.strength_carry_digest
+   ∧  citation.strength_carry_digest == digest({strength_band, band_limiting_axis, strength_rule_version} as received on source_finding)
 ```
 
-**This is enforceable today, without knowing the scale.** It requires no ordering over strength values, no interpretation of the object, and no dependency on document 25's contents. Any mutation — a dropped `confounders_unaddressed` entry, a rounded observation count, a changed adjudication label — breaks the digest.
+**This is enforceable today, without knowing the scale.** It requires no ordering over strength values, no interpretation of the bundle, and no dependency on document 25's contents beyond the three field names themselves. Any mutation — a changed band, a changed limiting axis, a changed rule version — breaks the digest. `confounders_unaddressed` (`residual_confounders[]`, fetched by resolving the event's `treatment_census_ref`) is carried separately, per property (3) below — it arrives by a different mechanism (a dereferenced fetch, not an inline field) and is not folded into this digest.
 
 ```python
 # packages/py-common/src/fathom_py_common/passthrough.py
-def carry_evidence_strength(finding: CausalFindingPublished) -> CarriedStrength:
-    """Capture an evidence-strength object for citation.  R-PASSTHROUGH.
+def carry_strength(finding: CausalFindingPublished) -> CarriedStrength:
+    """Capture the three inline strength fields for citation, bundled and
+    digested together.  R-PASSTHROUGH.
 
-    The object is OPAQUE here.  This function does not parse it, rank it,
+    The bundle is OPAQUE here.  This function does not parse it, rank it,
     threshold it, or normalise it -- it canonicalises and digests it.  That is
     deliberate: any transformation is a place a value could change, and the
     whole point is that none can.
     """
-    canonical = canonical_json(finding.evidence_strength)   # doc 10 §4.1
+    bundle = {
+        "strength_band": finding.strength_band,
+        "band_limiting_axis": finding.band_limiting_axis,
+        "strength_rule_version": finding.strength_rule_version,
+    }
+    canonical = canonical_json(bundle)   # doc 10 §4.1
     return CarriedStrength(
-        evidence_strength=finding.evidence_strength,
-        evidence_strength_schema_version=finding.evidence_strength_schema_version,
-        evidence_strength_digest=sha256(canonical).hexdigest(),
+        strength_carry=bundle,
+        strength_carry_digest=sha256(canonical).hexdigest(),
         source_event_id=finding.event_id,
     )
 ```
@@ -1627,7 +1654,7 @@ Shared rather than local, so all nine services capture it identically and no ser
 **(3) Prose is derived, never substituted.** A human-readable rendering is legitimate — a design engineer should not have to read raw JSON. But:
 
 - The rendering is produced by **one shared deterministic renderer** in `packages/py-common`, from the structured object, at read time. It is never persisted as the citation's representation.
-- Every API response and every export containing a citation **contains the structured object**. The renderer's output is an *additional* field, never a replacement. A response schema in which `evidence_strength` is optional is a contract-test failure.
+- Every API response and every export containing a citation **contains the structured object**. The renderer's output is an *additional* field, never a replacement. A response schema in which `strength_carry` is optional is a contract-test failure.
 - The renderer is **information-preserving over the fields that bound certainty**: observation count, hull count, class count, method, unaddressed confounders, and adjudication state all appear in its output. It has no code path that omits `confounders_unaddressed`, and a golden-vector test asserts that a strength object with unaddressed confounders never renders without them.
 - The renderer emits **no causal verb**. Its vocabulary is fixed: *"hypothesis, adjudicated <state> by Failure Intelligence"*, never *"cause"*, *"caused by"*, *"root cause"*, or *"determined"*. This is 09 DO-NOT-20's rule (*"do not render `contributing_factors` in causal language"*) applied to the sub-application where causal language is most tempting — because here the finding genuinely *is* a causal hypothesis, and the licence that grants is exactly one word wide: it may be called a hypothesis.
 
@@ -1654,14 +1681,13 @@ Shared rather than local, so all nine services capture it identically and no ser
   "adjudicated_by": "…", "adjudicated_at": "2026-05-14T09:12:00.000000+00:00",
   "source_event_id": "…",
 
-  "evidence_strength": { "…verbatim structured object from failure-intel…" },
-  "evidence_strength_schema_version": "1.0.0",
-  "evidence_strength_digest": "9f2c…",
+  "strength_carry": { "strength_band": "S2", "band_limiting_axis": "…", "strength_rule_version": "1.0.0" },
+  "strength_carry_digest": "9f2c…",
   "confounders_unaddressed": [
     { "confounder": "treatment assignment by the model under test",
       "handling": "not addressed", "reference": "05 §4.1 / D21" }
   ],
-  "treatment_assignment_handling": { "…as received…" },
+  "treatment_handling": "propensity_and_ipcw",
 
   "failure_mode": { "lineage_id": "…", "code": "BRD", "taxonomy_version": "1.1.0" },
   "attribution_confidence": 0.72,
@@ -1674,7 +1700,7 @@ Shared rather than local, so all nine services capture it identically and no ser
 }
 ```
 
-`rendered_strength` sits **beside** `evidence_strength`, never instead of it, and names its renderer version so a rendering can be reproduced or repudiated.
+`rendered_strength` sits **beside** `strength_carry`, never instead of it, and names its renderer version so a rendering can be reproduced or repudiated.
 
 `attribution_agreement: "pma_only"` is carried through from doc 12 §9.1's crosswalk output. Doc 12 §9.2: *"`agreement` is an output column, not a filter. The caller receives the classification. Nothing upstream decides on their behalf."* A design authority reading that the observable signature and the maintainer's physical finding pointed **different directions** is receiving exactly the signal doc 12 §9.3 exists to preserve — and a business case that quietly resolved the disagreement would have destroyed it at the last possible moment.
 
@@ -1732,7 +1758,7 @@ All `application/problem+json`, RFC 9457, `type` a stable `urn:` URI — never `
 | `urn:fathom:problem:design-advisory:gate-thresholds-unconfigured` | 503 | Gate evaluation attempted with unset thresholds (§5.4) |
 | `urn:fathom:problem:design-advisory:read-model-stale` | 503 | Roll-up outside its `part_availability` staleness bound (§5.5) |
 | `urn:fathom:problem:design-advisory:case-incomplete` | 422 | `assemble` with missing estimate, stance, limitations, or evidence gaps (§3.6) |
-| `urn:fathom:problem:design-advisory:evidence-strength-mismatch` | 422 | A citation whose digest disagrees with its object (§8.2) |
+| `urn:fathom:problem:design-advisory:strength-carry-mismatch` | 422 | A citation whose digest disagrees with its `strength_carry` bundle (§8.2) |
 | `urn:fathom:problem:design-advisory:authority-insufficient` | 403 | Adjudication by a principal lacking `design_authority`, or missing second signature |
 | `urn:fathom:problem:design-advisory:baseline-superseded` | 409 | Re-validation at adjudication finds a superseded epoch (03 §7.2 rule 2) |
 | `urn:fathom:problem:design-advisory:coverage-profile-missing` | 422 | Dossier assembly for a NIIN with no coverage profile — **absence cannot be established against nothing** |
@@ -1787,7 +1813,7 @@ Per 03 §10, into each producer's suite:
 
 | Into | Assertion |
 |---|---|
-| `failure-intel` | `causal_finding.published` carries a structured `evidence_strength`, its `schema_version`, `confounders_unaddressed`, `treatment_assignment_handling`, and the adjudication identity — **the inputs R-PASSTHROUGH needs to exist at all** |
+| `failure-intel` | **[AMENDMENT — corrected.]** `causal_finding.published` carries `strength_band`, `band_limiting_axis`, `strength_rule_version`, `treatment_handling`, a resolvable `treatment_census_ref` (whose target carries `residual_confounders[]`), and the adjudication identity — **the inputs R-PASSTHROUGH needs to exist at all**. Previously named four fields (`evidence_strength`, `schema_version`, `confounders_unaddressed`, `treatment_assignment_handling`) with zero vocabulary overlap with what 25 §9.1 actually publishes |
 | `pdm` | No operational `prediction.updated` carries a `scenario_id`, `scenario_baseline_ref`, or `baseline_id` matching `^scenario:` (§7.4) |
 | `maintenance` | `maintenance_action.recorded` carries `failure_indicator`, `triggering_driver`, `triggering_prediction_id`, `policy_version` (`[D1, D21]`) |
 | `registry` | `installed_item.removed` carries disposition and failure indicator |
@@ -1856,10 +1882,10 @@ Everything in 09 §8.5 applies. Below are the tests specific to this sub-applica
 
 | ID | Test | Asserts |
 |---|---|---|
-| **T-PASS-1** | **A low-evidence-strength causal finding cannot be silently upgraded when cited in a dossier.** Publish a `causal_finding.published` whose `evidence_strength` is at the weakest end of its scale, with two `confounders_unaddressed` entries and `adjudication_state = "published"`. Assemble a dossier. Then: (a) `GET /dossiers/{id}` returns `evidence_strength` **byte-identical** to the published object under canonical JSON; (b) `evidence_strength_digest` equals the digest computed from the source event; (c) the response contains **no** field expressing a strength assessment other than the carried object; (d) both `confounders_unaddressed` entries are present; (e) a direct repository write attempting to store a mutated object — one confounder removed, observation count incremented — is rejected by the digest check with `evidence-strength-mismatch`; (f) the same, with the object unchanged but the digest recomputed to match the mutation, is *also* rejected, because the digest is verified against the **source event**, not against the stored object alone | R-PASSTHROUGH (§8.2 property 1) |
-| **T-PASS-2** | Prose cannot replace the object. The response schema makes `evidence_strength` **required**; a response containing `rendered_strength` without it fails schema validation. The renderer is deterministic across 40 golden strength objects; every rendering containing a non-empty `confounders_unaddressed` mentions each one; **no** rendering contains `cause`, `caused`, `root cause`, `determined`, `proves`, `confirms`, or `establishes` | §8.2 property 3; 09 DO-NOT-20 |
+| **T-PASS-1** | **A low-strength causal finding cannot be silently upgraded when cited in a dossier.** Publish a `causal_finding.published` whose `strength_band` is at the weakest end of its scale, with two `residual_confounders[]` entries on its `treatment_census_ref` target and `adjudication_state = "published"`. Assemble a dossier. Then: (a) `GET /dossiers/{id}` returns `strength_carry` **byte-identical** to `{strength_band, band_limiting_axis, strength_rule_version}` as received, under canonical JSON; (b) `strength_carry_digest` equals the digest computed from those three source fields; (c) the response contains **no** field expressing a strength assessment other than the carried bundle; (d) both `confounders_unaddressed` entries are present; (e) a direct repository write attempting to store a mutated bundle — a changed band, a changed limiting axis — is rejected by the digest check with `strength-carry-mismatch`; (f) the same, with the bundle unchanged but the digest recomputed to match the mutation, is *also* rejected, because the digest is verified against the **source event's three fields**, not against the stored bundle alone | R-PASSTHROUGH (§8.2 property 1) |
+| **T-PASS-2** | Prose cannot replace the object. The response schema makes `strength_carry` **required**; a response containing `rendered_strength` without it fails schema validation. The renderer is deterministic across 40 golden strength bundles; every rendering containing a non-empty `confounders_unaddressed` mentions each one; **no** rendering contains `cause`, `caused`, `root cause`, `determined`, `proves`, `confirms`, or `establishes` | §8.2 property 3; 09 DO-NOT-20 |
 | **T-PASS-3** | No aggregation. Cite three weak hypotheses in one dossier; assert the response contains three independent citations, each with its own digest, and **no** combined, consolidated, or maximum strength anywhere | §8.2 property 4 |
-| **T-PASS-4** | **Schema test:** introspect `dossier_causal_citation`'s columns and assert none matches `%strength%` other than `evidence_strength`, `evidence_strength_schema_version`, `evidence_strength_digest`; and none matches `is_strong`, `meets_threshold`, `combined_%`, `consolidated_%`, `%_rank`, `%_score`. **A future migration adding a place to author a local strength fails this test** | §8.2 property 2 |
+| **T-PASS-4** | **Schema test:** introspect `dossier_causal_citation`'s columns and assert none matches `%strength%` other than `strength_carry`, `strength_carry_digest`; and none matches `is_strong`, `meets_threshold`, `combined_%`, `consolidated_%`, `%_rank`, `%_score`, or (deliberately) `strength_summary` — a name that would read as a locally-authored judgment rather than a verbatim carry. **A future migration adding a place to author a local strength fails this test** | §8.2 property 2 |
 | **T-PASS-5** | `contra` citations never satisfy the gate's G5, and never appear in a supporting-evidence projection | §3.3.1, §5.3 |
 | **T-PASS-6** | The gate does not threshold on strength: two candidates identical but for strength — one weakest, one strongest — both pass G5 given one published supporting citation each | §5.3 rationale |
 
@@ -2041,7 +2067,7 @@ Each is a defect or gap in the cited document, not a decision of this one.
 
 ### 17.2 Evidence-strength passthrough
 
-- [ ] `evidence_strength` carried verbatim with a digest verified against the **source event**. *(§8.2; T-PASS-1)*
+- [ ] `strength_carry` (the `{strength_band, band_limiting_axis, strength_rule_version}` bundle) carried verbatim with a digest verified against the **source event's three fields**. *(§8.2; T-PASS-1)*
 - [ ] No column can express a local, combined, or thresholded strength. *(T-PASS-4)*
 - [ ] Every response containing a citation contains the structured object; prose is additional and version-stamped. *(T-PASS-2)*
 - [ ] The renderer preserves confounders and emits no causal verb. *(DA-3; T-PASS-2)*
