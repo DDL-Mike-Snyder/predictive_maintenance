@@ -1688,6 +1688,7 @@ Shared rather than local, so all nine services capture it identically and no ser
       "handling": "not addressed", "reference": "05 §4.1 / D21" }
   ],
   "treatment_handling": "propensity_and_ipcw",
+  "gate_verdict": "proceed_corrected",
 
   "failure_mode": { "lineage_id": "…", "code": "BRD", "taxonomy_version": "1.1.0" },
   "attribution_confidence": 0.72,
@@ -1701,6 +1702,8 @@ Shared rather than local, so all nine services capture it identically and no ser
 ```
 
 `rendered_strength` sits **beside** `strength_carry`, never instead of it, and names its renderer version so a rendering can be reproduced or repudiated.
+
+**[AMENDMENT]** `gate_verdict` was added to this example — it is a `NOT NULL` sibling field to `treatment_handling` (§3.3's DDL) and every API response carrying a citation is required to carry it (§8.2's rule), but this worked example previously omitted it, even though `42-redesign-case-builder.md` §4.5's own gap-detection logic already branches on `cit.gate_verdict`.
 
 `attribution_agreement: "pma_only"` is carried through from doc 12 §9.1's crosswalk output. Doc 12 §9.2: *"`agreement` is an output column, not a filter. The caller receives the classification. Nothing upstream decides on their behalf."* A design authority reading that the observable signature and the maintainer's physical finding pointed **different directions** is receiving exactly the signal doc 12 §9.3 exists to preserve — and a business case that quietly resolved the disagreement would have destroyed it at the last possible moment.
 

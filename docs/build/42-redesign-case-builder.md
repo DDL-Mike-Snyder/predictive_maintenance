@@ -224,7 +224,11 @@ QualificationReport {
   causal_citation_refs[] { hypothesis_id, hypothesis_version,
                            strength_carry_digest, posture,
                            adjudication_state, strength_band,
-                           admissible_as_primary_redesign_driver }      # carried
+                           admissible_as_primary_redesign_driver,
+                           gate_verdict }                          # carried; [AMENDMENT] gate_verdict
+                                                                    #   was omitted from this list though
+                                                                    #   §4.5's own logic below reads it
+                                                                    #   (28 §8.4 — sibling to treatment_handling)
   derived_evidence_gaps[]                                              # §4.5, deterministic
   outcome            # gate_pass | gate_fail | refused
   refusal            { reason_code, detail } | null                     # §4.6
