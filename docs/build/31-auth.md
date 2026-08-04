@@ -1327,11 +1327,11 @@ Base path `/api/v1/auth/` [03 §4]. Scaffold, layering, middleware order, proble
 | Topic | Events | Declared consumers |
 |---|---|---|
 | `fathom.auth.delegation.v1` | `delegation.issued`, `delegation.terminated`, `delegation.expired`, `autonomous_grant.issued`, `autonomous_grant.terminated` | `audit`; `gateway` and the nine sub-applications for the deny-list read model (§4.6) |
-| `fathom.auth.agent_run.v1` | `agent_run.started`, `agent_run.terminated_authority_lapsed`, `agent_run.terminated_pod_restart`, `agent_run.resumed`, `agent_run.completed` | `audit` |
+| `fathom.auth.agent_run.v1` | `agent_run.started`, `agent_run.terminated_authority_lapsed`, `agent_run.terminated_pod_restart`, `agent_run.resumed`, `agent_run.completed` | `audit`; **[AMENDMENT]** `pma`, for `agent_run.completed` only — `41-pma-prescreener.md` §2.3/§2.4 closes its quiesce-window-completion signal against this event rather than a direct call, which `03 principle 2` and the sanctioned-edge set both forbid |
 
 | Rule | Detail |
 |---|---|
-| **No token, ever, in a payload** | Payloads carry `jti`, `delegation_id`, `grant_id`, subjects, and status. A payload carrying a credential would put it in a broker with 30-day retention |
+| **No token, ever, in a payload** | Payloads carry `jti`, `delegation_id`, `grant_id`, subjects, and status. A payload carrying a credential would put it in a broker with 30-day retention. **[AMENDMENT]** `agent_run.completed`'s `subjects` includes every identifier the originating grant scoped to (§4.3 step 3's *"scope of exactly this asset"* and whatever else the grant named) — `pma`'s consumption above depends on `mission_id` being one of them when the accountable-owner grant was requested for a mission-triggered run, so `41-pma-prescreener.md`'s run-initiator must include it in the grant scope, not only `asset_id` |
 | Partition key | `subject_sub` [03 §5.1 — *"[f]leet-scoped, NIIN-scoped, and class-scoped events partition on their own scope identifier"*; a principal is its own scope]. Per-principal ordering is the only ordering any consumer needs |
 | Envelope `scope` | **`fleet`** — the singleton scope requiring no subject identifier [03 §5.4]. Document 03 §5.4's `scope` enumeration has no `principal` value, and `fleet` is the only member that does not force an inapplicable identifier. Recorded as amendment **A-5** in §14 |
 | Compaction | `fathom.auth.delegation.v1` is compacted on `delegation_id`/`grant_id` — **the aggregate key, never the partition key** [03 §5.1, D5] |

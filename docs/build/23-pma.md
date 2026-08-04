@@ -1504,6 +1504,10 @@ CONSUMES: frozenset[str] = frozenset({
     # gating never fired against a baseline change — a silent D2-class failure with no
     # error. 27-fleet-status.md, 24-scheduling.md, and 09 all use the correct wire name.
     "fathom.maintenance.maintenance_action.recorded",
+    "fathom.auth.agent_run.v1",  # [AMENDMENT] agent_run.completed only, filtered to
+    # agent_id='pma-prescreener' — closes the pre-screen quiesce window (41-pma-prescreener.md
+    # §2.3) without a direct call to the agent, which 03 principle 2 forbids. Correlated to
+    # the waiting review via mission_id in the event's subjects (31-auth.md §11.1).
 })
 # NOT subscribed, deliberately: fathom.reference-data.taxonomy.* — those topics have no
 # document 03 §6 catalog rows (12 §3.4, OD-7), so subscribing would fail CI job 6.  The
