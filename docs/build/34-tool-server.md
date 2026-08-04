@@ -832,12 +832,12 @@ Per the rule that nothing is invented, each of these is a gap this document refu
 
 ## 15. Corrections and requirements against other documents
 
-Found while reconciling. Items 1 and 2 **block** this service's deployment.
+Found while reconciling. **[AMENDMENT — resolved.]** Items 1 and 2 were marked blocking here; both are now closed (see their own rows below).
 
 | # | Document | Issue | Required change |
 |---|---|---|---|
-| 1 | **09 §4.4.2 sanctioned-edge table** | No `tool-server → gateway` edge exists, so the egress-equality assertion cannot pass for a service that must reach its targets (§5.1) | Add the row, with the same rationale the table already gives for `domino-compute → gateway`. Per 09 §9 item 30 this needs a document 09 change plus an ADR |
-| 2 | **The gateway's build document** (not yet written) | The gateway must serve `/api/v1/<slug>/…` in **pass-through** mode for this caller. A composed view model breaks every `x_fathom_result_projection` pointer (§4.7), and would break the live-spec fetch of §2.5 | State pass-through as a gateway requirement |
+| 1 | **09 §4.4.2 sanctioned-edge table** | ~~No `tool-server → gateway` edge exists~~ **[RESOLVED.]** `09-monorepo-and-conventions.md` §4.4.2 now carries the row: `tool-server` → `gateway`, one rule, pass-through only | Closed — no correction needed |
+| 2 | **The gateway's build document** | ~~Not yet written~~ **[RESOLVED.]** `docs/build/30-gateway.md` exists and specifies pass-through mode explicitly (§8.1, §8.2) for exactly this caller | Closed — no correction needed |
 | 3 | **04 §11 Platform layer** | Has no **Tool Servers** subsection, though 01 §5 lists the service and 03 §8.5 mandates it. This is the unfixed remainder of finding **C17** (*"appear in no component inventory"*) — 01 §5 was corrected; 04 §11 was not | Add a Tool Servers subsection to 04 §11 |
 | 4 | **01 §3 plane diagram** | The Mermaid graph declares node id `TS` twice — `TS[Tool Servers<br/>MCP manifests]` in the Sustainment Plane subgraph and `TS[(TimescaleDB)]` in the Data & Infrastructure Plane. The second declaration re-labels the first node, so TimescaleDB does not render in the Data Plane at all | Rename one node id (e.g. `TSRV` and `TSDB`). Cosmetic in prose, materially wrong in the rendered diagram that most readers actually look at |
 | 5 | **10 §11 open questions** | **OQ-13** records the `authority_class` vocabulary as undefined and calls it *"the most consequential gap in the package."* Document 03 now defines it at **§7.2.1** | Close OQ-13 against 03 §7.2.1, and adopt the `AuthorityClass` enum in `packages/canonical-schemas`. Nothing in this service changes — §7.2.1 is *adjudication* authority, distinct from the *agent* authority classes of §8.3 that this service enforces (§4.5) |
