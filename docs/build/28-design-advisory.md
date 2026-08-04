@@ -1771,7 +1771,7 @@ All `application/problem+json`, RFC 9457, `type` a stable `urn:` URI — never `
 
 ### 9.3 Cross-cutting
 
-Per 09 §5, unchanged and not restated: `Idempotency-Key` on all unsafe methods and required on `state-changing` and `proposal-only`; `ETag`/`If-Match` on updatable resources and mandatory on proposal adjudication; `X-Correlation-Id` accepted, minted, echoed, propagated; `X-Classification` on every response with per-field redaction where levels mix; ABAC authorization enforced **in this service**; cursor pagination with no total count; RFC 3339 UTC timestamps throughout.
+Per 09 §5, unchanged and not restated: `Idempotency-Key` on all unsafe methods and required on `state-changing` and `proposal-only`; `ETag`/`If-Match` on updatable resources and mandatory on proposal adjudication; `X-Correlation-Id` accepted, minted, echoed, propagated; `X-Classification` on every response, with per-field redaction where levels mix expressed **as a conditional projection in the query itself**, never a fetch-then-drop step — 31-auth.md §6.5's predicate obligation applies here exactly as it does to every other read in the program `[AMENDMENT — this row previously described the redaction without stating where it is enforced]`; ABAC authorization enforced **in this service**; cursor pagination with no total count; RFC 3339 UTC timestamps throughout.
 
 ---
 

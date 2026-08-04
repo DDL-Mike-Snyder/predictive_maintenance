@@ -648,13 +648,22 @@ SELECT
         / nullif(count(*) FILTER (WHERE m.driver_class = 'model_assigned'), 0)
                                                                     AS prediction_resolve_rate
   FROM failure_intel_treatment.maintenance_action_projection m
- WHERE m.installed_item_id = ANY(:resolved_items)      -- a RESOLVED SET, never a predicate
+ WHERE m.installed_item_id = ANY(:resolved_items)      -- a RESOLVED SET, never a predicate —
+                                                        -- [AMENDMENT] :resolved_items is ITSELF
+                                                        -- produced by resolve_items(spec,
+                                                        -- caller_clearance=...) (§2.9's
+                                                        -- load_population), which applies the
+                                                        -- caller's clearance as a predicate
+                                                        -- BEFORE this set is fixed — an item
+                                                        -- outside the caller's clearance never
+                                                        -- enters :resolved_items, so it cannot
+                                                        -- appear in these counts by construction
    AND m.occurred_at >= :window_start
    AND m.occurred_at <  :window_end
    AND m.baseline_epoch <= :max_baseline_epoch;        -- 03 §5.4 epoch fencing
 ```
 
-Two details are structural rather than incidental. **The item set is resolved before the census runs, and the census is computed over that literal set** — not over a predicate that a later query could evaluate differently. And **`occurred_at` is the analysis clock while `recorded_at` is retained**, because [03 §5.4](../architecture/03-integration-contracts.md) requires the distinction and an at-sea repair recorded weeks later would otherwise fall outside its own window.
+Two details are structural rather than incidental. **The item set is resolved before the census runs, and the census is computed over that literal set** — not over a predicate that a later query could evaluate differently, which is why the clearance predicate must be applied at resolution and cannot be applied afterward: there is no later query left to push it into. And **`occurred_at` is the analysis clock while `recorded_at` is retained**, because [03 §5.4](../architecture/03-integration-contracts.md) requires the distinction and an at-sea repair recorded weeks later would otherwise fall outside its own window.
 
 ### 2.9 API model
 
@@ -728,7 +737,22 @@ Method adapters cannot obtain rows. There is exactly one way in:
 def load_population(spec: PopulationSpec, method_id: str, run: DiscoveryRun) -> GatedPopulation:
     decl, _ = registry.get(method_id)
 
-    items = resolve_items(spec)                       # a literal set, not a predicate (§2.8)
+    # [AMENDMENT — real security defect, found in adversarial review and closed here.]
+    # `resolve_items` pushes the caller's clearance in AS A PREDICATE on the item-resolution
+    # query itself (31-auth.md §6.5's obligation) — an item the caller is not cleared to know
+    # about is excluded from the resolved set exactly as if it did not exist, never included
+    # and then hidden after the fact. Without this, POST /populations/preflight (§8.2, agent-
+    # eligible) was a caller-controlled, iterable oracle: the caller supplies an arbitrary
+    # PopulationSpec and reads back item_count, action_count, and the confounding-risk
+    # fraction computed over the TRUE population, including compartmented items the caller
+    # cannot otherwise see — precisely the "attacker controls the probe" hazard
+    # 35-knowledge-retrieval.md §10.1 suppresses on identical grounds, structurally worse
+    # here because §2.8's census runs over a resolved SET, not a predicate a later read could
+    # re-evaluate. Pushing clearance into the resolution step, rather than filtering its
+    # output, means every downstream number (the gate verdict included) is computed over
+    # the caller's own visible world only — the numbers can never reveal that anything
+    # outside it exists, whatever PopulationSpec the caller constructs.
+    items = resolve_items(spec, caller_clearance=current_principal().clearance)
     census = compute_census(items, spec.window, spec.arms, decl)
     persist(census)                                    # referenceable forever, before any verdict
 
@@ -738,7 +762,7 @@ def load_population(spec: PopulationSpec, method_id: str, run: DiscoveryRun) -> 
     if verdict is GateVerdict.REFUSED:
         raise TreatmentAssignmentGateError(reason, census_id=census.census_id)
     if verdict is GateVerdict.RESTRICTED:
-        items = resolve_items(effective)               # the policy-frozen stratum ∩ requested
+        items = resolve_items(effective, caller_clearance=current_principal().clearance)  # policy-frozen stratum ∩ requested ∩ cleared
         census = compute_census(items, effective.window, effective.arms, decl)
         persist(census)
         if census.max_confounding_risk_fraction > 0:   # must now be clean, or refuse
@@ -1421,6 +1445,8 @@ It is the operation that makes the D21 gate a shared, inspectable fact rather th
 
 It is also the operation the Diagnostic Assistant and Redesign Case Builder agents need in order to avoid asserting a causal claim whose basis the gate would refuse. Manifests selecting it carry a task-scoped description stating that a `refused` verdict means *no causal claim may be made from this population*, and [10 §7.5](10-shared-packages.md)'s manifest description review checks for it.
 
+**[AMENDMENT]** Being agent-eligible and computational makes this operation an unusually powerful probe if the population it counts over is not itself clearance-filtered — an agent (or any caller) could otherwise iterate `PopulationSpec`s to learn the existence of compartmented records from the shape of `item_count`/`confounding_risk_fraction` alone, never seeing a record directly. §2.9's `resolve_items(spec, caller_clearance=...)` closes this: the population is resolved under the caller's own clearance before any count is computed, so every number this operation returns describes the caller's own visible world only.
+
 ---
 
 ## 9. Events
@@ -1544,7 +1570,7 @@ Case C is deliberately shaped as [13 §16.3](13-synthetic-data-generator.md)'s t
 
 ### 10.5 Platform obligations
 
-Per [03 §10](../architecture/03-integration-contracts.md) and [03 §15](../architecture/03-integration-contracts.md), and reproduced from [09 §8](09-monorepo-and-conventions.md) without removal: `changed_since` snapshot reads over every projected aggregate; cursor pagination; RFC 9457 problem details with `urn:fathom:problem:failure-intel:*` types declared in the spec; `ETag`/`If-Match`; `Idempotency-Key` on all unsafe methods; `X-Correlation-Id` propagation to every log line, event, and downstream call; `X-Classification` on every response with per-field redaction; classification `inherited_from` as the union of inputs on every derived value (D13 — a causal finding is a derived value over tags, findings, and telemetry, and its label is their union); fault injection asserting no state change without its event; and OpenAPI annotation coverage with `x-agent-eligible` only where side effects are `none` or `proposal-only`.
+Per [03 §10](../architecture/03-integration-contracts.md) and [03 §15](../architecture/03-integration-contracts.md), and reproduced from [09 §8](09-monorepo-and-conventions.md) without removal: `changed_since` snapshot reads over every projected aggregate; cursor pagination; RFC 9457 problem details with `urn:fathom:problem:failure-intel:*` types declared in the spec; `ETag`/`If-Match`; `Idempotency-Key` on all unsafe methods; `X-Correlation-Id` propagation to every log line, event, and downstream call; `X-Classification` on every response, with per-field redaction expressed **as a conditional projection in the query itself** — never a fetch-then-drop step at the application layer, per 31-auth.md §6.5's predicate obligation: *"[a] service that fetches rows and then drops them is in violation... even if the user never sees the dropped rows — the leak is in the count, the latency, and the cursor"* `[AMENDMENT — this row previously described the redaction without stating where it is enforced, which read as the exact fetch-then-filter pattern §6.5 forbids]`; classification `inherited_from` as the union of inputs on every derived value (D13 — a causal finding is a derived value over tags, findings, and telemetry, and its label is their union); fault injection asserting no state change without its event; and OpenAPI annotation coverage with `x-agent-eligible` only where side effects are `none` or `proposal-only`.
 
 ---
 
