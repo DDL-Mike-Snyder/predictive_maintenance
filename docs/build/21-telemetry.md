@@ -193,7 +193,7 @@ Implementation is document 11 §4.3's `MonotonicSequencer` under the key `("tele
 
 ```sql
 CREATE TABLE meta.knowledge_log (
-  knowledge_seq   bigint      PRIMARY KEY,          -- gap-free, from MonotonicSequencer
+  knowledge_seq   bigint      NOT NULL,             -- gap-free, from MonotonicSequencer -- PER producer_node
   producer_node   text        NOT NULL,             -- 'enterprise' | 'edge:<asset_id>'
   kind            text        NOT NULL,             -- see the table above
   ref_kind        text        NOT NULL,             -- 'indicator_definition' | 'source_tag_mapping' | ...
@@ -202,7 +202,11 @@ CREATE TABLE meta.knowledge_log (
   known_at        timestamptz NOT NULL,
   authored_by     text        NULL,                 -- principal, where a human authored it
   correlation_id  uuid        NOT NULL,
-  CONSTRAINT knowledge_log_node CHECK (producer_node IN ('enterprise') OR producer_node LIKE 'edge:%')
+  CONSTRAINT knowledge_log_node CHECK (producer_node IN ('enterprise') OR producer_node LIKE 'edge:%'),
+  PRIMARY KEY (producer_node, knowledge_seq)   -- [AMENDMENT] was knowledge_seq alone -- gap-free is
+                                                -- a PER producer_node property (this section's own
+                                                -- DECISION), so enterprise's seq=1 and an edge hull's
+                                                -- seq=1 must coexist, not collide on one global PK
 );
 CREATE UNIQUE INDEX knowledge_log_at ON meta.knowledge_log (known_at, knowledge_seq);
 ```
@@ -242,17 +246,22 @@ CREATE TABLE meta.channel_definition (
   saturation_max     double precision NULL,
   description        text     NOT NULL,
 
-  published_seq      bigint   NOT NULL REFERENCES meta.knowledge_log(knowledge_seq),
-  superseded_seq     bigint   NULL     REFERENCES meta.knowledge_log(knowledge_seq),
+  producer_node      text     NOT NULL,        -- [AMENDMENT] 'enterprise' | 'edge:<asset_id>' -- see below
+  published_seq      bigint   NOT NULL,
+  superseded_seq     bigint   NULL,
   supersedes         integer  NULL,            -- prior channel_version
   review_state       text     NOT NULL,        -- draft | in_review | published | superseded
 
   PRIMARY KEY (channel_key, channel_version),
+  FOREIGN KEY (producer_node, published_seq) REFERENCES meta.knowledge_log(producer_node, knowledge_seq),
+  FOREIGN KEY (producer_node, superseded_seq) REFERENCES meta.knowledge_log(producer_node, knowledge_seq),
   CONSTRAINT channel_def_published_reviewed
     CHECK (review_state <> 'published' OR published_seq IS NOT NULL),
   CONSTRAINT channel_def_unit_not_freetext CHECK (unit_code = lower(unit_code) AND unit_code !~ ' ')
 );
 ```
+
+**[AMENDMENT — real defect, found in adversarial review, and the same fix applies to every `*_seq` column below that references `meta.knowledge_log`.]** `knowledge_seq` is gap-free **per `producer_node`** (§3.0's own DECISION), so a single-column FK to `knowledge_log(knowledge_seq)` alone is unsatisfiable the moment `knowledge_log`'s primary key is corrected to `(producer_node, knowledge_seq)` (§3.0) — enterprise's seq 1 and an edge hull's seq 1 are different rows, and a bare `knowledge_seq` reference cannot be unique across both. Every table below that stamps a `*_seq` column now also carries `producer_node`, and the FK is composite: `FOREIGN KEY (producer_node, <col>_seq) REFERENCES meta.knowledge_log(producer_node, knowledge_seq)`. This is not restated at each site below; each site follows this same pattern.
 
 - **`unit_code` resolves against Reference Data and is never a string a developer typed.** Reference Data owns the unit hierarchy (04 §11). A channel whose unit cannot be resolved at the declared `unit_version` fails publication. A unit mismatch between a mapping's `transform` output and the channel's declared unit is a publication failure, not a runtime surprise (§10.4).
 - **`nominal_*` is a plausibility band, `saturation_*` is the transducer's physical range, and they are different things.** The quality assessor uses the first to flag `IMPLAUSIBLE` and the second to flag `CLIPPED` (document 13 §9.2 stage 1: *"an extreme excursion saturates rather than reading its true value. A model that extrapolates from a clipped peak is wrong, and clipped peaks are common in real vibration data"*). Conflating them makes saturation invisible.
@@ -277,11 +286,14 @@ CREATE TABLE meta.channel_binding (
 
   valid_from         timestamptz NOT NULL,     -- DATA time
   valid_to           timestamptz NULL,
-  published_seq      bigint   NOT NULL REFERENCES meta.knowledge_log(knowledge_seq),
-  superseded_seq     bigint   NULL REFERENCES meta.knowledge_log(knowledge_seq),
+  producer_node      text     NOT NULL,        -- see §3.1's channel_definition amendment
+  published_seq      bigint   NOT NULL,
+  superseded_seq     bigint   NULL,
 
   FOREIGN KEY (channel_key, channel_version)
     REFERENCES meta.channel_definition(channel_key, channel_version),
+  FOREIGN KEY (producer_node, published_seq) REFERENCES meta.knowledge_log(producer_node, knowledge_seq),
+  FOREIGN KEY (producer_node, superseded_seq) REFERENCES meta.knowledge_log(producer_node, knowledge_seq),
   CONSTRAINT binding_rate_positive CHECK (expected_rate_hz > 0)
 );
 ```
@@ -318,13 +330,16 @@ CREATE TABLE meta.source_tag_mapping (
   valid_from         timestamptz NOT NULL,
   valid_to           timestamptz NULL,
   -- KNOWLEDGE time: when we came to BELIEVE it.
-  published_seq      bigint   NOT NULL REFERENCES meta.knowledge_log(knowledge_seq),
-  superseded_seq     bigint   NULL REFERENCES meta.knowledge_log(knowledge_seq),
+  producer_node      text     NOT NULL,        -- see §3.1's channel_definition amendment
+  published_seq      bigint   NOT NULL,
+  superseded_seq     bigint   NULL,
   authored_by        text     NOT NULL,
   review_state       text     NOT NULL,        -- draft | in_review | published | superseded
 
   FOREIGN KEY (channel_key, channel_version)
     REFERENCES meta.channel_definition(channel_key, channel_version),
+  FOREIGN KEY (producer_node, published_seq) REFERENCES meta.knowledge_log(producer_node, knowledge_seq),
+  FOREIGN KEY (producer_node, superseded_seq) REFERENCES meta.knowledge_log(producer_node, knowledge_seq),
   CONSTRAINT mapping_attachment_exclusive CHECK (
     (attachment = 'position_wired' AND position_id IS NOT NULL AND installed_item_id IS NULL) OR
     (attachment = 'item_integral'  AND installed_item_id IS NOT NULL AND position_id IS NULL)
@@ -368,8 +383,10 @@ CREATE TABLE meta.channel_item_map (
   attribution_weight numeric  NULL,            -- NULL where genuinely unresolvable.  Never defaulted to 1
   valid_from         timestamptz NOT NULL,
   valid_to           timestamptz NULL,
-  derived_at_seq     bigint   NOT NULL REFERENCES meta.knowledge_log(knowledge_seq),
-  PRIMARY KEY (channel_key, installed_item_id, valid_from)
+  producer_node      text     NOT NULL,        -- see §3.1's channel_definition amendment
+  derived_at_seq     bigint   NOT NULL,
+  PRIMARY KEY (channel_key, installed_item_id, valid_from),
+  FOREIGN KEY (producer_node, derived_at_seq) REFERENCES meta.knowledge_log(producer_node, knowledge_seq)
 );
 ```
 
@@ -429,7 +446,7 @@ CREATE TABLE meta.telemetry_batch (
   data_time_from     timestamptz NOT NULL,
   data_time_to       timestamptz NOT NULL,
   -- KNOWLEDGE time.  Set by THIS node at admission.  Never by the producer.
-  known_at_seq       bigint      NOT NULL REFERENCES meta.knowledge_log(knowledge_seq),
+  known_at_seq       bigint      NOT NULL,   -- [AMENDMENT] FK moved below -- composite with producer_node above
 
   -- CLOCK ATTESTATION.  Copied from the envelope, retained permanently (03 §5.4, 11 §10.5)
   sync_quality       jsonb       NOT NULL,
@@ -450,7 +467,8 @@ CREATE TABLE meta.telemetry_batch (
   CONSTRAINT batch_completeness CHECK (completeness >= 0),
   CONSTRAINT batch_node CHECK (producer_node = 'enterprise' OR producer_node LIKE 'edge:%'),
   CONSTRAINT batch_reduction_when_unmanned
-    CHECK (domain_profile <> 'unmanned' OR reduction_version IS NOT NULL)
+    CHECK (domain_profile <> 'unmanned' OR reduction_version IS NOT NULL),
+  FOREIGN KEY (producer_node, known_at_seq) REFERENCES meta.knowledge_log(producer_node, knowledge_seq)
 );
 CREATE UNIQUE INDEX batch_dedup
   ON meta.telemetry_batch (producer_node, ingest_monotonic_seq);
@@ -517,8 +535,9 @@ CREATE TABLE meta.indicator_definition (
   unit_version       text     NOT NULL,
 
   -- DEFINITION TIME.  The whole point.  [D22]
-  published_seq      bigint   NOT NULL REFERENCES meta.knowledge_log(knowledge_seq),
-  superseded_seq     bigint   NULL REFERENCES meta.knowledge_log(knowledge_seq),
+  producer_node      text     NOT NULL,        -- see §3.1's channel_definition amendment
+  published_seq      bigint   NOT NULL,
+  superseded_seq     bigint   NULL,
   supersedes         integer  NULL,
   authored_by        text     NOT NULL,
   authored_rationale text     NOT NULL,          -- required.  A definition change is reviewable
@@ -526,6 +545,8 @@ CREATE TABLE meta.indicator_definition (
   spec_sha256        bytea    NOT NULL,          -- over the canonical serialization of `spec`
 
   PRIMARY KEY (indicator_key, definition_version),
+  FOREIGN KEY (producer_node, published_seq) REFERENCES meta.knowledge_log(producer_node, knowledge_seq),
+  FOREIGN KEY (producer_node, superseded_seq) REFERENCES meta.knowledge_log(producer_node, knowledge_seq),
   CONSTRAINT indicator_def_published
     CHECK (review_state <> 'published' OR published_seq IS NOT NULL),
   CONSTRAINT indicator_def_min_completeness CHECK (min_completeness > 0 AND min_completeness <= 1)
@@ -610,15 +631,17 @@ CREATE TABLE meta.usage_counter_epoch (
                                                   -- meter_rollover | meter_zeroed_at_overhaul |
                                                   -- datasource_changed
   opened_at          timestamptz NOT NULL,        -- DATA time
-  opened_seq         bigint      NOT NULL REFERENCES meta.knowledge_log(knowledge_seq),
+  opened_seq         bigint      NOT NULL,
   closed_at          timestamptz NULL,
-  closed_seq         bigint      NULL REFERENCES meta.knowledge_log(knowledge_seq),
+  closed_seq         bigint      NULL,
   final_value        numeric     NULL,            -- frozen on close.  Never recomputed
 
   is_open            boolean     NOT NULL,
   producer_node      text        NOT NULL,
 
   PRIMARY KEY (installed_item_id, counter_type, counter_epoch),
+  FOREIGN KEY (producer_node, opened_seq) REFERENCES meta.knowledge_log(producer_node, knowledge_seq),
+  FOREIGN KEY (producer_node, closed_seq) REFERENCES meta.knowledge_log(producer_node, knowledge_seq),
   CONSTRAINT counter_one_open_epoch EXCLUDE (installed_item_id WITH =, counter_type WITH =)
     WHERE (is_open),
   CONSTRAINT counter_closed_has_final
@@ -2250,6 +2273,9 @@ networkPolicy:
     toEventBus: true                # Redpanda brokers + schema registry
     toServices: [auth, audit, reference-data]    # the ONLY in-namespace egress
     toNamespaces: []
+    toObjectStore: true             # [AMENDMENT] 09 §4.4.2; raw_payload_ref (§2) and
+                                     # telemetry.batch_ingested's payload_ref (§7) both
+                                     # require it — omitted here until this pass
     allowDNS: true
 ```
 
