@@ -31,9 +31,9 @@ survive between sessions).
 | `packages/py-sync` | Transactional outbox (partition-key derivation, D5 compaction-key guard), inbox (D2 record-before-processed), `MonotonicSequencer`, epoch fencing both directions (`EpochFence` consumer-side + `BaselineFencedComputation` producer-side), conflict-policy declarations, divergence budgets | 5 passing |
 | `packages/contracts` | The `@operation`/`operation_extra` decorator (`x-substitution`/`x-side-effects`, import-time enforcement) | untested (simple, no test dir yet) |
 | `packages/py-common` | RFC 9457 problem details, correlation-ID middleware, classification middleware, idempotency (see gotcha #2 below), ETag/If-Match, health/readyz/metrics, structured logging, cursor pagination. **This whole package is a corpus gap** — `10-shared-packages.md` explicitly disclaims owning it; it's authored from `09-monorepo-and-conventions.md` §5's prose contract | 6 passing |
-| `services/pdm` | DB models for `prediction` (RLS-bearing), `criticality_assessment`, `calibration_record` (compartment-partitioned), `scoring_run`, `tier_policy`, `prediction_provenance`; a working bulk-ingest endpoint (idempotent, transactional, baseline-fenced, outbox-emitting); get-prediction, get-criticality, expected-consequence reads; a real Alembic migration (`versions/20260805072746_pdm_initial_schema.py`, applied and round-tripped against real Postgres); RLS holdout isolation, verified end to end against a real Postgres container, not just reviewed as DDL; a real `Dockerfile` (builds and runs, `/healthz`/`/readyz` verified against real Postgres) and a complete Helm chart (`helm/`, depends on the new `deploy/helm/_fathom-common` library chart, `helm lint`/`template`/`unittest` all passing); the criticality scoring/tier-assignment/hysteresis algorithm (`services/criticality.py` — the formula, band function, and hysteresis gate only; §3.1's per-input normalization and §3.3's ceiling-input read models are event-consumer work, not built yet, see the module's own docstring) | 34 passing, incl. one real HTTP→DB integration test, 10 real-Postgres RLS tests, and 20 scoring/hysteresis unit tests |
+| `services/pdm` | DB models for `prediction` (RLS-bearing), `criticality_assessment`, `calibration_record` (compartment-partitioned), `scoring_run`, `tier_policy`, `prediction_provenance`; a working bulk-ingest endpoint (idempotent, transactional, baseline-fenced, outbox-emitting); get-prediction, get-criticality, expected-consequence reads; a real Alembic migration (`versions/20260805072746_pdm_initial_schema.py`, applied and round-tripped against real Postgres); RLS holdout isolation, verified end to end against a real Postgres container, not just reviewed as DDL; a real `Dockerfile` (builds and runs, `/healthz`/`/readyz` verified against real Postgres) and a complete Helm chart (`helm/`, depends on the new `deploy/helm/_fathom-common` library chart, `helm lint`/`template`/`unittest` all passing); the criticality scoring/tier-assignment/hysteresis algorithm (`services/criticality.py` — the formula, band function, and hysteresis gate only; §3.1's per-input normalization and §3.3's ceiling-input read models are event-consumer work, not built yet, see the module's own docstring); two event consumers (`events/consumers.py` — `configuration.baseline_changed`, `installed_item.removed`, both invalidating affected predictions, verified against a real Postgres connection authenticated as the actual `fathom_pdm_serving` role, not the migration-owning superuser) | 38 passing, incl. one real HTTP→DB integration test, 10 real-Postgres RLS tests, 20 scoring/hysteresis unit tests, and 4 real-Postgres event-consumer tests |
 
-**Total: 56 passing tests**, all newly written this session, all genuinely
+**Total: 60 passing tests**, all newly written this session, all genuinely
 exercised (not just "written and assumed to work" — see the gotchas below,
 several were only caught by actually running them).
 
@@ -58,9 +58,26 @@ whatever task was in progress when it was found.
   binding logic (22-pdm.md §5.6) — nothing Domino-specific has been
   exercised against a live workspace at all. The `.env.example` has
   placeholder `FATHOM_DOMINO__*` vars with no real values.
-- **Event consumers.** Only the *publisher* side (`prediction.updated`) is
-  wired. None of PdM's ~15 consumed event types (`configuration.baseline_changed`,
-  `maintenance_action.recorded`, etc.) have a handler.
+- **Most event consumers.** Of `catalog.CONSUMES`' ~19 declared types, only
+  the two that are both externally-evented AND have a fully-specified local
+  effect are wired: `configuration.baseline_changed` and
+  `installed_item.removed` (both invalidate affected predictions via
+  `pdm.invalidate_prediction()`, `events/consumers.py`). The other four
+  invalidation triggers in 22-pdm.md §8.1's own table are internal (tier
+  reassignment, binding deactivation, calibration withdrawal, label-set
+  retraction) — triggered by other PdM subsystems that don't exist yet, not
+  by consuming an event at all. The remaining ~15 declared types (telemetry
+  health indicators, maintenance actions, failure-intel findings, etc.) feed
+  the tier 0-3 model scoring pipeline itself, which needs real model
+  execution (Domino Jobs) this vertical slice doesn't build. `dispatch_event()`
+  raises `UnhandledEventTypeError` for all of these rather than silently
+  no-op'ing, so a future consumer loop can tell "nothing to do" apart from
+  "this needs a handler built." **No Kafka client/consumer-loop
+  infrastructure exists anywhere in this codebase** (checked: zero
+  `confluent_kafka` usage outside comments) — `events/consumers.py` is the
+  business-logic layer such a loop would call once it has deserialized a
+  message, not the loop itself; building that is shared `packages/py-sync`
+  infrastructure, not PdM-specific.
 - **Every other service.** Only PdM has been touched. The other 8 domain
   services + 8 platform services + `apps/` + `agents/` + `models/` are
   still just empty directories.
@@ -181,6 +198,38 @@ because they'll bite again if not accounted for:
     worth running `make lint` for real (not just spot-checking individual
     files) early when building service #2, now that these two config gaps
     are fixed.
+11. **`fathom_pdm_serving` had a grant on `pdm.prediction` alone — every
+    other table this service's own code touches had none, at all.**
+    Found by finally connecting as this role instead of the migration-owning
+    superuser (every earlier integration test in this session used the
+    superuser). A newly created table grants nothing beyond its owner by
+    default; only `pdm.prediction` ever got an explicit `GRANT`, because
+    it's the one table with RLS policies to write. The result: bulk ingest
+    (`scoring_run`, `prediction_provenance`, `outbox`), the idempotency
+    middleware (`idempotency_keys`), the monotonic sequencer
+    (`producer_sequence`), and every inbox-consuming event handler would
+    all have failed with "permission denied" under the role the running
+    service actually authenticates as. Fixed with a comprehensive grant
+    block in the migration and in `docs/build/22-pdm.md` §4.5, covering
+    every table current code paths actually need. **If you're building
+    service #2's migration, budget for this same grant sweep from the
+    start** — don't just copy the RLS-bearing table's grants and assume
+    the rest follows.
+12. **Two of PdM's own declared `CONSUMES` event types were wrong strings**,
+    caught only by actually constructing a real `EventEnvelope` against
+    them (Pydantic's own regex validator rejected one outright; the other
+    would have silently subscribed to nothing, since no producer ever
+    emits that exact string). `fathom.telemetry.batch_ingested` should have
+    been `fathom.telemetry.telemetry_batch.ingested` (21-telemetry.md's own
+    catalog table has the real name); `fathom.audit.remediation.v1` was the
+    *topic* name, not an event_type — the actual event_type is
+    `fathom.audit.remediation.purge_executed` (32-audit.md's own catalog
+    row). Both fixed in `events/catalog.py` and `helm/values.yaml`. Worth
+    double-checking every other service's own `CONSUMES`/`PUBLISHES` list
+    against its cited source doc's actual catalog table the same way,
+    rather than trusting a prose cross-reference — these were both
+    authored from prose summaries earlier this session, not the tables
+    themselves.
 
 ## How to run tests (you'll need to redo this — nothing here survives)
 
@@ -227,42 +276,43 @@ shell state doesn't persist between separate tool calls.
 
 The user has explicitly chosen to finish PdM before moving to service #2,
 in this order: ~~Alembic migration~~ → ~~RLS testing~~ → ~~Dockerfile~~ →
-~~Helm chart~~ → ~~hysteresis/scoring algorithm~~ → event consumers →
-Domino Job entrypoint/Model Registry binding. The first five are done (see
-above). Dockerfile and Helm chart were built in parallel across two Sonnet
-subagents (per the user's explicit interest in parallelizing genuinely
-independent PdM work) — both independently re-verified afterward (real
-`docker build` + container run + `/healthz`/`/readyz`, and `helm lint`/
-`helm template`/`helm unittest` rerun from scratch), not just trusted from
-the subagents' own reports. Building `services/pdm/helm` also required
-building `deploy/helm/_fathom-common` (the shared label/naming library
-chart every per-service chart depends on) and the two namespace-wide
-default-deny NetworkPolicy charts (`fathom-sustainment`, `fathom-data`)
-first, since none of that shared Helm infrastructure existed yet — done
-directly rather than delegated, since it's foundational/shared, not PdM's
-own deliverable. The scoring/hysteresis algorithm was built directly (not
-delegated) since correctly deriving the hysteresis persistence rule from
-only the immediately-prior assessment row needed careful judgment, not
-mechanical transcription — see bug #9 above for a real spec inconsistency
-found while implementing it.
+~~Helm chart~~ → ~~hysteresis/scoring algorithm~~ → ~~event consumers~~ →
+Domino Job entrypoint/Model Registry binding. All six are done — **only
+#27 remains** on the user's explicit checklist. Dockerfile and Helm chart
+were built in parallel across two Sonnet subagents (per the user's explicit
+interest in parallelizing genuinely independent PdM work) — both
+independently re-verified afterward (real `docker build` + container run +
+`/healthz`/`/readyz`, and `helm lint`/`helm template`/`helm unittest` rerun
+from scratch), not just trusted from the subagents' own reports. Building
+`services/pdm/helm` also required building `deploy/helm/_fathom-common`
+(the shared label/naming library chart every per-service chart depends on)
+and the two namespace-wide default-deny NetworkPolicy charts
+(`fathom-sustainment`, `fathom-data`) first, since none of that shared Helm
+infrastructure existed yet — done directly rather than delegated, since
+it's foundational/shared, not PdM's own deliverable. The scoring/hysteresis
+algorithm and the event consumers were both built directly (not delegated)
+since each needed careful judgment, not mechanical transcription — see
+bugs #9 and #11/#12 above for what that judgment caught.
 
-1. **Event consumers** (#26): the invalidation pattern is already built
-   (`PredictionRepository.invalidate()` calls `pdm.invalidate_prediction()`
-   by id, not by a pre-loaded object — see bug #8 above for why) and the
-   scoring/tier-assignment pattern is now built (`services/criticality.py`)
-   — both ready to be called from consumer handlers. Wiring the ~15
-   consumed event types (the real list is in
-   `services/pdm/src/fathom_pdm/events/catalog.py`'s `CONSUMES`) will also
-   need to build the read-model projections `services/criticality.py`
-   deliberately left out of scope (§3.1's normalization curves, §3.3's
-   ceiling inputs) — see that module's docstring for exactly what's missing.
-2. **Domino Job entrypoint + Model Registry binding** (#27) needs the
-   user's real Domino project/workspace details — get these regardless of
-   sequencing, since every other service will need them too.
+1. **Domino Job entrypoint + Model Registry binding** (#27) needs the
+   user's real Domino project/workspace details — the only remaining item
+   on the explicit PdM checklist, and the only one blocked on something
+   only the user can provide. Get these regardless of what happens next,
+   since every other service will need them too.
+2. **Decide: is PdM "done enough" to move to service #2, or push further
+   first?** Genuinely out-of-scope-for-this-vertical-slice items remain --
+   most of `CONSUMES`' ~19 event types (need the tier 0-3 model scoring
+   pipeline + real Registry/Telemetry/Failure-Intel read models), the
+   Kafka consumer-loop/client infrastructure itself (shared `py-sync` work,
+   not PdM-specific), §3.1's input-normalization curves, §3.3's ceiling
+   read models, §8.3's re-score-before-publication orchestration and
+   dual-binding shadow scoring. None of these were ever on the user's
+   explicit 7-item checklist — worth naming them plainly rather than
+   letting "PdM is done" quietly expand to mean "PdM is complete."
 3. **Separate from the PdM checklist**: ~206 untriaged `ruff` findings
-   remain across the whole `services/`/`packages/` tree (see above) — a
-   well-scoped, mechanical cleanup task the user hasn't weighed in on yet.
-   Worth asking whether to fix now, defer, or fold into a later pass.
+   remain across the whole `services/`/`packages/` tree (see above). The
+   user was asked and explicitly chose to defer this — don't re-raise it
+   unless asked, but it's still there.
 
 ## Where to find more context
 

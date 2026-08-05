@@ -86,7 +86,7 @@ events:
     - fathom.registry.installed_item.installed
     - fathom.registry.installed_item.removed
     - fathom.registry.installed_item.identity_resolved
-    - fathom.telemetry.batch_ingested
+    - fathom.telemetry.telemetry_batch.ingested
     - fathom.telemetry.health_indicator.computed
     - fathom.telemetry.usage_counter.updated
     - fathom.telemetry.usage_counter.reset
@@ -98,7 +98,7 @@ events:
     - fathom.failure-intel.failure_mode.attributed
     - fathom.failure-intel.causal_feature_set.updated
     - fathom.design-advisory.design_change.projected
-    - fathom.audit.remediation.v1
+    - fathom.audit.remediation.purge_executed
 
 # ---- auth (FATHOM_AUTH__*, config.py AuthSettings) -------------------------
 auth:

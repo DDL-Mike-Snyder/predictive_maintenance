@@ -322,6 +322,38 @@ def upgrade() -> None:
     # needs, regardless of what its policy's USING clause says.
     op.execute("GRANT SELECT, INSERT ON pdm.prediction TO fathom_pdm_serving")
 
+    # [CORRECTION, found while wiring event consumers against this role
+    # instead of the migration-owning superuser for the first time] Every
+    # OTHER table this service's own application code actually reads or
+    # writes -- scoring_run, prediction_provenance, criticality_assessment
+    # (schema pdm), and the sync-library/idempotency tables inbox, outbox,
+    # producer_sequence, idempotency_keys (schema public, per fathom_sync
+    # and fathom_py_common's own models -- no explicit schema=) -- had NO
+    # grant to fathom_pdm_serving at all. A newly created table grants
+    # nothing beyond its owner by default; only pdm.prediction ever got an
+    # explicit GRANT, because it's the one table with RLS policies to write.
+    # The result: every actual code path except plain prediction reads/
+    # writes -- bulk ingest (scoring_run, prediction_provenance, outbox),
+    # the idempotency middleware (idempotency_keys), the monotonic sequencer
+    # (producer_sequence), and every inbox-consuming event handler -- would
+    # fail with "permission denied" under this role, the one the running
+    # service actually authenticates as. Confirmed against a real container
+    # before fixing. `public` schema USAGE is granted to PUBLIC by this
+    # Postgres image's bootstrap database by default, but made explicit here
+    # rather than relied upon, per the same reasoning as the `pdm` schema
+    # USAGE fix above.
+    op.execute("GRANT USAGE ON SCHEMA public TO fathom_pdm_serving")
+    op.execute("GRANT SELECT, INSERT ON pdm.scoring_run TO fathom_pdm_serving")
+    op.execute("GRANT SELECT, INSERT ON pdm.prediction_provenance TO fathom_pdm_serving")
+    op.execute("GRANT SELECT, INSERT ON pdm.criticality_assessment TO fathom_pdm_serving")
+    op.execute("GRANT SELECT, INSERT, UPDATE ON inbox TO fathom_pdm_serving")
+    # INSERT only: the outbox-draining relay (not yet built) is a separate,
+    # more-privileged process/role that reads unpublished rows and sets
+    # published_at -- this role only ever appends.
+    op.execute("GRANT INSERT ON outbox TO fathom_pdm_serving")
+    op.execute("GRANT SELECT, INSERT, UPDATE ON producer_sequence TO fathom_pdm_serving")
+    op.execute("GRANT SELECT, INSERT ON idempotency_keys TO fathom_pdm_serving")
+
     op.execute(
         "CREATE POLICY actionable_read ON pdm.prediction "
         "FOR SELECT TO fathom_pdm_serving "
@@ -416,6 +448,14 @@ def downgrade() -> None:
     op.execute("REVOKE ALL ON pdm.prediction FROM fathom_pdm_research")
     op.execute("REVOKE USAGE ON SCHEMA pdm FROM fathom_pdm_research")
     op.execute("DROP ROLE IF EXISTS fathom_pdm_research")
+    op.execute("REVOKE ALL ON idempotency_keys FROM fathom_pdm_serving")
+    op.execute("REVOKE ALL ON producer_sequence FROM fathom_pdm_serving")
+    op.execute("REVOKE ALL ON outbox FROM fathom_pdm_serving")
+    op.execute("REVOKE ALL ON inbox FROM fathom_pdm_serving")
+    op.execute("REVOKE ALL ON pdm.criticality_assessment FROM fathom_pdm_serving")
+    op.execute("REVOKE ALL ON pdm.prediction_provenance FROM fathom_pdm_serving")
+    op.execute("REVOKE ALL ON pdm.scoring_run FROM fathom_pdm_serving")
+    op.execute("REVOKE USAGE ON SCHEMA public FROM fathom_pdm_serving")
     op.execute("REVOKE ALL ON pdm.prediction FROM fathom_pdm_serving")
     op.execute("REVOKE USAGE ON SCHEMA pdm FROM fathom_pdm_serving")
     op.execute("DROP ROLE IF EXISTS fathom_pdm_serving")

@@ -768,6 +768,32 @@ CREATE POLICY actionable_read ON pdm.prediction FOR SELECT TO fathom_pdm_serving
 CREATE POLICY serving_insert ON pdm.prediction FOR INSERT TO fathom_pdm_serving
     WITH CHECK (serving_class IN ('actionable', 'research_only'));
 
+-- [CORRECTION, found while wiring event consumers against this role instead
+-- of the migration-owning superuser for the first time] Every OTHER table
+-- this service's own code reads or writes -- scoring_run,
+-- prediction_provenance, criticality_assessment (schema pdm), and the
+-- sync-library/idempotency tables inbox, outbox, producer_sequence,
+-- idempotency_keys (schema public, per 11-outbox-sync-library.md's and
+-- 10-shared-packages.md's own models -- no explicit schema) -- had NO grant
+-- to fathom_pdm_serving at all. A newly created table grants nothing beyond
+-- its owner by default; only pdm.prediction ever got an explicit GRANT,
+-- because it is the one table with RLS policies to write. Confirmed against
+-- a real container: every code path except plain prediction reads/writes --
+-- bulk ingest, the idempotency middleware, the monotonic sequencer, every
+-- inbox-consuming event handler -- failed with "permission denied" under
+-- this role, the one the running service actually authenticates as.
+GRANT USAGE ON SCHEMA public TO fathom_pdm_serving;
+GRANT SELECT, INSERT ON pdm.scoring_run TO fathom_pdm_serving;
+GRANT SELECT, INSERT ON pdm.prediction_provenance TO fathom_pdm_serving;
+GRANT SELECT, INSERT ON pdm.criticality_assessment TO fathom_pdm_serving;
+GRANT SELECT, INSERT, UPDATE ON inbox TO fathom_pdm_serving;
+-- INSERT only: the outbox-draining relay is a separate, more-privileged
+-- role that reads unpublished rows and sets published_at; this role only
+-- ever appends.
+GRANT INSERT ON outbox TO fathom_pdm_serving;
+GRANT SELECT, INSERT, UPDATE ON producer_sequence TO fathom_pdm_serving;
+GRANT SELECT, INSERT ON idempotency_keys TO fathom_pdm_serving;
+
 -- Research path: a distinct role, distinct connection pool, SELECT only.
 CREATE ROLE fathom_pdm_research;
 GRANT USAGE ON SCHEMA pdm TO fathom_pdm_research;
@@ -1664,6 +1690,7 @@ Each carries the finding that makes it a defect rather than a preference. 09 §9
 
 - [ ] Both database roles exist; all three RLS policies exist, split by command per §4.5.3 (`actionable_read`, `serving_insert`, `research_only`); `pdm.invalidate_prediction()` exists, is owned by the BYPASSRLS `fathom_pdm_invalidator` role, and is EXECUTE-granted only to `fathom_pdm_serving` (not `PUBLIC`); `ENABLE` **and** `FORCE ROW LEVEL SECURITY` on `pdm.prediction`; no other role holds a grant on it, and neither role holds `DELETE` (§13.4: purge is crypto-shred, not `DELETE`).
 - [ ] Invalidating a `research_only` row via `pdm.invalidate_prediction()` actually succeeds under `fathom_pdm_serving`, verified against a real PostgreSQL connection — not merely reviewed as DDL. A plain `UPDATE` under the same role, by contrast, must fail (no grant).
+- [ ] `fathom_pdm_serving` also holds the grants its own code actually needs beyond `pdm.prediction`: `scoring_run`, `prediction_provenance`, `criticality_assessment` (schema `pdm`), and `inbox`/`outbox`/`producer_sequence`/`idempotency_keys` (schema `public`) — verified by exercising bulk ingest, the idempotency middleware, and an event consumer under this role against a real connection, not the migration-owning superuser.
 - [ ] Research route on a separate connection pool under `fathom_pdm_research`, requiring `research_analyst`, not agent-eligible.
 - [ ] `serving_class` is absent from the ingest request schema.
 - [ ] `fathom.pdm.research_prediction.v1` exists; `maintenance` and `fleet-status` principals have no read ACL, asserted in the topic registration test.

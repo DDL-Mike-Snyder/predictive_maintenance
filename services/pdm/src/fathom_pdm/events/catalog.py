@@ -27,7 +27,7 @@ CONSUMES: frozenset[str] = frozenset(
         "fathom.registry.installed_item.installed",
         "fathom.registry.installed_item.removed",
         "fathom.registry.installed_item.identity_resolved",
-        "fathom.telemetry.batch_ingested",
+        "fathom.telemetry.telemetry_batch.ingested",
         "fathom.telemetry.health_indicator.computed",
         "fathom.telemetry.usage_counter.updated",
         "fathom.telemetry.usage_counter.reset",
@@ -41,6 +41,10 @@ CONSUMES: frozenset[str] = frozenset(
         "fathom.design-advisory.design_change.projected",
         # 11 §3.7: every domain sub-application subscribes to remediation,
         # regardless of whether it currently caches D13-classified content.
-        "fathom.audit.remediation.v1",
+        # 32-audit.md line ~1450: the EVENT_TYPE is remediation.purge_executed,
+        # published on TOPIC fathom.audit.remediation.v1 -- an earlier version
+        # of this entry used the topic name here by mistake, which would never
+        # have matched EVENT_TYPE_RE (no trailing "vN" segment is a valid verb).
+        "fathom.audit.remediation.purge_executed",
     }
 )

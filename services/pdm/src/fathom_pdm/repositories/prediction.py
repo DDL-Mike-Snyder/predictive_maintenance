@@ -58,6 +58,18 @@ class PredictionRepository:
         )
         return (await session.execute(stmt)).scalar_one_or_none()
 
+    async def get_all_active_for_item(
+        self, session: AsyncSession, *, installed_item_id: uuid.UUID
+    ) -> list[Prediction]:
+        """Every currently-active prediction for this item, across all
+        horizons -- §8.1: a configuration/removal event invalidates *every*
+        prediction attached to the affected item, not one horizon."""
+        stmt = select(Prediction).where(
+            Prediction.installed_item_id == installed_item_id,
+            Prediction.status == "active",
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
     async def invalidate(self, session: AsyncSession, prediction_id: uuid.UUID, *, cause: str) -> bool:
         """Invalidates by id, not by a pre-loaded object -- a research_only
         row can never be loaded under `fathom_pdm_serving` to begin with.
