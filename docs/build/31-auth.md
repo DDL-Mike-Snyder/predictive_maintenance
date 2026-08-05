@@ -617,7 +617,7 @@ The interactive tier-3 what-if operation is the concrete path: document 01 §7 p
 
 ### 5.2 Decision: the proxy is an operation on `gateway`
 
-**[ESTABLISHED HERE].** Document 03 §8.3 requires *"a Sustainment Plane service"* without naming it. It is the **`gateway`**, exposing one operation:
+**[ESTABLISHED HERE].** **[AMENDMENT — `30-gateway.md` §5.6 independently established a second, conflicting shape for this same operation (`POST /api/v1/gateway/inference/{domino_endpoint_name}`, a caller-supplied path parameter with no allowlist); this document's manifest-resolved shape is now the one `30-gateway.md` §5.6 implements, since it closes an allowlist gap the path-parameter shape had. No change to this section was needed — `30-gateway.md` was corrected to match it.]** Document 03 §8.3 requires *"a Sustainment Plane service"* without naming it. It is the **`gateway`**, exposing one operation:
 
 ```
 POST /api/v1/gateway/domino/endpoint-invocations        x-side-effects: none

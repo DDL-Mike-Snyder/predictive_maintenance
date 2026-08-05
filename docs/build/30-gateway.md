@@ -1230,8 +1230,12 @@ Document 03 §8.3 and D12, from 02 §4.3: *"A Domino Endpoint authenticates with
 
 The gateway is that service.
 
+**[AMENDMENT — real defect, found in adversarial review and reconciled here: this section and `31-auth.md` §5.2 each independently established a *different* operation for the identical need — this document a path-parameterized `POST /api/v1/gateway/inference/{domino_endpoint_name}`, `31-auth.md` a manifest-resolved `POST /api/v1/gateway/domino/endpoint-invocations` — with no cross-reference between them. `31-auth.md`'s shape is adopted as canonical below, because it independently closes a defect this document's own path-parameter shape had: a caller-supplied `domino_endpoint_name` with no allowlist anywhere lets any caller point the gateway's one static, non-rotating Endpoint credential at any Domino Endpoint the deployment has. Manifest resolution makes that structurally impossible — the endpoint name is never caller-supplied at all.]**
+
 ```
-POST /api/v1/gateway/inference/{domino_endpoint_name}
+POST /api/v1/gateway/domino/endpoint-invocations
+    { operation_id }              # the CALLING operation's own OpenAPI operationId,
+                                  # e.g. "pdm_what_if" -- never a raw endpoint name
     x-substitution: internal
     x-side-effects: none          # interactive inference: tier-3 what-if (01 §3 correction 2)
     x-agent-eligible: false       # an agent reaches inference through a sub-application's
@@ -1240,10 +1244,14 @@ POST /api/v1/gateway/inference/{domino_endpoint_name}
     Idempotency-Key: required     # 09 §5.3
 ```
 
+**How the endpoint name is resolved, closing the allowlist gap.** The gateway already parses every upstream `openapi.json` at startup to generate pass-through routes (§8.2 DECISION G-3), and each parse already extracts `x-side-effects`/`x-substitution`/`x-agent-eligible` verbatim per operation. The same parse now also extracts `x-domino-endpoint` (`31-auth.md` §5.3's annotation) into a small, build-time-fixed, in-memory map `{operation_id: domino_endpoint_name}`. `POST .../endpoint-invocations` looks up `operation_id` in that map — `404` `urn:fathom:problem:gateway:unknown-operation` if absent, which also rejects an operation that never declared `x-domino-endpoint` in the first place — and calls **that** endpoint name, never one the request body could name directly. `PdM's own `/what-if` handler passes its own `operation_id` ("pdm_what_if"), not the endpoint name it happens to know; the gateway is the sole authority on which endpoint that operation is allowed to reach.
+
 | Rule | Reason |
 |---|---|
 | The static Endpoint token is a gateway-held secret, projected as an env var by External Secrets (01 §11, 09 §4.5), and **exists nowhere else in the system** | It carries no caller identity, so anywhere it exists is a place calls become anonymous |
 | The caller's token — user, delegation, or workload — is **never** forwarded to Domino | Domino cannot validate it, and forwarding a bearer credential to a system that ignores it is a credential leak with no benefit |
+| **[AMENDMENT]** The secret is **per-Endpoint**, not singular: `endpointTokenSecretRefs: {<domino_endpoint_name>: <External Secret name>}`, matching 02 §4.3's *"static per-model tokens"* — one token per Endpoint, never one token for the whole map | A single `endpointTokenSecretRef` cannot serve every entry in the `operation_id`→endpoint map; each Domino Endpoint has its own static token |
+| **[AMENDMENT]** `domino.baseUrl` is a required values key with no default (09 §4.5's "no defaults for anything environment-specific"), naming the Domino deployment's own endpoint-serving host | The proxy has no configured target otherwise — a gap this section previously left silent rather than flagged |
 | An audit record is written **before** the response returns, carrying `principal_id`, the full `act` chain, `correlation_id`, `trace_ref`, the Endpoint name, and request/response digests | This route exists *for* the audit record. Writing it after the response would make a crash lose exactly the record the route was built to produce |
 | A `503` from the audit write fails the request | If the identity attribution cannot be recorded, the anonymous call must not be made |
 | The declared timeout is below Domino's documented practical request ceiling near 60 s (01 §3 correction 2), and a timeout returns `504` with the audit record already written, outcome `timeout_result_unknown` **[AMENDMENT]** | 01 §3 correction 2 also records that Domino Endpoints have *"no cancellation of timed-out requests"* — so a gateway timeout does not mean the inference stopped, and `31-auth.md` §5.6 requires the outcome value **never imply the model did not run**; `timed out`, `failed`, or `cancelled` would all be false claims. The audit record reflects that a call was made, of unknown outcome |
@@ -1880,7 +1888,12 @@ auth:
 
 domino:
   inferenceProxyEnabled: true
-  endpointTokenSecretRef: fathom-gateway-domino-endpoint   # External Secrets. §5.6
+  baseUrl: ""                        # [AMENDMENT] REQUIRED, no default (09 §4.5) -- the Domino
+                                      # deployment's own endpoint-serving host. §5.6
+  endpointTokenSecretRefs:           # [AMENDMENT] was a single endpointTokenSecretRef -- 02 §4.3's
+                                      # "static PER-MODEL tokens" means one secret per Endpoint,
+                                      # never one secret for every operation_id->endpoint entry
+    pdm-tier3-whatif: fathom-gateway-domino-endpoint-pdm-whatif   # §5.6
 
 # ---- owned datastore --------------------------------------------------------
 database:
