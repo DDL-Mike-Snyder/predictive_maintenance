@@ -371,12 +371,15 @@ async def invoke(req: ToolCall, principal: Principal) -> ToolResult:
 
     live = await spec_cache.get_fresh(descriptor.x_fathom_target) # gate 5  (raises SpecCacheStale)
 
-    verdict = assess(live.document, descriptor.x_fathom_operation_id)   # gate 6a — THE SAME FUNCTION CI USES
-    if not verdict.eligible:
-        raise Rejected(_PROBLEM_FOR[verdict.reason], verdict.detail)
-
+    # [AMENDMENT] 6b now runs BEFORE 6a. Originally 6a ran first and called assess() against
+    # the LIVE class; if a target had escalated to state-changing, assess() returned
+    # ineligible and rejected with a generic ineligibility error before 6b's comparison ever
+    # ran -- so the "target escalated after the descriptor was pinned" case, THE CENTRAL TEST
+    # OF THIS SERVICE (§4.4), returned 403, never the documented 409 side-effects-mismatch.
+    # Checking the drift first means a stale descriptor is always reported as stale, and
+    # eligibility is only evaluated once descriptor and live agree.
     live_class = live.side_effects_of(descriptor.x_fathom_operation_id)
-    if live_class != descriptor.x_fathom_side_effects:            # gate 6b — the comparison assess() cannot make
+    if live_class != descriptor.x_fathom_side_effects:            # gate 6a — the comparison assess() cannot make
         raise Rejected(
             "side-effects-mismatch",
             f"descriptor recorded {descriptor.x_fathom_side_effects!r}; "
@@ -385,6 +388,10 @@ async def invoke(req: ToolCall, principal: Principal) -> ToolResult:
             "Document 03 §8.1: the descriptor was generated against a specification "
             "that is no longer the one being served.  Regenerate; do not proceed.",
         )
+
+    verdict = assess(live.document, descriptor.x_fathom_operation_id)   # gate 6b — THE SAME FUNCTION CI USES
+    if not verdict.eligible:
+        raise Rejected(_PROBLEM_FOR[verdict.reason], verdict.detail)
 
     principal.assert_may_invoke(live_class)                       # gate 7  (03 §8.3 cap + accountable owner)
     args = live.validate_arguments(descriptor, req.arguments)     # gate 8  (live schema, not inputSchema)
