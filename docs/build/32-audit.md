@@ -370,7 +370,7 @@ Every ingested envelope is stored complete: all of document 03 §5.4's fields, t
 
 ```sql
 CREATE TABLE attestation_index (        -- indexed PROJECTION; audit_record.attestation is authoritative
-  record_id            uuid   NOT NULL PRIMARY KEY REFERENCES audit_record(record_id),
+  record_id            uuid   NOT NULL REFERENCES audit_record(record_id),
   producer_slug        text   NOT NULL,
   producer_node        text   NOT NULL,
   monotonic_seq        bigint NOT NULL,
@@ -383,7 +383,11 @@ CREATE TABLE attestation_index (        -- indexed PROJECTION; audit_record.atte
   seconds_since_sync   integer NOT NULL,
   step_occurred        boolean NOT NULL,
   source_time          timestamptz NOT NULL,        -- recorded, never compared [11 §4.7]
-  ingest_time          timestamptz NOT NULL         -- ms granularity [AU-12(1), 08 §3.5]
+  ingest_time          timestamptz NOT NULL,        -- ms granularity [AU-12(1), 08 §3.5]
+
+  PRIMARY KEY (record_id, ingest_time)   -- [AMENDMENT] a partitioned table's PK/unique
+                                          -- constraints must include the partition key;
+                                          -- `record_id` alone made this migration fail
 ) PARTITION BY RANGE (ingest_time);
 ```
 
@@ -788,6 +792,44 @@ with `target_sub_app = audit`, published on `fathom.audit.proposal.v1` per docum
 1. **No agent may create or adjudicate a purge proposal.** `x-side-effects` on the purge-proposal operation is `state-changing`, so document 03 §8.1 already forecloses agent eligibility; additionally the coordinator rejects any proposal whose principal's `fathom.agent.authority` claim is `accountable_autonomous` (document 03 §8.3, 31 §2.5) and any proposal carrying an `agent_id`. A prompt-injected purge (D14) is the worst available outcome in this system. **[AMENDMENT]** This rule was previously unenforceable as stated: `Proposal.agent_id`/`agent_version`/`llm_version`/`trace_ref` were required non-empty (10-shared-packages.md §4.7), so a human-created purge proposal — the only kind this rule permits — could not be constructed at all, and the obvious workaround (a sentinel `agent_id` like `"human"`) would have made this rejection either vacuous or dead. Those four fields are now optional, present together or all absent (`_agent_provenance_consistent`), so a human-created purge proposal is representable and this rejection is the real, exercisable defense it was always described as.
 2. **`evidence[]` must include the spillage report** — the incident reference, the mislabeling determination, and its authority — with `source_trust: program`. A purge proposal resting on non-program evidence is refused, not merely flagged.
 3. **`valid_until` is mandatory and short** (default 72 hours). Document 03 §7.2 requires re-validation at adjudication; for a purge, re-validation recomputes the closure, because a closure computed five days ago may have grown as derived values were published. **The closure is recomputed and re-sealed at adjudication, and a growth beyond the adjudicated scope aborts the purge and requires a new proposal.**
+
+### 6.1a Schema: `purge`, `purge_target`, `purge_receipt` `[AMENDMENT]`
+
+**[AMENDMENT — real defect, found in adversarial review: `audit_record.purged_by` and `dissemination.purge_receipt_id` both `REFERENCES` these tables, and phase 3/phase 5 below both write to them by name, but no `CREATE TABLE` for any of the three existed anywhere in this document. The first migration referencing either foreign key fails outright.]**
+
+```sql
+CREATE TABLE purge (
+  purge_id          uuid        PRIMARY KEY,   -- = the purge Proposal's own proposal_id (§6.1: "a purge is a Proposal")
+  purge_group_id    uuid        NOT NULL,      -- §5.4's shred handle for the sealed closure
+  phase             text        NOT NULL,      -- report | contain | enumerate | adjudicate | execute | verify | certify (§6.2)
+  sealed_at         timestamptz NULL,          -- set at phase 3 (ENUMERATE), never before
+  certificate_ref   text        NULL,          -- set at phase 7 (CERTIFY), §6.6
+  CONSTRAINT purge_certified_requires_seal CHECK (certificate_ref IS NULL OR sealed_at IS NOT NULL)
+);
+
+CREATE TABLE purge_target (
+  purge_id      uuid  NOT NULL REFERENCES purge(purge_id),
+  record_id     uuid  NOT NULL,
+  holder_slug   text  NOT NULL,   -- 03 §3.1 slug
+  holder_store  text  NOT NULL,   -- read-model / index / cache / object-store / trace name
+  destroyed_at  timestamptz NULL, -- set at phase 5 (EXECUTE), per §6.3's leaves-inward order
+  PRIMARY KEY (purge_id, record_id, holder_slug, holder_store)
+);
+-- Written at phase 3 (ENUMERATE), one row per (record, holder, store) in the
+-- sealed closure -- "nothing is destroyed before the list of what will be
+-- destroyed is durable and signed" (§6.2). Re-validated and re-sealed at
+-- phase 4 (ADJUDICATE); a closure that grew aborts the purge (§6.1).
+
+CREATE TABLE purge_receipt (
+  receipt_id    uuid        PRIMARY KEY,
+  purge_id      uuid        NOT NULL REFERENCES purge(purge_id),
+  holder_slug   text        NOT NULL,
+  holder_store  text        NOT NULL,
+  signed_at     timestamptz NOT NULL,
+  signature     bytea       NOT NULL,   -- the holder's own signed purge receipt (§6.2 phase 5)
+  UNIQUE (purge_id, holder_slug, holder_store)
+);
+```
 
 ### 6.2 The seven phases
 
