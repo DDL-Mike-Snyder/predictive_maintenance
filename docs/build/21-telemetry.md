@@ -195,6 +195,16 @@ Implementation is document 11 §4.3's `MonotonicSequencer` under the key `("tele
 CREATE TABLE meta.knowledge_log (
   knowledge_seq   bigint      NOT NULL,             -- gap-free, from MonotonicSequencer -- PER producer_node
   producer_node   text        NOT NULL,             -- 'enterprise' | 'edge:<asset_id>'
+  -- [AMENDMENT -- real defect, found in adversarial review of the prior amendment] `producer_node`
+  -- ON THIS TABLE has always meant the node whose OWN MonotonicSequencer allocated `knowledge_seq` --
+  -- i.e. the ADMITTING node.  A knowledge_log row has no separate provenance dimension; its only
+  -- meaning is "this node admitted this act of learning."  `admitting_node` is carried explicitly,
+  -- under the same name meta.telemetry_batch uses for the concept, so that tables which DO separate
+  -- provenance from admission (telemetry_batch, usage_counter_observation, detected_anomaly,
+  -- mission_record) can FK against the admitting node by name instead of latching a provenance-
+  -- flavored column name onto what is, here, purely an admission concept.  Always equal to
+  -- `producer_node` on this table (enforced below) -- the two never diverge here.
+  admitting_node  text        NOT NULL,
   kind            text        NOT NULL,             -- see the table above
   ref_kind        text        NOT NULL,             -- 'indicator_definition' | 'source_tag_mapping' | ...
   ref_id          text        NOT NULL,
@@ -203,10 +213,14 @@ CREATE TABLE meta.knowledge_log (
   authored_by     text        NULL,                 -- principal, where a human authored it
   correlation_id  uuid        NOT NULL,
   CONSTRAINT knowledge_log_node CHECK (producer_node IN ('enterprise') OR producer_node LIKE 'edge:%'),
-  PRIMARY KEY (producer_node, knowledge_seq)   -- [AMENDMENT] was knowledge_seq alone -- gap-free is
+  CONSTRAINT knowledge_log_admitting_is_self CHECK (admitting_node = producer_node),
+  PRIMARY KEY (producer_node, knowledge_seq),  -- [AMENDMENT] was knowledge_seq alone -- gap-free is
                                                 -- a PER producer_node property (this section's own
                                                 -- DECISION), so enterprise's seq=1 and an edge hull's
                                                 -- seq=1 must coexist, not collide on one global PK
+  CONSTRAINT knowledge_log_admitting_unique UNIQUE (admitting_node, knowledge_seq)
+    -- [AMENDMENT] lets tables that separate provenance from admission (see above) FK against
+    -- (admitting_node, knowledge_seq) instead of (producer_node, knowledge_seq)
 );
 CREATE UNIQUE INDEX knowledge_log_at ON meta.knowledge_log (known_at, knowledge_seq);
 ```
@@ -446,7 +460,18 @@ CREATE TABLE meta.telemetry_batch (
   data_time_from     timestamptz NOT NULL,
   data_time_to       timestamptz NOT NULL,
   -- KNOWLEDGE time.  Set by THIS node at admission.  Never by the producer.
-  known_at_seq       bigint      NOT NULL,   -- [AMENDMENT] FK moved below -- composite with producer_node above
+  -- [AMENDMENT -- real defect, found in adversarial review of the prior amendment] `producer_node`
+  -- above is PROVENANCE (which node the DATA came from) and is NOT necessarily the node that
+  -- admitted this row and allocated `known_at_seq`.  `admitting_node` carries that separately;
+  -- see the note below and §4.5(a)/§5.5.
+  admitting_node     text        NOT NULL,   -- 'enterprise' | 'edge:<asset_id>'.  WHICH node
+                                              -- admitted this batch and allocated known_at_seq.
+                                              -- Equal to producer_node for an enterprise-ingested
+                                              -- batch, or for an edge-originated batch admitted
+                                              -- locally at the edge.  Equal to 'enterprise' --
+                                              -- NOT producer_node -- for an edge-originated batch
+                                              -- admitted at shore ingress on reconnect.
+  known_at_seq       bigint      NOT NULL,   -- FK below is against admitting_node, NOT producer_node
 
   -- CLOCK ATTESTATION.  Copied from the envelope, retained permanently (03 §5.4, 11 §10.5)
   sync_quality       jsonb       NOT NULL,
@@ -466,9 +491,18 @@ CREATE TABLE meta.telemetry_batch (
   CONSTRAINT batch_time_range CHECK (data_time_to >= data_time_from),
   CONSTRAINT batch_completeness CHECK (completeness >= 0),
   CONSTRAINT batch_node CHECK (producer_node = 'enterprise' OR producer_node LIKE 'edge:%'),
+  CONSTRAINT batch_admitting_node CHECK (admitting_node = 'enterprise' OR admitting_node LIKE 'edge:%'),
   CONSTRAINT batch_reduction_when_unmanned
     CHECK (domain_profile <> 'unmanned' OR reduction_version IS NOT NULL),
-  FOREIGN KEY (producer_node, known_at_seq) REFERENCES meta.knowledge_log(producer_node, knowledge_seq)
+  -- [AMENDMENT -- real defect, found in adversarial review of the prior amendment] this FK was
+  -- (producer_node, known_at_seq) -> knowledge_log(producer_node, knowledge_seq), which fuses two
+  -- different node identities: known_at_seq is allocated by the ADMITTING node, not necessarily by
+  -- producer_node (the data's origin).  For an edge-originated batch admitted at shore ingress on
+  -- reconnect, producer_node = 'edge:<asset_id>' while the allocating node is 'enterprise'; the old
+  -- FK would look up ('edge:<asset_id>', <seq>) in knowledge_log against a row that was actually
+  -- filed under ('enterprise', <seq>), and no match would ever exist.  The FK is against
+  -- admitting_node, never producer_node.
+  FOREIGN KEY (admitting_node, known_at_seq) REFERENCES meta.knowledge_log(admitting_node, knowledge_seq)
 );
 CREATE UNIQUE INDEX batch_dedup
   ON meta.telemetry_batch (producer_node, ingest_monotonic_seq);
@@ -498,6 +532,18 @@ CREATE TABLE ts.sample (
   batch_id           uuid        NOT NULL,
   mapping_version    integer     NOT NULL,
   known_at_seq       bigint      NOT NULL,
+  -- [AMENDMENT -- applying §3.1's blanket rule, missed here in the first pass] `producer_node`
+  -- is carried on every sample, copied down from its batch's own `producer_node` (§3.2), for the
+  -- same provenance reason every other `*_seq`-stamping table carries it: a submarine's sample and
+  -- the enterprise's sample must never be indistinguishable by node.  There is deliberately no
+  -- `admitting_node` here and no per-row FK to `meta.knowledge_log`: `known_at_seq` is not
+  -- independently allocated per sample -- it is the ONE allocation the whole batch shares (§4.1
+  -- step 9: "the batch, its samples, its knowledge-sequence allocation ... commit together"), and
+  -- that allocation's admitting node is already correctly recorded, and FK-checked, on
+  -- `meta.telemetry_batch.admitting_node`. A sample does not stamp its own sequence, so it does not
+  -- need its own admitting-node column or FK.
+  producer_node      text        NOT NULL,        -- 'enterprise' | 'edge:<asset_id>'.  Copied from
+                                                    -- the owning batch (03 §5.4)
   PRIMARY KEY (channel_key, asset_id, position_id, data_time, batch_id)
   -- [AMENDMENT] position_id added -- without it, two transducers of the same
   -- canonical channel on one hull (a real, common case: two vibration sensors
@@ -598,7 +644,15 @@ CREATE TABLE ts.indicator_value (
   producer_node      text        NOT NULL,        -- 'enterprise' | 'edge:<asset_id>'
   is_current         boolean     NOT NULL,        -- LATEST-SERVING CONVENIENCE ONLY.  See §6.5
 
-  PRIMARY KEY (installed_item_id, indicator_key, window_end, value_seq)
+  -- [AMENDMENT -- real defect, found in adversarial review] `producer_node` added to the PK.
+  -- §6.5 requires an edge-produced row and an enterprise-produced row to coexist for the SAME
+  -- (installed_item_id, indicator_key, window_end): "an enterprise recomputation of an
+  -- edge-computed window sets `is_current` on its own row and clears it on the edge row, while
+  -- the edge row keeps its own `known_at_seq`." Each node allocates `value_seq` independently
+  -- (it is per-node monotonic, per its own comment above), so the edge row's first value_seq and
+  -- the enterprise row's first value_seq can both be, e.g., 1 -- without `producer_node` in the
+  -- PK those two legitimately-coexisting rows collide on the same key.
+  PRIMARY KEY (installed_item_id, indicator_key, window_end, producer_node, value_seq)
 );
 SELECT create_hypertable('ts.indicator_value', 'window_end',
                          chunk_time_interval => INTERVAL '7 days');
@@ -660,7 +714,15 @@ CREATE TABLE meta.usage_counter_observation (
   counter_epoch      integer     NOT NULL,
   observed_value     numeric     NOT NULL,
   data_time          timestamptz NOT NULL,
-  known_at_seq       bigint      NOT NULL,
+  -- [AMENDMENT -- real defect, found in adversarial review, same conflation as
+  -- meta.telemetry_batch (§3.2)] `producer_node` below is PROVENANCE (which node the observation
+  -- came from) and is NOT necessarily the node that admitted this row and allocated `known_at_seq`.
+  -- `admitting_node` carries that separately: equal to `producer_node` for an observation admitted
+  -- locally (enterprise-observed, or edge-observed and admitted at the edge), or 'enterprise' --
+  -- NOT `producer_node` -- for an edge-originated observation admitted at shore ingress on
+  -- reconnect (same six-week-drain mechanism as §3.2, §5.5).
+  admitting_node     text        NOT NULL,
+  known_at_seq       bigint      NOT NULL,   -- FK below is against admitting_node, NOT producer_node
   producer_node      text        NOT NULL,
   monotonic_seq      bigint      NOT NULL,
   merge_decision     text        NOT NULL,        -- applied | ignored_subsumed | correction
@@ -674,8 +736,12 @@ CREATE TABLE meta.usage_counter_observation (
     (correction_authority IS NOT NULL AND correction_reason IS NOT NULL
      AND correction_evidence_ref IS NOT NULL AND corrected_from IS NOT NULL)
   ),
+  CONSTRAINT observation_node CHECK (producer_node = 'enterprise' OR producer_node LIKE 'edge:%'),
+  CONSTRAINT observation_admitting_node
+    CHECK (admitting_node = 'enterprise' OR admitting_node LIKE 'edge:%'),
   FOREIGN KEY (installed_item_id, counter_type, counter_epoch)
-    REFERENCES meta.usage_counter_epoch(installed_item_id, counter_type, counter_epoch)
+    REFERENCES meta.usage_counter_epoch(installed_item_id, counter_type, counter_epoch),
+  FOREIGN KEY (admitting_node, known_at_seq) REFERENCES meta.knowledge_log(admitting_node, knowledge_seq)
 );
 CREATE UNIQUE INDEX observation_dedup
   ON meta.usage_counter_observation (producer_node, monotonic_seq);
@@ -760,13 +826,31 @@ CREATE TABLE meta.mission_record (
   gap_intervals      jsonb       NOT NULL,        -- [{from,to,cause}] — enumerated, never summarized
 
   -- AUTHORITY, per 03 §11's EDGE_AUTHORITATIVE_THEN_ENTERPRISE (11 §7.3)
-  created_by_node    text        NOT NULL,
+  -- [AMENDMENT -- applying §3.1's blanket rule, missed here in the first pass, plus the same
+  -- producer/admitting conflation found in meta.telemetry_batch (§3.2)] this column was
+  -- `created_by_node`; renamed to `producer_node` to match every other table's provenance column
+  -- (03 §5.4) -- it is the same concept, which node authored/originated this record.
+  producer_node      text        NOT NULL,
   authority          text        NOT NULL,        -- edge | enterprise
+  -- `admitting_node` is the node whose OWN local database this stored row lives in and whose
+  -- MonotonicSequencer allocated `known_at_seq` (and `authority_transitioned_at_seq`, when set).
+  -- Equal to `producer_node` for the edge's own copy, admitted locally at creation (the
+  -- edge-authoritative-on-creation case). Equal to 'enterprise' -- NOT `producer_node` -- for the
+  -- enterprise's own copy of an edge-originated mission record, admitted when the record reaches
+  -- shore (§8.1), same mechanism as meta.telemetry_batch. Both `*_seq` columns below share this
+  -- one column because both are allocated by whichever node's database holds this particular row.
+  admitting_node     text        NOT NULL,
   authority_transitioned_at_seq bigint NULL,      -- recorded ON THE RECORD, never inferred
 
   known_at_seq       bigint      NOT NULL,
   classification     jsonb       NOT NULL,
-  CONSTRAINT mission_ended_after_started CHECK (ended_at IS NULL OR ended_at > started_at)
+  CONSTRAINT mission_ended_after_started CHECK (ended_at IS NULL OR ended_at > started_at),
+  CONSTRAINT mission_node CHECK (producer_node = 'enterprise' OR producer_node LIKE 'edge:%'),
+  CONSTRAINT mission_admitting_node
+    CHECK (admitting_node = 'enterprise' OR admitting_node LIKE 'edge:%'),
+  FOREIGN KEY (admitting_node, known_at_seq) REFERENCES meta.knowledge_log(admitting_node, knowledge_seq),
+  FOREIGN KEY (admitting_node, authority_transitioned_at_seq)
+    REFERENCES meta.knowledge_log(admitting_node, knowledge_seq)
 );
 ```
 
@@ -810,7 +894,15 @@ CREATE TABLE meta.detected_anomaly (
   attributed_to      text        NOT NULL,        -- equipment | sensor | operating_condition |
                                                   -- unknown
   definition_state_seq bigint    NOT NULL,        -- knowledge_seq the detector ran under
-  known_at_seq       bigint      NOT NULL,
+  -- [AMENDMENT -- real defect, found in adversarial review, same conflation as
+  -- meta.telemetry_batch (§3.2)] `producer_node` above is PROVENANCE (which node ran the
+  -- detector) and is NOT necessarily the node that admitted this candidate and allocated
+  -- `known_at_seq`.  `admitting_node` carries that separately: equal to `producer_node` for a
+  -- candidate admitted locally (an enterprise pass, or an edge detector admitted at the edge), or
+  -- 'enterprise' -- NOT `producer_node` -- for an edge-generated candidate admitted at shore
+  -- ingress on reconnect (same mechanism as §3.2, §5.5).
+  admitting_node     text        NOT NULL,
+  known_at_seq       bigint      NOT NULL,   -- FK below is against admitting_node, NOT producer_node
   classification     jsonb       NOT NULL,
 
   CONSTRAINT anomaly_origin CHECK (origin IN ('enterprise','edge')),
@@ -818,7 +910,10 @@ CREATE TABLE meta.detected_anomaly (
     (origin = 'enterprise' AND producer_node = 'enterprise') OR
     (origin = 'edge'       AND producer_node LIKE 'edge:%')
   ),
-  CONSTRAINT anomaly_window CHECK (window_end > window_start)
+  CONSTRAINT anomaly_admitting_node
+    CHECK (admitting_node = 'enterprise' OR admitting_node LIKE 'edge:%'),
+  CONSTRAINT anomaly_window CHECK (window_end > window_start),
+  FOREIGN KEY (admitting_node, known_at_seq) REFERENCES meta.knowledge_log(admitting_node, knowledge_seq)
 );
 CREATE INDEX anomaly_by_group ON meta.detected_anomaly (candidate_group_id);
 CREATE INDEX anomaly_by_mission ON meta.detected_anomaly (mission_id, origin);
