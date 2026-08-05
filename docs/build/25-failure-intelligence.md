@@ -403,8 +403,10 @@ CREATE TABLE failure_intel.attribution (
     agreement_class     failure_intel.agreement_class NOT NULL,
     pma_side            jsonb NOT NULL,       -- [{tag_ref, signature_key AS FILED,
                                               --   taxonomy_version AS FILED, reviewer,
-                                              --   qualification, candidate_modes[]{lineage,
+                                              --   qualification_tier, candidate_modes[]{lineage,
                                               --   confidence, resolve_hops}}]
+                                              -- [AMENDMENT] was "qualification" -- PMA's own
+                                              -- AnomalyTag wire field (23-pma.md) is qualification_tier
     maintenance_side    jsonb NOT NULL,       -- [{action_ref, cause_code, when_discovered_code,
                                               --   action_taken_code, eic_prefix_matched,
                                               --   taxonomy_version AS FILED,

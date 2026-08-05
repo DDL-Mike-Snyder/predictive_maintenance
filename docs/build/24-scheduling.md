@@ -701,11 +701,28 @@ This is the correction Scheduling exists to apply, because Scheduling is the onl
 from fathom_schemas.decision import (
     expected_consequence, ExpectedConsequence, RiskPosture, UncalibratedAndUnrated,
 )
+from fathom_schemas.prediction import FailurePrediction   # [AMENDMENT] see score() below
 
 def score(cand: WorkCandidate, *, window_start, weights, calendar) -> ExpectedConsequence:
     """Assemble PdM's inputs. Compute NOTHING that PdM's function computes."""
+    # [AMENDMENT] `cand.prediction` does not exist -- §3.2's own schema flattens every
+    # FailurePrediction-derived field directly onto WorkCandidate (reference_class,
+    # p_failure, population_hazard_rate, rul_p50_days, horizon_days, fallback_level,
+    # calibration_population, model_version), never as a nested `.prediction` object.
+    # Reconstruct the FailurePrediction expected_consequence() actually requires, by name,
+    # from the candidate's own identity fields (§3.2) plus its flattened prediction fields:
+    prediction = FailurePrediction(
+        asset_id=cand.asset_id, installed_item_id=cand.installed_item_id,
+        position_id=cand.position_id, niin=cand.niin, equipment_family=cand.equipment_family,
+        baseline_id=cand.baseline_id, baseline_epoch=cand.baseline_epoch,
+        reference_class=cand.reference_class, p_failure=cand.p_failure,
+        population_hazard_rate=cand.population_hazard_rate,
+        rul_p50_days=cand.rul_p50_days, horizon_days=cand.horizon_days,
+        fallback_level=cand.fallback_level, calibration_population=cand.calibration_population,
+        model_version=cand.model_version,
+    )
     return expected_consequence(
-        cand.prediction,                                  # the FailurePrediction, verbatim
+        prediction,                                       # the reconstructed FailurePrediction
         consequence=weights.for_item(cand),               # from Registry criticality. §4.2.3
         operating_fraction=calendar.operating_fraction(   # planned operating / calendar days
             cand.asset_id, until=window_start),
