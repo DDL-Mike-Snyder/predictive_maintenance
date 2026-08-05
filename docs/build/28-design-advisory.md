@@ -704,22 +704,30 @@ Document 07 §5.6 documents the Navy's existing priority corrective-action proce
 CREATE TABLE design_advisory.redesign_case (
     case_id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     candidate_id      uuid NOT NULL REFERENCES design_advisory.redesign_candidate(candidate_id),
-    niin              text NOT NULL REFERENCES design_advisory.part_ref(niin),
+    -- [AMENDMENT] niin, scope_description, dependency_completeness, impact_snapshot_id,
+    -- test_coverage_summary, and test_attribution_ambiguity were all NOT NULL, but
+    -- POST /redesign-cases (§9.1) creates a `draft` row from only {candidate_id, dossier_id}
+    -- -- "recording no decision, no scope, and no recommendation" (E2) -- and the dependency
+    -- traversal that produces dependency_completeness/impact_snapshot_id runs only later, at
+    -- /assemble (§6.1 step 9). As NOT NULL, the documented creation call could never insert a
+    -- row at all. Made nullable at creation, required from 'assembled' onward, mirroring
+    -- assembled_is_complete's own established pattern below for the later fields.
+    niin              text REFERENCES design_advisory.part_ref(niin),
     dossier_id        uuid NOT NULL REFERENCES design_advisory.failure_dossier(dossier_id),
     case_version      int  NOT NULL,
     case_status       design_advisory.case_status NOT NULL DEFAULT 'draft',
 
-    scope_description text NOT NULL,
+    scope_description text,
 
     -- --- 04 §10's key decision, as a REQUIRED structured field -------------
     -- "dependency completeness is itself reported so a reader knows how much of
-    --  the impact is known."  NOT NULL: a case cannot exist without it.
-    dependency_completeness jsonb NOT NULL,
-    impact_snapshot_id uuid NOT NULL REFERENCES design_advisory.impact_snapshot(snapshot_id),
+    --  the impact is known."  Required once assembled -- see assembled_is_complete below.
+    dependency_completeness jsonb,
+    impact_snapshot_id uuid REFERENCES design_advisory.impact_snapshot(snapshot_id),
 
     -- Test-evidence completeness, reported for the same reason
-    test_coverage_summary   jsonb NOT NULL,
-    test_attribution_ambiguity jsonb NOT NULL,   -- §3.2.4
+    test_coverage_summary   jsonb,
+    test_attribution_ambiguity jsonb,   -- §3.2.4
 
     cost_estimate_id  uuid REFERENCES design_advisory.cost_estimate(estimate_id),
     projected_benefit jsonb,
@@ -748,6 +756,19 @@ CREATE TABLE design_advisory.redesign_case (
             AND jsonb_array_length(recommendation_limitations) > 0
             AND jsonb_typeof(recommendation_evidence_gaps) = 'array'
             AND jsonb_array_length(recommendation_evidence_gaps) > 0)
+    ),
+    -- [AMENDMENT] The fields /assemble (§6.1 step 9) itself populates -- niin,
+    -- scope_description, dependency_completeness, impact_snapshot_id, and the two
+    -- test-evidence summaries -- are required from 'assembled' onward, the same status
+    -- assembled_is_complete above already gates on.
+    CONSTRAINT assembly_inputs_complete CHECK (
+        case_status NOT IN ('assembled','published')
+        OR (niin IS NOT NULL
+            AND scope_description IS NOT NULL
+            AND dependency_completeness IS NOT NULL
+            AND impact_snapshot_id IS NOT NULL
+            AND test_coverage_summary IS NOT NULL
+            AND test_attribution_ambiguity IS NOT NULL)
     ),
     -- E2: 'published' is reachable ONLY as the effect of an adjudicated proposal.
     CONSTRAINT published_requires_adjudicated_proposal CHECK (
