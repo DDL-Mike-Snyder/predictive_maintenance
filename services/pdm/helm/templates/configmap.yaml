@@ -1,0 +1,47 @@
+{{/*
+09-monorepo-and-conventions.md §4.5: config.py is the only reader of the
+environment; everything here is non-secret. FATHOM_DATABASE__URL is the one
+genuinely secret value and is deliberately NOT here -- see
+externalsecret.yaml, projected into the Deployment via a separate
+envFrom/secretKeyRef Secret, never a chart value.
+
+Each field below is written out explicitly, one values.yaml field to one
+FATHOM_<SECTION>__<FIELD> env var, matching services/pdm/src/fathom_pdm/config.py
+Settings and services/pdm/.env.example exactly (both directions, per §4.5).
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "fathom.fullname" . }}
+  labels: {{- include "fathom.labels" . | nindent 4 }}
+data:
+  # app (AppSettings)
+  FATHOM_APP__LOG_LEVEL: {{ .Values.app.logLevel | quote }}
+  FATHOM_APP__STALENESS_BOUND_SECONDS: {{ .Values.app.config.stalenessBoundSeconds | quote }}
+  FATHOM_APP__CORS_ALLOWED_ORIGINS: {{ .Values.app.config.corsAllowedOrigins | toJson | quote }}
+
+  # database (DatabaseSettings) -- everything except .url, which is secret
+  FATHOM_DATABASE__POOL_SIZE: {{ .Values.database.poolSize | quote }}
+  FATHOM_DATABASE__MAX_OVERFLOW: {{ .Values.database.maxOverflow | quote }}
+
+  # events (EventsSettings)
+  FATHOM_EVENTS__BROKERS: {{ .Values.events.brokers | quote }}
+  FATHOM_EVENTS__SCHEMA_REGISTRY: {{ .Values.events.schemaRegistry | quote }}
+  FATHOM_EVENTS__CONSUMER_GROUP: {{ .Values.events.consumerGroup | quote }}
+
+  # auth (AuthSettings)
+  FATHOM_AUTH__ISSUER: {{ .Values.auth.issuer | quote }}
+  FATHOM_AUTH__JWKS_URL: {{ .Values.auth.jwksUrl | quote }}
+
+  # audit (AuditSettings)
+  FATHOM_AUDIT__BASE_URL: {{ .Values.audit.baseUrl | quote }}
+
+  # reference_data (ReferenceDataSettings)
+  FATHOM_REFERENCE_DATA__BASE_URL: {{ .Values.referenceData.baseUrl | quote }}
+
+  # otel (OtelSettings)
+  FATHOM_OTEL__ENABLED: {{ .Values.otel.enabled | quote }}
+
+  # domino (DominoSettings)
+  FATHOM_DOMINO__API_HOST: {{ .Values.domino.apiHost | quote }}
+  FATHOM_DOMINO__PROJECT_ID: {{ .Values.domino.projectId | quote }}

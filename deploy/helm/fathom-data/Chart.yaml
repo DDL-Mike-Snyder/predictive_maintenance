@@ -1,0 +1,11 @@
+apiVersion: v2
+name: fathom-data
+description: >-
+  Namespace-wide resources for the fathom-data namespace
+  (09-monorepo-and-conventions.md §4.4.2) -- the default-deny NetworkPolicy
+  for the namespace hosting CloudNativePG, Redpanda, Vault/HSM, and the
+  object store. Those stateful workloads themselves are cluster-adjacent
+  infrastructure (deploy/terraform -- [OPEN], no owning document yet), not
+  chart-managed here.
+type: application
+version: 0.1.0

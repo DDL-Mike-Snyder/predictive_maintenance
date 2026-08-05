@@ -1,0 +1,51 @@
+{{/*
+09-monorepo-and-conventions.md §4.2/§4.4.1: rendered as a pre-install,
+pre-upgrade Helm hook Job, not a normal workload -- Helm deletes and
+recreates it on every install/upgrade (hook-delete-policy below) rather
+than it ever being reconciled as part of the Deployment's steady state.
+backoffLimit: 0 so a partial migration fails the release instead of retrying
+into a worse partial state.
+*/}}
+{{- if .Values.migrations.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "fathom.fullname" . }}-migrate
+  labels: {{- include "fathom.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ .Values.migrations.backoffLimit }}
+  template:
+    metadata:
+      labels: {{- include "fathom.selectorLabels" . | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      {{- if .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- range .Values.image.pullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      securityContext: {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: migrate
+          image: {{ include "pdm.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext: {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          command: ["alembic", "upgrade", "head"]
+          envFrom:
+            - configMapRef:
+                name: {{ include "fathom.fullname" . }}
+            - secretRef:
+                name: {{ .Values.database.secretRef }}
+          resources: {{- toYaml .Values.resources | nindent 12 }}
+{{- end }}

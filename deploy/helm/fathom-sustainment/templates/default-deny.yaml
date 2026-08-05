@@ -1,0 +1,11 @@
+# 09-monorepo-and-conventions.md §4.4.2: "NetworkPolicy default-deny. Each
+# service may reach only its own database and the event bus." Un-templated
+# on purpose -- this is the one policy that must never vary per release.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: fathom-sustainment
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]

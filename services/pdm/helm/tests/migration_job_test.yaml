@@ -1,0 +1,39 @@
+# 09-monorepo-and-conventions.md §4.2: migration-job.yaml runs as a
+# pre-install,pre-upgrade Helm hook -- never reconciled as a normal
+# long-running workload.
+suite: Migration Job runs alembic as a pre-install/pre-upgrade hook only
+templates:
+  - migration-job.yaml
+tests:
+  - it: is a hook Job, not a normal workload, running alembic upgrade head with the same env/secret wiring as the Deployment
+    asserts:
+      - isKind:
+          of: Job
+      - equal:
+          path: metadata.annotations["helm.sh/hook"]
+          value: pre-install,pre-upgrade
+      - exists:
+          path: metadata.annotations["helm.sh/hook-delete-policy"]
+      - equal:
+          path: spec.backoffLimit
+          value: 0
+      - equal:
+          path: spec.template.spec.restartPolicy
+          value: Never
+      - equal:
+          path: spec.template.spec.containers[0].command
+          value: ["alembic", "upgrade", "head"]
+      - equal:
+          path: spec.template.spec.containers[0].envFrom
+          value:
+            - configMapRef:
+                name: RELEASE-NAME-pdm
+            - secretRef:
+                name: fathom-pdm-pg-app
+
+  - it: renders nothing when migrations.enabled is false
+    set:
+      migrations.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0

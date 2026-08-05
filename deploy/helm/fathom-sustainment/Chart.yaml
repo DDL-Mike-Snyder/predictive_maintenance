@@ -1,0 +1,10 @@
+apiVersion: v2
+name: fathom-sustainment
+description: >-
+  Namespace-wide resources for the fathom-sustainment namespace
+  (09-monorepo-and-conventions.md §4.4.2) -- currently just the default-deny
+  NetworkPolicy. Per-service charts (services/<slug>/helm) are deployed as
+  their own Argo CD Applications into this namespace, not as subcharts here;
+  this chart owns only what applies to the namespace as a whole.
+type: application
+version: 0.1.0

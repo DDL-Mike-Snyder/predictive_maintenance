@@ -1,0 +1,152 @@
+# services/pdm/helm/values.yaml
+# 09-monorepo-and-conventions.md §4.4.1 -- the mandatory shape. Every key
+# shown there appears here with the same name; nothing is renamed or omitted.
+# Additional top-level sections (auth, audit, referenceData, domino) follow
+# the same explicit pattern §4.4.1 already uses for `events:`, since the
+# mandatory shape only illustrates `app.config` generically -- see
+# configmap.yaml for how each field becomes a FATHOM_<SECTION>__<FIELD> env
+# var (09 §4.5).
+
+# ---- identity -------------------------------------------------------------
+slug: pdm                              # canonical slug, 03 §3.1. Used for labels, base path, topic prefix
+apiMajor: 1                            # the /api/v{major}/ segment
+
+image:
+  repository: registry.internal/fathom/pdm
+  digest: ""                           # sha256:... -- set by CI on merge. PLACEHOLDER until CI publishes a real digest
+  tag: ""
+  pullPolicy: IfNotPresent
+  pullSecrets: [fathom-registry]
+
+replicaCount: 2
+
+# ---- workload -------------------------------------------------------------
+resources:
+  requests: { cpu: 100m, memory: 256Mi }
+  limits:   { cpu: "1",  memory: 512Mi }
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile: { type: RuntimeDefault }
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities: { drop: ["ALL"] }
+
+nodeSelector:
+  fathom.navy/pool: program            # program workloads on their own pool, 01 §11
+tolerations: []
+terminationGracePeriodSeconds: 30
+
+# ---- probes -----------------------------------------------------------------
+probes:
+  liveness:  { path: /healthz, initialDelaySeconds: 5,  periodSeconds: 10, failureThreshold: 3 }
+  readiness: { path: /readyz,  initialDelaySeconds: 3,  periodSeconds: 5,  failureThreshold: 3 }
+
+# ---- application config (becomes FATHOM_* env vars; see §4.5) -------------
+app:
+  logLevel: INFO
+  config:
+    stalenessBoundSeconds: 300         # 03 §5.2 / obligation 14. REQUIRED for every consumer
+    corsAllowedOrigins: []
+
+# ---- owned datastore --------------------------------------------------------
+database:
+  clusterName: fathom-pdm-pg           # CloudNativePG Cluster in fathom-data. Exactly one
+  name: pdm
+  secretRef: fathom-pdm-pg-app         # created by External Secrets, never in the chart
+  poolSize: 10
+  maxOverflow: 5
+
+migrations:
+  enabled: true                        # rendered as a pre-install,pre-upgrade Helm hook Job, 01 §11
+  backoffLimit: 0                      # fail the release rather than retry a partial migration
+
+# ---- event bus --------------------------------------------------------------
+# publishes/consumes MUST equal src/fathom_pdm/events/catalog.py's
+# PUBLISHES/CONSUMES exactly (09 §4.2, §8.2) -- not the doc's illustrative
+# abbreviated list.
+events:
+  brokers: redpanda.fathom-data.svc.cluster.local:9093
+  schemaRegistry: http://redpanda.fathom-data.svc.cluster.local:8081
+  consumerGroup: fathom-pdm-v1
+  publishes:
+    - fathom.pdm.prediction.updated
+    - fathom.pdm.prediction.invalidated
+    - fathom.pdm.criticality_tier.assigned
+    - fathom.pdm.model_binding.activated
+  consumes:
+    - fathom.registry.asset.registered
+    - fathom.registry.asset.status_changed
+    - fathom.registry.configuration_baseline.changed
+    - fathom.registry.installed_item.installed
+    - fathom.registry.installed_item.removed
+    - fathom.registry.installed_item.identity_resolved
+    - fathom.telemetry.batch_ingested
+    - fathom.telemetry.health_indicator.computed
+    - fathom.telemetry.usage_counter.updated
+    - fathom.telemetry.usage_counter.reset
+    - fathom.telemetry.channel_mapping.version_published
+    - fathom.maintenance.maintenance_action.recorded
+    - fathom.maintenance.deferral.recorded
+    - fathom.pma.anomaly_tag.confirmed
+    - fathom.failure-intel.causal_finding.published
+    - fathom.failure-intel.failure_mode.attributed
+    - fathom.failure-intel.causal_feature_set.updated
+    - fathom.design-advisory.design_change.projected
+    - fathom.audit.remediation.v1
+
+# ---- auth (FATHOM_AUTH__*, config.py AuthSettings) -------------------------
+auth:
+  issuer: https://keycloak.internal/realms/fathom
+  jwksUrl: https://keycloak.internal/realms/fathom/protocol/openid-connect/certs
+
+# ---- audit (FATHOM_AUDIT__*, config.py AuditSettings) ----------------------
+audit:
+  baseUrl: http://audit.fathom-sustainment.svc.cluster.local:8000
+
+# ---- reference-data (FATHOM_REFERENCE_DATA__*, config.py ReferenceDataSettings) ---
+referenceData:
+  baseUrl: http://reference-data.fathom-sustainment.svc.cluster.local:8000
+
+# ---- otel (FATHOM_OTEL__*, config.py OtelSettings) -------------------------
+otel:
+  enabled: false
+
+# ---- domino (FATHOM_DOMINO__*, config.py DominoSettings) -------------------
+# 22-pdm.md §5.6: model tier bindings reference a Domino Model Registry
+# version + governance approval_ref; PdM records these, never mints them.
+# PLACEHOLDER -- needs the live Domino workspace to fill in for real.
+domino:
+  apiHost: ""
+  projectId: ""
+
+# ---- scaling ----------------------------------------------------------------
+autoscaling:
+  mode: hpa                            # hpa | keda | none.  keda for event workers, 01 §11
+  minReplicas: 2
+  maxReplicas: 6
+  targetRequestsPerSecond: 50
+  kedaLagThreshold: 1000
+
+# ---- network boundary (see §4.4.2) ------------------------------------------
+networkPolicy:
+  enabled: true                        # NEVER false in any environment
+  ingress:
+    fromServices: [gateway]            # in-namespace peers permitted to call this service
+    fromNamespaces: []                 # cross-namespace ingress. Empty except gateway (see §4.4.2)
+    allowPrometheusScrape: true
+  egress:
+    toOwnDatabase: true                # -> fathom-data, this service's cluster only
+    toEventBus: true                   # -> fathom-data, Redpanda brokers + schema registry
+    toServices: [auth, audit, reference-data]   # the ONLY permitted in-namespace egress
+    toNamespaces: []                   # cross-namespace egress. Empty for all nine sub-applications
+    allowDNS: true
+    toKeyService: false                # `audit` only [amendment 09-3]. Rendered from this value and
+    toObjectStore: true                # nothing else, so §4.4.2's egress-equality assertion still holds
+                                        # pdm is one of the six services widened into this edge (09 §4.4.1
+                                        # amendment): label sets and scoring-run artifacts, 22-pdm.md §13.1

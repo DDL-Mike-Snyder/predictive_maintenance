@@ -1,0 +1,41 @@
+# fathom.labels/fathom.selectorLabels (deploy/helm/_fathom-common) key off
+# .Values.slug, not a release-name-derived value, so NetworkPolicy peer
+# selectors like `fathom.navy/service: pdm` match identically across every
+# resource in this chart and every other service's chart. Assert that
+# fathom.navy/service is literally "pdm" (the plain canonical slug, not
+# "RELEASE-NAME-pdm" or similar) everywhere it appears.
+suite: fathom.navy/service label is the plain slug everywhere, consistently
+templates:
+  - deployment.yaml
+  - service.yaml
+  - networkpolicy.yaml
+  - servicemonitor.yaml
+  - poddisruptionbudget.yaml
+tests:
+  - it: "labels and selectors all carry fathom.navy/service: pdm"
+    set:
+      replicaCount: 2
+    asserts:
+      - equal:
+          path: metadata.labels["fathom.navy/service"]
+          value: pdm
+      - equal:
+          path: spec.selector["fathom.navy/service"]
+          value: pdm
+        template: service.yaml
+      - equal:
+          path: spec.podSelector.matchLabels["fathom.navy/service"]
+          value: pdm
+        template: networkpolicy.yaml
+      - equal:
+          path: spec.selector.matchLabels["fathom.navy/service"]
+          value: pdm
+        template: deployment.yaml
+      - equal:
+          path: spec.selector.matchLabels["fathom.navy/service"]
+          value: pdm
+        template: servicemonitor.yaml
+      - equal:
+          path: spec.selector.matchLabels["fathom.navy/service"]
+          value: pdm
+        template: poddisruptionbudget.yaml

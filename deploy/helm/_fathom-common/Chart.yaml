@@ -1,0 +1,7 @@
+apiVersion: v2
+name: fathom-common
+description: >-
+  Shared named templates for every FATHOM service chart (09-monorepo-and-conventions.md
+  §4.4) -- fullname/labels/selectorLabels only. Not deployable on its own.
+type: library
+version: 0.1.0

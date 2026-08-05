@@ -1,0 +1,14 @@
+apiVersion: v2
+name: pdm
+description: >-
+  FATHOM Predictive Maintenance service chart (docs/build/22-pdm.md,
+  09-monorepo-and-conventions.md §4.4). Depends on the shared _fathom-common
+  library chart for name/label templates so `fathom.navy/service` matches
+  across every service's NetworkPolicy peer selectors.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+dependencies:
+  - name: fathom-common
+    version: "0.1.0"
+    repository: "file://../../../deploy/helm/_fathom-common"

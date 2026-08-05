@@ -1,0 +1,11 @@
+# 09-monorepo-and-conventions.md §4.4.2: "shipped once ... and again for
+# fathom-data." Un-templated on purpose -- this is the one policy that must
+# never vary per release.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: fathom-data
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]

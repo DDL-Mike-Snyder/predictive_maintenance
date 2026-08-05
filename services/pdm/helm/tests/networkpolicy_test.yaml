@@ -1,0 +1,100 @@
+# 09-monorepo-and-conventions.md §4.2/§4.4.2: "the rendered policy's egress
+# peer set must equal values.networkPolicy.egress exactly and contain
+# nothing else" -- the mandatory, CI-testable invariant. Two cases: the
+# chart's own default values.yaml, and a second set of values that changes
+# several egress knobs at once, to prove the assertion is actually driven by
+# values.networkPolicy.egress rather than hardcoded against one fixture.
+suite: NetworkPolicy egress peer-set equality
+templates:
+  - networkpolicy.yaml
+tests:
+  - it: renders exactly the default values.yaml egress peer set and nothing else
+    asserts:
+      - isKind:
+          of: NetworkPolicy
+      - equal:
+          path: spec.egress
+          value:
+            - to:
+                - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }
+                  podSelector: { matchLabels: { k8s-app: kube-dns } }
+              ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]
+            - to:
+                - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: fathom-data } }
+                  podSelector:
+                    matchLabels: { cnpg.io/cluster: fathom-pdm-pg }
+              ports: [{ protocol: TCP, port: 5432 }]
+            - to:
+                - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: fathom-data } }
+                  podSelector: { matchLabels: { app.kubernetes.io/name: redpanda } }
+              ports: [{ protocol: TCP, port: 9093 }, { protocol: TCP, port: 8081 }]
+            - to:
+                - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: fathom-data } }
+                  podSelector: { matchLabels: { app.kubernetes.io/name: object-store } }
+              ports: [{ protocol: TCP, port: 9000 }]
+            - to:
+                - podSelector:
+                    matchLabels: { fathom.navy/service: auth }
+              ports: [{ protocol: TCP, port: 8000 }]
+            - to:
+                - podSelector:
+                    matchLabels: { fathom.navy/service: audit }
+              ports: [{ protocol: TCP, port: 8000 }]
+            - to:
+                - podSelector:
+                    matchLabels: { fathom.navy/service: reference-data }
+              ports: [{ protocol: TCP, port: 8000 }]
+      - lengthEqual:
+          path: spec.egress
+          count: 7
+
+  - it: tracks a different values.networkPolicy.egress exactly, proving the template is values-driven not hardcoded
+    set:
+      networkPolicy.egress.allowDNS: false
+      networkPolicy.egress.toOwnDatabase: true
+      networkPolicy.egress.toEventBus: false
+      networkPolicy.egress.toObjectStore: false
+      networkPolicy.egress.toKeyService: false
+      networkPolicy.egress.toServices: [auth]
+      networkPolicy.egress.toNamespaces: [fathom-data]
+    asserts:
+      - equal:
+          path: spec.egress
+          value:
+            - to:
+                - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: fathom-data } }
+                  podSelector:
+                    matchLabels: { cnpg.io/cluster: fathom-pdm-pg }
+              ports: [{ protocol: TCP, port: 5432 }]
+            - to:
+                - podSelector:
+                    matchLabels: { fathom.navy/service: auth }
+              ports: [{ protocol: TCP, port: 8000 }]
+            - to:
+                - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: fathom-data } }
+      - lengthEqual:
+          path: spec.egress
+          count: 3
+
+  - it: ingress fromServices comes from values, not a hardcoded peer
+    set:
+      networkPolicy.ingress.fromServices: [gateway, tool-server]
+      networkPolicy.ingress.allowPrometheusScrape: false
+    asserts:
+      - lengthEqual:
+          path: spec.ingress
+          count: 2
+      - contains:
+          path: spec.ingress
+          content:
+            from:
+              - podSelector:
+                  matchLabels: { fathom.navy/service: gateway }
+            ports: [{ protocol: TCP, port: 8000 }]
+      - contains:
+          path: spec.ingress
+          content:
+            from:
+              - podSelector:
+                  matchLabels: { fathom.navy/service: tool-server }
+            ports: [{ protocol: TCP, port: 8000 }]

@@ -1,0 +1,23 @@
+# services/pdm/helm/values-dev.yaml
+# Dev-environment overrides layered on top of values.yaml with
+# `helm ... -f values.yaml -f values-dev.yaml`. Only the deltas live here.
+
+replicaCount: 1
+
+resources:
+  requests: { cpu: 50m, memory: 128Mi }
+  limits:   { cpu: 500m, memory: 256Mi }
+
+autoscaling:
+  mode: none
+  minReplicas: 1
+  maxReplicas: 1
+
+image:
+  pullPolicy: Always
+
+app:
+  logLevel: DEBUG
+
+otel:
+  enabled: false

@@ -1,0 +1,32 @@
+# 09-monorepo-and-conventions.md §4.5: every non-secret env var
+# services/pdm/src/fathom_pdm/config.py's Settings needs, rendered as its own
+# key so the Deployment's plain envFrom/configMapRef projects it verbatim.
+# FATHOM_DATABASE__URL is deliberately absent -- see externalsecret_test.yaml.
+suite: ConfigMap carries every non-secret Settings field
+templates:
+  - configmap.yaml
+tests:
+  - it: renders one key per non-secret Settings field, with no secret DSN present
+    asserts:
+      - isKind:
+          of: ConfigMap
+      - equal:
+          path: data
+          value:
+            FATHOM_APP__LOG_LEVEL: "INFO"
+            FATHOM_APP__STALENESS_BOUND_SECONDS: "300"
+            FATHOM_APP__CORS_ALLOWED_ORIGINS: "[]"
+            FATHOM_DATABASE__POOL_SIZE: "10"
+            FATHOM_DATABASE__MAX_OVERFLOW: "5"
+            FATHOM_EVENTS__BROKERS: "redpanda.fathom-data.svc.cluster.local:9093"
+            FATHOM_EVENTS__SCHEMA_REGISTRY: "http://redpanda.fathom-data.svc.cluster.local:8081"
+            FATHOM_EVENTS__CONSUMER_GROUP: "fathom-pdm-v1"
+            FATHOM_AUTH__ISSUER: "https://keycloak.internal/realms/fathom"
+            FATHOM_AUTH__JWKS_URL: "https://keycloak.internal/realms/fathom/protocol/openid-connect/certs"
+            FATHOM_AUDIT__BASE_URL: "http://audit.fathom-sustainment.svc.cluster.local:8000"
+            FATHOM_REFERENCE_DATA__BASE_URL: "http://reference-data.fathom-sustainment.svc.cluster.local:8000"
+            FATHOM_OTEL__ENABLED: "false"
+            FATHOM_DOMINO__API_HOST: ""
+            FATHOM_DOMINO__PROJECT_ID: ""
+      - notExists:
+          path: data.FATHOM_DATABASE__URL

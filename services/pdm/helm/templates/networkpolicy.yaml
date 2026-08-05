@@ -1,0 +1,74 @@
+{{/*
+09-monorepo-and-conventions.md §4.4.2 -- given verbatim, parameterized only
+by chart name/values. Do not redesign; the rendered egress peer set must
+equal values.networkPolicy.egress exactly and contain nothing else (the
+CI-testable invariant this doc calls mandatory, asserted in tests/).
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "fathom.fullname" . }}
+  labels: {{- include "fathom.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: {{- include "fathom.selectorLabels" . | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    {{- range .Values.networkPolicy.ingress.fromServices }}
+    - from:
+        - podSelector:
+            matchLabels: { fathom.navy/service: {{ . }} }
+      ports: [{ protocol: TCP, port: 8000 }]
+    {{- end }}
+    {{- range .Values.networkPolicy.ingress.fromNamespaces }}
+    - from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: {{ . }} } }
+      ports: [{ protocol: TCP, port: 8000 }]
+    {{- end }}
+    {{- if .Values.networkPolicy.ingress.allowPrometheusScrape }}
+    - from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: monitoring } }
+      ports: [{ protocol: TCP, port: 8000 }]
+    {{- end }}
+  egress:
+    {{- if .Values.networkPolicy.egress.allowDNS }}
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }
+          podSelector: { matchLabels: { k8s-app: kube-dns } }
+      ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]
+    {{- end }}
+    {{- if .Values.networkPolicy.egress.toOwnDatabase }}
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: fathom-data } }
+          podSelector:
+            matchLabels: { cnpg.io/cluster: {{ .Values.database.clusterName }} }
+      ports: [{ protocol: TCP, port: 5432 }]
+    {{- end }}
+    {{- if .Values.networkPolicy.egress.toEventBus }}
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: fathom-data } }
+          podSelector: { matchLabels: { app.kubernetes.io/name: redpanda } }
+      ports: [{ protocol: TCP, port: 9093 }, { protocol: TCP, port: 8081 }]
+    {{- end }}
+    {{- if .Values.networkPolicy.egress.toKeyService }}
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: fathom-data } }
+          podSelector: { matchLabels: { app.kubernetes.io/name: vault } }
+      ports: [{ protocol: TCP, port: 8200 }]
+    {{- end }}
+    {{- if .Values.networkPolicy.egress.toObjectStore }}
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: fathom-data } }
+          podSelector: { matchLabels: { app.kubernetes.io/name: object-store } }
+      ports: [{ protocol: TCP, port: 9000 }]
+    {{- end }}
+    {{- range .Values.networkPolicy.egress.toServices }}
+    - to:
+        - podSelector:
+            matchLabels: { fathom.navy/service: {{ . }} }
+      ports: [{ protocol: TCP, port: 8000 }]
+    {{- end }}
+    {{- range .Values.networkPolicy.egress.toNamespaces }}
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: {{ . }} } }
+    {{- end }}
