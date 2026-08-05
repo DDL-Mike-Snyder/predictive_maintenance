@@ -1911,11 +1911,17 @@ class ConfigurationLine(FathomModel):
     position_id: UUID
     position_code: NonEmptyStr = Field(description="Human reference only [03 §3.3].")
     system_id: UUID
-    installed_item_id: UUID
-    niin: Niin
+    # [AMENDMENT] installed_item_id, niin, and installed_at were all required, but §6.4's
+    # LEFT JOIN and its own text state plainly: "ConfigurationLine.installed_item_id is
+    # therefore nullable on the wire for the vacant case, and a consumer must handle it" --
+    # a position with no current occupant is a real, reportable, conformance-tested state
+    # (§9.3's reference dataset requires at least one). niin and installed_at are equally
+    # item-dependent and cannot be populated for a vacant position either.
+    installed_item_id: UUID | None = None
+    niin: Niin | None = None
     iuid: NonEmptyStr | None = None
     serial_or_lot: NonEmptyStr | None = None
-    installed_at: UtcDateTime
+    installed_at: UtcDateTime | None = None
     removed_at: UtcDateTime | None = None
     usage_at_install: dict[str, float] = Field(
         default_factory=dict,
@@ -1927,6 +1933,17 @@ class ConfigurationLine(FathomModel):
     provisional: bool = False
     identity_resolution: str | None = None
     conforms_to_template: bool
+    divergence_reason: str | None = Field(
+        default=None,
+        description=(
+            "[AMENDMENT] Required by §6.4's own prose ('divergence_reason carries "
+            "which') and by test_unauthorized_niin_is_recorded_not_rejected (§9.x), "
+            "but never declared on any model until now. One of 'deviation' "
+            "(position exists only by deviation), 'substitution' (occupant's NIIN "
+            "differs from expected_niin), or 'shortfall' (vacant against a "
+            "template expecting an occupant). NULL iff conforms_to_template is true."
+        ),
+    )
     deviation_id: UUID | None = None
     eswbs: NonEmptyStr | None = Field(
         default=None,
@@ -2585,6 +2602,45 @@ class ConfigurationChangeRequest(FathomModel):
 ```
 
 `mode: direct` writes the change and allocates an epoch. `mode: proposed` writes a `configuration_change_proposal` and nothing else. Which mode a caller may use is an authorization decision, not a client choice: the `require_authz` dependency [09 §5.5] rejects `direct` from a principal without enterprise configuration-management authority and rejects `proposed` from nobody.
+
+**[AMENDMENT — the table itself was never given DDL, though §2.4's conflict-policy row and rows 24–26's operations both presuppose it.]**
+
+```sql
+CREATE TABLE registry.configuration_change_proposal (
+    proposal_id       uuid PRIMARY KEY DEFAULT gen_random_uuid(),   -- 03 §7.2 [C30]
+    kind              text NOT NULL DEFAULT 'configuration_change'
+        CHECK (kind = 'configuration_change'),
+    target_sub_app    text NOT NULL DEFAULT 'registry' CHECK (target_sub_app = 'registry'),
+    asset_id          uuid NOT NULL REFERENCES registry.asset(asset_id),
+    blast_radius      text NOT NULL CHECK (blast_radius IN ('item', 'asset')),  -- 03 §7.2.1: no wider scope for this kind
+    authority_class   text NOT NULL DEFAULT 'maintainer' CHECK (authority_class = 'maintainer'),  -- 03 §7.2.1
+    requires_dual_control boolean NOT NULL DEFAULT false,
+    status            text NOT NULL DEFAULT 'proposed',   -- ProposalStatus, 03 §7.2
+    valid_until       timestamptz NOT NULL,
+    baseline_id       uuid NOT NULL,
+    baseline_epoch    bigint NOT NULL,
+    evidence          jsonb NOT NULL,           -- 03 §7.2: non-empty, each with source_trust
+    payload           jsonb NOT NULL,           -- serialized ConfigurationChangeRequest, above
+    classification    jsonb NOT NULL,
+    claimed_by        text NULL,
+    claimed_until     timestamptz NULL,
+    adjudicated_by    text NULL,
+    adjudicated_at    timestamptz NULL,
+    adjudication_note text NULL,
+    agent_id          text NULL,               -- 03 §7.2's optional agent provenance, all-or-none
+    agent_version     text NULL,
+    llm_version       text NULL,
+    trace_ref         text NULL,
+
+    CONSTRAINT ccp_claim_state CHECK ((claimed_by IS NULL) = (claimed_until IS NULL)),
+    CONSTRAINT ccp_agent_provenance CHECK (
+        (agent_id IS NULL AND agent_version IS NULL AND llm_version IS NULL)
+        OR (agent_id IS NOT NULL AND agent_version IS NOT NULL AND llm_version IS NOT NULL)
+    )
+);
+```
+
+`requires_dual_control` is always `false` here: 03 §7.2.1's table gives `configuration_change` `maintainer` authority at `item`/`asset` scope only, with **Registry confirmation** as the state transition (not a second signature) — the two-stage cell §7.2.1 itself names, not this document's invention. `evidence`, `claimed_by`/`claimed_until`, and `adjudicated_by`/`adjudicated_at` follow 03 §7.2's four adjudication rules without variation, identical to every other service-local proposal table in the corpus.
 
 **Why `proposed` exists here.** Document 03 §11: *"Configuration baselines — Enterprise-authoritative; edge submits configuration-change proposals."* Document 03 §7.2's `kind` vocabulary includes `configuration_change`, and §7.2.1's authority table gives it `maintainer` (edge-submitted) then **Registry confirmation**, at `item`/`asset` blast radius only. Finding **C39** was that the conflict policy required proposed configuration changes *"with no matching proposal kind and no endpoint"* — the kind was added to document 03 §7.2 and this is the endpoint.
 
