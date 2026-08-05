@@ -411,6 +411,26 @@ CREATE TABLE supply.demand_forecast (
     baseline_disposition text NOT NULL,       -- 'carry' (UR>=0.50) | 'may_exclude' (UR<0.125) | 'between'
 
     -- THE MODEL FIGURE.
+    -- [AMENDMENT — real security defect, found in adversarial review and closed
+    -- here.] At scope = 'niin_fleet', expected_demand_p50/p90 sums PdM's
+    -- per-item predictions across every installed instance of this NIIN,
+    -- fleet-wide, and is served at CUI classification — a lower classification
+    -- than "union of every compartment among the contributing instances" would
+    -- require. A compartmented hull's installed item contributes its own
+    -- prediction to this same sum; a change to that item's PdM prediction (a
+    -- new failure, a re-score) moves this NIIN-fleet figure with no compartment
+    -- boundary crossed explicitly — the same shape as 22-pdm.md §3.1's
+    -- criticality inputs and §6.1's calibration_population, one aggregate over.
+    -- This is not the same case as the baseline_ur/baseline_pop columns above:
+    -- those are the Navy's own documented UR methodology, excluded elsewhere in
+    -- this review as inherent to a real, Navy-specified figure; expected_demand
+    -- is a platform-invented model aggregate with no such defense.
+    -- Fixed the same way: the sum is scoped to installed instances whose
+    -- compartments is a subset of the requesting scope's own (baseline for an
+    -- uncompartmented reader; baseline ∪ compartment-X for a compartment-X
+    -- reader), mirroring 22-pdm.md §6.1's calibration-cell partitioning exactly.
+    -- A compartmented hull's prediction can therefore only ever move the
+    -- expected_demand figure served to a reader cleared for that compartment.
     expected_demand_p50 numeric(12,4) NULL,
     expected_demand_p90 numeric(12,4) NULL,
     forecast_basis      supply.forecast_basis NOT NULL,   -- the SMR branch, §5.2
