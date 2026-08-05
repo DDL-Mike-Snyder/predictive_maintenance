@@ -74,6 +74,8 @@ Document 04 §7 is the architecture of record and this document does not silentl
 | `DemandForecast` | `(niin, scope, horizon_days, run_id)` | Enterprise-authoritative | Predicted consumption, first-class published output |
 | `CarcassObligation` | `(document_number, niin)` | Enterprise-authoritative | Repairables: recoverability `D`/`L`. Not a consumption record |
 | `Proposal` | `proposal_id` | **Append-only; adjudication server-authoritative and claim-gated** — 03 §11 | Schema fixed by 03 §7.2. Closes C12 for this slug |
+| `LeadTime` | `(niin, location_id)` | Enterprise-authoritative | Backs `GET /lead-times`, D6's fifth remedy. §2.10 |
+| `InterchangeableGroup` | `interchangeable_group_id` | Enterprise-authoritative | Backs `GET /interchangeable-groups`, D24's third remedy. §2.11 |
 
 The README declares this table verbatim, satisfying obligation 16 and closing C20 for `supply`.
 
@@ -136,7 +138,9 @@ CREATE TABLE supply.stock_position (
     -- Oversell is UNWRITABLE, not merely discouraged. This is the D6 invariant at rest.
     CONSTRAINT stock_reserved_nonnegative CHECK (reserved_qty >= 0),
     CONSTRAINT stock_reserved_within_onhand CHECK (reserved_qty <= on_hand_qty),
-    CONSTRAINT stock_onhand_nonnegative CHECK (on_hand_qty >= 0)
+    CONSTRAINT stock_onhand_nonnegative CHECK (on_hand_qty >= 0),
+    -- 'ST' is FORBIDDEN (comment above) restated as the CHECK that makes it so.
+    CONSTRAINT unit_of_issue_st_forbidden CHECK (unit_of_issue <> 'ST')
 );
 
 -- The trigger that makes the lock unforgettable (§3.4).
@@ -167,7 +171,26 @@ Four properties are load-bearing:
 
 Document 04 §7's key decision: *an item on hand but not authorized, and an item authorized but absent, are different conditions with different remedies, and conflating them produces unactionable output.* The model expresses that as **four states with two distinct remedies**, computed rather than stored:
 
+**[AMENDMENT — real defect, found in adversarial review: `AllowancePosition`, `Requisition`, and `ReservationSet` are three of §7.7's obligation-5 aggregates behind a mandatory `changed_since` filter, and none of the three carried a change-timestamp or sequence for a poller to key on.]** All three tables below therefore carry `change_seq` and `updated_at`, allocated from one shared counter:
+
 ```sql
+-- The `changed_since` ordering key for AllowancePosition, Requisition, and
+-- ReservationSet. Mirrors 20-registry.md §6.4's RecordSeqMixin, and for the
+-- same reason: a plain `nextval()` sequence is NOT transactional and can
+-- skip a value on rollback, and §3.8's own STIG V-260520 reasoning is why
+-- `updated_at` cannot be the *ordering* column either — a mandated backward
+-- clock step must not un-order a change feed a rebuilder must not miss.
+-- `updated_at` is carried alongside purely for human-readable display.
+-- Allocated inside the caller's transaction, on every insert AND update:
+--   UPDATE supply.change_seq_counter SET next_seq = next_seq + 1
+--    WHERE aggregate = 'requisition' RETURNING next_seq - 1 AS change_seq;
+CREATE TABLE supply.change_seq_counter (
+    aggregate   text PRIMARY KEY,
+    next_seq    bigint NOT NULL DEFAULT 1
+);
+INSERT INTO supply.change_seq_counter (aggregate)
+    VALUES ('allowance_position'), ('requisition'), ('reservation_set');
+
 CREATE TYPE supply.allowance_state AS ENUM (
     'authorized_and_held',        -- allowance_qty > 0, on_hand >= allowance. No action
     'authorized_shortfall',       -- allowance_qty > 0, on_hand < allowance. Remedy: REQUISITION
@@ -192,6 +215,10 @@ CREATE TABLE supply.allowance_position (
     proposed_derivation_code text NULL,       -- from the reserved synthetic set, 13 §12.2
     proposal_id              uuid NULL,       -- the Proposal carrying it for adjudication
     proposal_basis_ref       text NULL,       -- demand_forecast run reference
+    -- Backs `GET /allowance-position?changed_since=` (§7.7). Set on every write,
+    -- including a Registry-sourced replacement and a proposed-value computation.
+    change_seq               bigint NOT NULL,
+    updated_at               timestamptz NOT NULL DEFAULT clock_timestamp(),
     PRIMARY KEY (asset_id, niin)
 );
 ```
@@ -232,6 +259,7 @@ CREATE TABLE supply.requisition (
     force_activity_designator smallint NULL,  -- F/AD; the PD matrix input (07 §4.5)
     urgency_of_need   char(1) NULL,           -- 'A' | 'B' | 'C'. See the CHECK below — this is the D-rule
     required_delivery_date date NULL,         -- forward-dated for a predicted requirement
+    routing_identifier char(3) NULL,          -- RIC, 07 §4.5. See the CHECK below — §4.3's rejected-value rule
     driver            supply.requisition_driver NOT NULL,  -- prediction | casualty | allowance | pms | manual
     triggering_prediction_id uuid NULL,       -- provenance for a prediction-driven document
     jcn               char(13) NULL,          -- 07 §5.2; the linkage to the maintenance job
@@ -241,6 +269,9 @@ CREATE TABLE supply.requisition (
     submitted_at      timestamptz NULL,
     baseline_epoch    bigint NOT NULL,
     classification    jsonb NOT NULL,
+    -- Backs `GET /requisitions?changed_since=` (§7.7). See §2.4's shared counter.
+    change_seq        bigint NOT NULL,
+    updated_at        timestamptz NOT NULL DEFAULT clock_timestamp(),
 
     -- 07 §4.5: "a predicted failure is not yet 'unable to perform'." UND 'A' for a
     -- prediction-driven requirement is logically wrong and a logistician will notice.
@@ -249,11 +280,21 @@ CREATE TABLE supply.requisition (
     -- A predicted requirement's RDD is forward of submission, by construction.
     CONSTRAINT predicted_rdd_is_forward
         CHECK (driver <> 'prediction' OR submitted_at IS NULL
-               OR required_delivery_date > submitted_at::date)
+               OR required_delivery_date > submitted_at::date),
+    -- §4.3: priority 01-03 is reachable by a casualty-driven document only.
+    -- The same move as the two CHECKs above, applied to the PD matrix output.
+    CONSTRAINT predicted_priority_excludes_casualty_range
+        CHECK (driver <> 'prediction' OR priority_designator IS NULL OR priority_designator > 3),
+    -- §4.3: 'ST' is never a real unit of issue (07 §4.8); 'SO' = Shot is.
+    CONSTRAINT unit_of_issue_st_forbidden
+        CHECK (unit_of_issue <> 'ST'),
+    -- §4.3: these four RICs are NOT FOUND or affirmatively wrong (07 §4.5).
+    CONSTRAINT ric_rejected_values_forbidden
+        CHECK (routing_identifier IS NULL OR routing_identifier NOT IN ('S9M', 'S9T', 'SMS', 'NRP'))
 );
 ```
 
-The two CHECKs are the same move as §2.3's: the most likely domain error in the entire service is a prediction-driven requisition that looks like a casualty, and a constraint prevents it where a code review might not.
+The CHECKs are the same move as §2.3's: the most likely domain error in the entire service is a prediction-driven requisition that looks like a casualty, and a constraint prevents it where a code review might not. `required_delivery_date` needs no rejected-value CHECK of its own: it is typed `date`, and none of `07 §4.5`'s forbidden RDD codes — `444`, `N__`, `E__` — parses as one, so the column is structurally unable to hold them. §4.3 records that as the enforcement rather than claiming a CHECK that would be redundant and, for `N__`/`E__`, impossible to write against a `date` column in the first place.
 
 ### 2.6 `ReservationSet` and `ReservationSetLine` — the D6 aggregate
 
@@ -286,9 +327,24 @@ CREATE TABLE supply.reservation_set (
     etag                text NOT NULL,
     baseline_epoch      bigint NOT NULL,
     classification      jsonb NOT NULL,
+    -- Backs `GET /reservation-sets?changed_since=` (§7.7). See §2.4's shared
+    -- counter. EVERY write to this row — including `POST …/extend`, which
+    -- changes nothing else a poller could key on — advances both. Extension
+    -- was previously silent to a `changed_since` consumer; it is not now.
+    change_seq          bigint NOT NULL,
+    updated_at          timestamptz NOT NULL DEFAULT clock_timestamp(),
 
+    -- Not merely "released iff a cause exists" — the cause must match the
+    -- state, structurally. Before this tightening, a row could carry
+    -- state='expired' with release_cause='stock_shortfall' and pass the
+    -- constraint; §3.13 records that exact diagram error and this is the fix.
     CONSTRAINT released_iff_cause
-        CHECK ((state IN ('released','expired','consumed')) = (release_cause IS NOT NULL)),
+        CHECK (
+            (state = 'confirmed' AND release_cause IS NULL)
+         OR (state = 'expired'   AND release_cause = 'expired')
+         OR (state = 'consumed'  AND release_cause = 'consumed')
+         OR (state = 'released'  AND release_cause IN ('released_by_caller', 'stock_shortfall', 'superseded'))
+        ),
     CONSTRAINT idempotency_unique UNIQUE (idempotency_key)
 );
 
@@ -378,8 +434,10 @@ CREATE TABLE supply.demand_forecast (
     CONSTRAINT asset_scope_requires_asset
         CHECK ((scope = 'asset') = (asset_id IS NOT NULL)),
     -- 03 §7.1's gate, carried forward: no sharp number where calibration does not support one.
+    -- Both quantiles, not just p50 — p90 is the SHARPER, more informative number, and a
+    -- constraint that let it through while blocking p50 would guard the wrong half.
     CONSTRAINT no_sharp_estimate_without_permission
-        CHECK (sharp_estimate_permitted OR expected_demand_p50 IS NULL)
+        CHECK (sharp_estimate_permitted OR (expected_demand_p50 IS NULL AND expected_demand_p90 IS NULL))
 );
 
 CREATE TABLE supply.carcass_obligation (
@@ -396,7 +454,7 @@ CREATE TABLE supply.carcass_obligation (
 );
 ```
 
-`no_sharp_estimate_without_permission` is document 03 §7.1's `p_failure` gate propagated into demand. Below n=50 in the calibration cell, PdM publishes no calibrated probability at all — so a demand forecast that renders a sharp expected quantity from it is manufacturing precision that does not exist. The honest output for that cell is the baseline `UR` plus a qualitative flag, and the CHECK guarantees it.
+`no_sharp_estimate_without_permission` is document 03 §7.1's `p_failure` gate propagated into demand. Below n=50 in the calibration cell, PdM publishes no calibrated probability at all — so a demand forecast that renders a sharp expected quantity from it is manufacturing precision that does not exist. The honest output for that cell is the baseline `UR` plus a qualitative flag, and the CHECK guarantees it for **both** `expected_demand_p50` and `expected_demand_p90` — constraining only `p50` would leave the sharper, more informative `p90` figure writable exactly when it should not be.
 
 ### 2.9 Code sets are read, never owned
 
@@ -406,6 +464,50 @@ Document 12 §1.3 places *"unit hierarchy, ESWBS/EIC code sets, and general enum
 - Until that surface exists, the seed set lives in `packages/canonical-schemas` as typed enums generated from document 07's verified values, each carrying `set_is_complete` — the honest-partial pattern document 12 §2.6 establishes for the 3-M `ACTION_TAKEN` set.
 - **Document 07 verifies exactly three Supply condition codes: `A`, `F`, `M`** (§6 item 6's `F → M → A` progression). The full Supply Condition Code table is not in document 07 (**OQ-S8**). The enum therefore carries those three with `set_is_complete = false`, and **no fourth value is invented.** A dataset containing condition code `B` that document 07 never verified is precisely the fabrication document 07 §1 forbids.
 - Recorded as open question **OQ-S1** (§14): the general-enumeration surface needs an owner and a document.
+
+### 2.10 `LeadTime` — backing `GET /lead-times`
+
+**[AMENDMENT — real defect, found in adversarial review: `GET /lead-times` is D6's fifth remedy (§3.1) and a required operation (§7.6), and `lead_time` has appeared in event payloads and response examples since §3.1 — but no table anywhere in this document held a lead-time value. This closes that gap.]**
+
+```sql
+CREATE TABLE supply.lead_time (
+    niin                        text    NOT NULL,
+    location_id                 uuid    NOT NULL REFERENCES supply.location(location_id),
+    order_and_ship_time_days    integer NOT NULL,
+    procurement_lead_time_days  integer NOT NULL,   -- selects the pathway instrument, §6.2
+    basis                       text    NOT NULL,   -- 'observed' | 'planning_factor'. Never invented (09 DO-NOT 31)
+    observed_n                  integer NULL,       -- count backing an 'observed' basis
+    as_of                       date    NOT NULL,
+    change_seq                  bigint  NOT NULL,   -- backs `GET /lead-times?changed_since=`; see §2.4's counter
+    updated_at                  timestamptz NOT NULL DEFAULT clock_timestamp(),
+    PRIMARY KEY (niin, location_id),
+    CONSTRAINT lead_time_basis_observed_has_n
+        CHECK ((basis = 'observed') = (observed_n IS NOT NULL))
+);
+```
+
+`order_and_ship_time_days` and `procurement_lead_time_days` are held at `(niin, location_id)` granularity — the same key as `stock_key` — because receiving location genuinely affects transit time, and because this is exactly the shape the `lead_time` object already carries embedded in the `GET /availability` response (§7.2). `GET /lead-times?niin=&location=` reads this table directly; `part_availability.changed`'s `lead_time` field and the reservation-failure response's `lead_time_days` (§3.6) are populated from the same row, so the event, the query, and the failure response cannot disagree about the same NIIN — the property `test_lead_time_and_interchangeability_are_queryable` (§9.3) asserts. `basis` is never fabricated: an `observed` value requires `observed_n`, and where neither observed history nor a documented planning factor exists, the row is absent and the field reads as unknown rather than as an invented number (09 DO-NOT 31).
+
+### 2.11 `InterchangeableGroup` — backing `interchangeable_group_id`
+
+**[AMENDMENT — real defect, found in adversarial review: `interchangeable_group_id` has been a response field and a failure-response field since §3.6, and `GET /interchangeable-groups` is a required operation (§7.6), but no table defined what an interchangeable group actually is or which NIINs belong to one. This closes that gap.]**
+
+```sql
+CREATE TABLE supply.interchangeable_group (
+    interchangeable_group_id  text PRIMARY KEY,    -- e.g. 'ig-0f24'
+    description               text NOT NULL,       -- human reference only; never parsed
+    change_seq                bigint NOT NULL,      -- backs `GET /interchangeable-groups?changed_since=`
+    updated_at                timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+
+CREATE TABLE supply.interchangeable_group_member (
+    interchangeable_group_id  text NOT NULL REFERENCES supply.interchangeable_group(interchangeable_group_id),
+    niin                      text NOT NULL,
+    PRIMARY KEY (interchangeable_group_id, niin)
+);
+```
+
+A group is the set of NIINs the optimizer may substitute for one another — functionally interchangeable, not merely APL-adjacent. This is the platform's own grouping, not a document 07 code set, so it carries no NOT PUBLICLY FOUND caveat; it is cached from the catalogue read model the same way §2.9 caches general enumerations, never invented locally. `GET /interchangeable-groups?niin=` resolves a NIIN to its `interchangeable_group_id` via `supply.interchangeable_group_member`, which is what `by_condition`-adjacent `interchangeable_group_id` on `GET /availability` (§7.2) and on a `409` failure's `insufficient_stock` line (§3.6) both resolve against — so, as with lead time, the event, the query, and the failure response read the same row and cannot disagree.
 
 ---
 
@@ -426,7 +528,7 @@ Five distinct defects, and each needs its own mechanism:
 | No TTL | Server-computed `expires_at`, single-clock evaluation, reaper | §3.8 |
 | No two-phase confirm | Two phases **inside** one transaction — feasibility over all lines, then commit | §3.4 |
 | No compensating release | `DELETE`, TTL expiry, and adjustment-driven release, each emitting `reservation_set.released` | §3.9, §3.10 |
-| Lead time in no operation | `GET /lead-times`, plus `lead_time` in the snapshot response and the availability event | §7.1 |
+| Lead time in no operation | `GET /lead-times`, plus `lead_time` in the snapshot response and the availability event, backed by `supply.lead_time` | §7.1, §2.10 |
 
 ### 3.2 The modeling decision: no partial state exists
 
@@ -704,7 +806,8 @@ every reaper_interval (default 15s, monotonic):
           ORDER BY expires_at LIMIT :batch FOR UPDATE SKIP LOCKED
         for each set:                       # ONE TRANSACTION PER SET
             lock its distinct stock_keys in canonical byte order      # §3.4's order, always
-            UPDATE state='expired', released_at=clock_timestamp(), release_cause='expired'
+            UPDATE state='expired', released_at=clock_timestamp(), release_cause='expired',
+                   change_seq=allocate_change_seq('reservation_set'), updated_at=clock_timestamp()
             decrement reserved_qty for each line
             emit reservation_set.released (cause='expired')
             emit part_availability.changed per affected key
@@ -782,19 +885,24 @@ Document 11 specifies the outbox, the inbox, clock discipline, conflict policy, 
                              ┌─────────────┐
         POST …/extend ──────▶│  confirmed  │
         (expires_at moves)   └─────────────┘
-                              │    │    │  │
-       DELETE …/{id}          │    │    │  └────── material issued ──▶ ┌──────────┐
-       cause=released_by_caller    │    │                              │ consumed │
-                    ┌─────────┘    │    └── stock adjustment ──┐       └──────────┘
-                    ▼              ▼        cause=stock_shortfall│
-             ┌────────────┐  ┌──────────┐                       │
-             │  released  │  │ expired  │◀── TTL lapse ─────────┘
-             └────────────┘  └──────────┘     (Navy analogue: drawdown lapse -> BFU)
-                    ▲
-                    └── re-plan, cause=superseded
+                              │       │       │
+       DELETE …/{id}          │       │       └────── material issued ──▶ ┌──────────┐
+       cause=released_by_caller       │                                   │ consumed │
+       stock adjustment                │                                  └──────────┘
+       cause=stock_shortfall           └── TTL lapse ──────────┐
+       re-plan, cause=superseded                                │
+                    │                                            ▼
+                    ▼                                     ┌──────────┐
+             ┌────────────┐                                │ expired  │
+             │  released  │                                └──────────┘
+             └────────────┘                       (Navy analogue: drawdown lapse -> BFU)
 
-Terminal states: released · expired · consumed.  There is NO initial state other than
-`confirmed`, and no state that can represent a subset of the requested lines.
+Terminal states: released · expired · consumed.  `released` is reached by
+DELETE, by a stock-adjustment shortfall, and by a superseding re-plan —
+`stock_shortfall` is a RELEASE, not an expiry, and the `released_iff_cause`
+CHECK (§2.6) now enforces exactly that pairing structurally.  `expired` is
+reached ONLY by TTL lapse.  There is NO initial state other than `confirmed`,
+and no state that can represent a subset of the requested lines.
 ```
 
 ---
@@ -850,10 +958,10 @@ Document 07 §4.5, verbatim in its force: **"a predicted failure is not yet 'una
 | Urgency of Need | **`C`**, or **`B`** where degradation is already impairing performance. **Never `A`** for a prediction-driven requirement | CHECK `und_a_forbidden_for_predicted` (§2.5) **and** a `422` at the API boundary, `urn:fathom:problem:supply:und-a-for-predicted-requirement` |
 | Priority designator | From the **Force/Activity Designator × Urgency of Need** matrix. Never assigned directly | Computed from `(force_activity_designator, urgency_of_need)`; a caller-supplied `priority_designator` is rejected `422` |
 | Required delivery date | **Forward-dated**, consistent with the prediction horizon | CHECK `predicted_rdd_is_forward` |
-| Priority 01–03 | Reachable by a **casualty**-driven document only. A predicted requisition does not reach it | Validated against `driver` |
-| RDD codes | **`444`, `N__`, `E__` are never emitted** — NOT FOUND or affirmatively wrong (07 §4.5) | Rejected-value CHECK |
-| Unit of issue | **`ST` is never emitted.** `SO` = Shot (15 fathoms) is real and correct for anchor chain | Rejected-value CHECK |
-| Routing identifier | **`S9M`, `S9T`, `SMS`, `NRP` are never emitted** (07 §4.5) | Rejected-value CHECK |
+| Priority 01–03 | Reachable by a **casualty**-driven document only. A predicted requisition does not reach it | Validated against `driver`, **and** CHECK `predicted_priority_excludes_casualty_range` (§2.5) **[AMENDMENT — real defect, found in adversarial review: this row was covered by API validation only; the DoD checklist (§12.3) already claimed a CHECK existed, and now one does]** |
+| RDD codes | **`444`, `N__`, `E__` are never emitted** — NOT FOUND or affirmatively wrong (07 §4.5) | Structurally unwritable: `required_delivery_date` is typed `date` (§2.5) **[AMENDMENT — was labeled "Rejected-value CHECK"; no such CHECK existed, and none is needed given the column's type]** |
+| Unit of issue | **`ST` is never emitted.** `SO` = Shot (15 fathoms) is real and correct for anchor chain | CHECK `unit_of_issue_st_forbidden` (§2.3, §2.5) **[AMENDMENT — real defect: no CHECK previously existed]** |
+| Routing identifier | **`S9M`, `S9T`, `SMS`, `NRP` are never emitted** (07 §4.5) | CHECK `ric_rejected_values_forbidden` on the new `routing_identifier` column (§2.5) **[AMENDMENT — real defect: neither the column nor the CHECK previously existed]** |
 
 The UND rule is the single most visible domain-fidelity test in the whole sub-application. A demonstration that generates UND `A` for a not-yet-failed pump loses a logistician in the first minute, and no amount of model quality recovers it.
 
@@ -1011,15 +1119,17 @@ API consequences, and they are why `PB`/`PG` items are **flagged differently** r
 | `forecast_basis` | `low_history_high_value` | Declared, not inferred |
 | `prediction_value_class` | `"high"` | The consumer-visible statement that this is where the platform earns its place |
 | `baseline_disposition` | `"may_exclude"` where `UR < 0.125`, **always returned** | The comparison is the point. Suppressing the baseline because it looks wrong hides the argument |
-| `baseline_conflict` | `"baseline_excludes_item"` | An explicit flag that baseline and model disagree in direction, not degree |
+| `baseline_conflict` | `"baseline_excludes_item"` | An explicit flag that baseline and model disagree in direction, not degree. **Derived, never stored** — see below |
 | `sharp_estimate_permitted` | **`false` unless the underlying `FailurePrediction` supports it** | See below |
 | `reference_class`, `calibration_population` | Carried through from the prediction | 03 §7.1 |
 
 **[AMENDMENT.]** `calibration_population` is carried through unmodified from `pdm.prediction`, which since `22-pdm.md` §6.1's fix is already compartment-scoped to the item's own visible pool — Supply performs no independent aggregation here, so it inherits that fix by reference and adds no new leak.
 
-**The discipline that keeps this honest.** A `PB` item has little history, so its calibration cell is thin, so document 03 §7.1's gate applies: below `calibration_population = 50` PdM publishes no calibrated `p_failure` at all, `reference_class` is forced to `class_estimate`, and only `population_hazard_rate` is available. A demand forecast that renders a sharp expected quantity from that input has manufactured precision. So `sharp_estimate_permitted` is `false`, `expected_demand_p50` is `NULL` (the CHECK in §2.8 enforces it), and the response carries the population rate, the baseline, and the conflict flag.
+**The discipline that keeps this honest.** A `PB` item has little history, so its calibration cell is thin, so document 03 §7.1's gate applies: below `calibration_population = 50` PdM publishes no calibrated `p_failure` at all, `reference_class` is forced to `class_estimate`, and only `population_hazard_rate` is available. A demand forecast that renders a sharp expected quantity from that input has manufactured precision. So `sharp_estimate_permitted` is `false`, `expected_demand_p50` **and** `expected_demand_p90` are both `NULL` (the CHECK in §2.8 enforces both), and the response carries the population rate, the baseline, and the conflict flag (derived; §5.4).
 
 That is a *less* impressive-looking number and a *more* defensible product. The alternative — a confident quantity for an insurance item with no history — is the demonstration failure mode document 06 §8's assumption A1 warns about, arriving through the supply door instead of the telemetry door.
+
+**`baseline_conflict`'s derivation, made explicit.** **[AMENDMENT — real defect, found in adversarial review: `baseline_conflict` was a required response field with no backing column and no stated rule for when it fires.]** `supply.demand_forecast` (§2.8) has no `baseline_conflict` column, and none is added: the field is computed at response time in `GET /demand-forecast` (§6.2), the same treatment `available_qty` gets in §2.3 and `allowance_state` gets in §2.4, for the same reason — it is a function of columns already stored, and a stored copy would be a second source of truth for a fact the row already contains. The rule is exactly the one this section argues: `baseline_conflict = "baseline_excludes_item"` when `baseline_disposition = 'may_exclude'` **and** `forecast_basis = 'low_history_high_value'` (§5.2) — the `PB`/`PG` branch is the one place this document specifies the demand-history formula and the platform's model can point in opposite directions — and `NULL` in every other case, including a `may_exclude` disposition on a branch where no such disagreement is argued. No other direction of conflict is defined here; inventing one would be exactly the kind of undocumented rule 09 DO-NOT 31 forbids.
 
 ### 5.5 Recoverability `D`/`L` — carcass flow, not consumption
 
@@ -1241,8 +1351,8 @@ Finding **D24**, second clause: *"the required Supply surface omits lead time, c
 | `part_availability.changed` — NIIN, location, on-hand | ✓ | `GET /availability?niin=&location=&asset_id=` (04 §7) | **OK** |
 | — due-in | ✓ | `GET /availability` response; in-transit detail via `internal` | **OK** |
 | — allowance position | ✓ | `GET /allowance-position?asset_id=&niin=` (04 §7) | **OK** |
-| — **`lead_time`** `[D6, D24]` | ✓ | **`GET /lead-times?niin=&location=` (04 §7)** | **OK — present in document 04, verified against the current file.** D6's *"lead time is named as a hard constraint but exists in no Supply event or operation"* is closed on both sides |
-| — **interchangeable group** `[D24]` | ✓ | **`GET /interchangeable-groups?niin=` (04 §7)** | **OK — present in document 04, verified** |
+| — **`lead_time`** `[D6, D24]` | ✓ | **`GET /lead-times?niin=&location=` (04 §7)** | **OK — present in document 04, verified against the current file, and backed by `supply.lead_time` (§2.10).** D6's *"lead time is named as a hard constraint but exists in no Supply event or operation"* is closed on both sides |
+| — **interchangeable group** `[D24]` | ✓ | **`GET /interchangeable-groups?niin=` (04 §7)** | **OK — present in document 04, verified, and backed by `supply.interchangeable_group`/`_member` (§2.11)** |
 | — **`condition_code`** `[D24]` | ✓ | **NONE** | **GAP. Closed in §7.2** |
 | `requisition.status_changed` — document number, NIIN, status, projected availability | ✓ | `GET /requisitions?asset_id=&niin=&status=`, `GET /requisitions/{id}` (04 §7) | **OK** |
 | `allowance_shortfall.detected` — asset, NIIN, allowance vs on-hand, driver | ✓ | `GET /shortfalls?asset_id=` (04 §7) | **OK** |
@@ -1276,7 +1386,8 @@ GET /api/v1/supply/availability?niin=LLC004821&asset_id=8f2b…&condition_code=A
       ],
       "lead_time": { "order_and_ship_time_days": 12, "procurement_lead_time_days": 96,
                      "basis": "observed", "observed_n": 41, "as_of": "2026-07-31" },
-      "unit_price_cents": 214900,          /* [AMENDMENT] 03 §6; the stock_item column (§2.1),
+      "unit_price_cents": 214900,          /* [AMENDMENT] 03 §6; the stock_position column (§2.3) —
+                                              there is no `stock_item` table in this document —
                                               never previously exposed on this event, though
                                               design-advisory's cost estimators have always cited it */
       "interchangeable_group_id": "ig-0f24",
@@ -1347,7 +1458,7 @@ Idempotency-Key: <uuid>
           "extend_count": 1, "extends_remaining": 7 }
 ```
 
-Extension rules: permitted only from `confirmed`; `extend_count` capped at 8 (the CHECK in §2.6) so an extension loop cannot become an unbounded hold by another route; a set already `expired` returns `409` `reservation-set-expired` and **is not resurrected** — resurrection would require re-verifying every line's availability, which is a new reservation set by definition; `expires_at` recomputed server-side from `clock_timestamp()`; and `reservation_set.confirmed` is **not** re-emitted — an extension changes expiry, not confirmation. A superseding event type would need a document 03 §6 catalog row, and this document does not add one silently (**OQ-S6**, §14).
+Extension rules: permitted only from `confirmed`; `extend_count` capped at 8 (the CHECK in §2.6) so an extension loop cannot become an unbounded hold by another route; a set already `expired` returns `409` `reservation-set-expired` and **is not resurrected** — resurrection would require re-verifying every line's availability, which is a new reservation set by definition; `expires_at` recomputed server-side from `clock_timestamp()`; and `reservation_set.confirmed` is **not** re-emitted — an extension changes expiry, not confirmation. A superseding event type would need a document 03 §6 catalog row, and this document does not add one silently (**OQ-S6**, §14). **The extension is not otherwise invisible to a `changed_since` poller**: like every write to `supply.reservation_set` (§2.6), it advances `change_seq` and sets `updated_at`, in the same transaction as the `expires_at`/`extend_count` update — the mechanism `GET /reservation-sets?changed_since=` (§7.7) depends on, since no event is re-emitted.
 
 ### 7.5 The forecast write path — added
 
@@ -1394,6 +1505,8 @@ Document 04 §7's API table lists `GET /demand-forecast` as required and its pla
 | Shortfalls | `maintenance`, `fleet-status` | `GET /shortfalls?changed_since=` |
 | `ReservationSet` | `maintenance` | `GET /reservation-sets?changed_since=` **(added §7.4)** |
 | `DemandForecast` | none declared in 03 §6 | `GET /demand-forecast` serves current state; no consumer projects it |
+
+**[AMENDMENT — real defect, found in adversarial review: obligation-5 language elsewhere in this document referred to "the six aggregates in §7.7," but only five of the six rows above actually carry a `changed_since` read** — `DemandForecast` has none, by design, because no consumer projects it. **The count is reconciled at both restatements below to "five," with `DemandForecast` named as the deliberate exception.]**
 
 Cursor-paginated, no total count, and **the event bus is never a rebuild source** (03 §5.1, D5). This table is the rebuild path, and document 03 §10 item 5 makes a substitute's ability to serve history through `changed_since` a condition of write cutover: without it, cutover leaves every consumer unable to rebuild.
 
@@ -1467,7 +1580,7 @@ Document 03 §10 and §15 supply the split. Applied to Supply, exhaustively:
 | 2 | **No state change without its event** | Fault injection (§9.3) — **not** "implements an outbox" |
 | 3 | Canonical identifiers accepted and returned; no local surrogate exposed | Request/response inspection |
 | 4 | Classification labels on every response and event; `inherited_from` on derived values | Response and envelope inspection |
-| 5 | `changed_since` reads over the six aggregates in §7.7 | Cursor walk with concurrent mutation |
+| 5 | `changed_since` reads over the five aggregates in §7.7 that have a declared consumer (`DemandForecast`, the sixth, has none) | Cursor walk with concurrent mutation |
 | 6 | `Idempotency-Key`, `ETag`/`If-Match`, `X-Correlation-Id` echo | Direct exercise |
 | 7 | Authorization enforced locally against ABAC attributes | Call with a token lacking the attribute; expect 403 from the service, not the gateway |
 | 8 | `x-agent-eligible` only where side effects are `none`/`proposal-only` | Spec inspection |
@@ -1700,7 +1813,7 @@ Document 09 §9's thirty-two items apply in full. These are additional and Suppl
 - [ ] `by_condition[]` required and non-empty; **no position-level `on_hand_qty` exists in the schema**. *(§7.2, S11)*
 - [ ] `GET /lead-times` and `GET /interchangeable-groups` return values consistent with `part_availability.changed`, asserted by test. *(§7.1, S12)*
 - [ ] `POST /availability/query` returns one `as_of`, per-key `stock_epoch`, and explicit `missing_keys`; internally consistent under concurrent mutation. *(§7.3)*
-- [ ] `changed_since` present for all six aggregates in §7.7.
+- [ ] `changed_since` present for all five of §7.7's aggregates with a declared consumer (`DemandForecast` excepted, by design).
 - [ ] Every addition to document 04 §7 is listed in §1.4 and in the README's "extensions to document 04" section. **No silent divergence.**
 
 ### 12.3 Navy fidelity
