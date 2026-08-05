@@ -1015,6 +1015,8 @@ API consequences, and they are why `PB`/`PG` items are **flagged differently** r
 | `sharp_estimate_permitted` | **`false` unless the underlying `FailurePrediction` supports it** | See below |
 | `reference_class`, `calibration_population` | Carried through from the prediction | 03 §7.1 |
 
+**[AMENDMENT.]** `calibration_population` is carried through unmodified from `pdm.prediction`, which since `22-pdm.md` §6.1's fix is already compartment-scoped to the item's own visible pool — Supply performs no independent aggregation here, so it inherits that fix by reference and adds no new leak.
+
 **The discipline that keeps this honest.** A `PB` item has little history, so its calibration cell is thin, so document 03 §7.1's gate applies: below `calibration_population = 50` PdM publishes no calibrated `p_failure` at all, `reference_class` is forced to `class_estimate`, and only `population_hazard_rate` is available. A demand forecast that renders a sharp expected quantity from that input has manufactured precision. So `sharp_estimate_permitted` is `false`, `expected_demand_p50` is `NULL` (the CHECK in §2.8 enforces it), and the response carries the population rate, the baseline, and the conflict flag.
 
 That is a *less* impressive-looking number and a *more* defensible product. The alternative — a confident quantity for an insurance item with no history — is the demonstration failure mode document 06 §8's assumption A1 warns about, arriving through the supply door instead of the telemetry door.
