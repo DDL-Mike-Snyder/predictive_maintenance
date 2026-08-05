@@ -10,13 +10,22 @@ This means RLS itself cannot be exercised by the SQLite-backed unit-test
 harness (SQLite has no RLS); it requires a real PostgreSQL connection under
 both `fathom_pdm_serving` and `fathom_pdm_research` roles, which
 `tests/integration/` (testcontainers, real Postgres) is responsible for.
+
+`invalidate()` calls `pdm.invalidate_prediction()`, a SECURITY DEFINER
+function, rather than issuing a plain `UPDATE` -- a research_only row is
+not SELECT-visible to `fathom_pdm_serving` at all (that's the isolation
+guarantee), so it could never be loaded into a `Prediction` object to
+update in the first place, and no policy on this role's own UPDATE can
+reach it either: PostgreSQL gates UPDATE's implicit read through the same
+SELECT policy as a plain query. The function is the one narrow, audited
+exception; see the migration for the full account.
 """
 
 from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fathom_pdm.models import Prediction
@@ -49,10 +58,12 @@ class PredictionRepository:
         )
         return (await session.execute(stmt)).scalar_one_or_none()
 
-    async def invalidate(
-        self, session: AsyncSession, prediction: Prediction, *, cause: str, at
-    ) -> None:
-        prediction.status = "invalidated"
-        prediction.invalidation_cause = cause
-        prediction.invalidated_at = at
-        await session.flush()
+    async def invalidate(self, session: AsyncSession, prediction_id: uuid.UUID, *, cause: str) -> bool:
+        """Invalidates by id, not by a pre-loaded object -- a research_only
+        row can never be loaded under `fathom_pdm_serving` to begin with.
+        Returns whether a row was actually found and invalidated."""
+        result = await session.execute(
+            text("SELECT pdm.invalidate_prediction(:prediction_id, :cause)"),
+            {"prediction_id": str(prediction_id), "cause": cause},
+        )
+        return bool(result.scalar_one())

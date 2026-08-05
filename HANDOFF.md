@@ -1,10 +1,10 @@
 # FATHOM — handoff / continuation notes
 
-**Read this first if you're picking this up cold.** Last updated 2026-08-05,
-end of a long session that (a) closed out the spec-hardening phase and
-(b) started real implementation. Everything below is committed on `main`
-unless stated otherwise. `git log --oneline` tells the true story in detail;
-this file is the map.
+**Read this first if you're picking this up cold.** Last updated 2026-08-05
+(second update, same day: Alembic migration + real-Postgres RLS testing now
+done — see the updated tables below). Everything below is committed on
+`main` unless stated otherwise. `git log --oneline` tells the true story in
+detail; this file is the map.
 
 ## Where things stand, in one paragraph
 
@@ -31,17 +31,14 @@ survive between sessions).
 | `packages/py-sync` | Transactional outbox (partition-key derivation, D5 compaction-key guard), inbox (D2 record-before-processed), `MonotonicSequencer`, epoch fencing both directions (`EpochFence` consumer-side + `BaselineFencedComputation` producer-side), conflict-policy declarations, divergence budgets | 5 passing |
 | `packages/contracts` | The `@operation`/`operation_extra` decorator (`x-substitution`/`x-side-effects`, import-time enforcement) | untested (simple, no test dir yet) |
 | `packages/py-common` | RFC 9457 problem details, correlation-ID middleware, classification middleware, idempotency (see gotcha #2 below), ETag/If-Match, health/readyz/metrics, structured logging, cursor pagination. **This whole package is a corpus gap** — `10-shared-packages.md` explicitly disclaims owning it; it's authored from `09-monorepo-and-conventions.md` §5's prose contract | 6 passing |
-| `services/pdm` | DB models for `prediction` (RLS-bearing), `criticality_assessment`, `calibration_record` (compartment-partitioned), `scoring_run`, `tier_policy`, `prediction_provenance`; a working bulk-ingest endpoint (idempotent, transactional, baseline-fenced, outbox-emitting); get-prediction, get-criticality, expected-consequence reads | 4 passing, incl. one real HTTP→DB integration test |
+| `services/pdm` | DB models for `prediction` (RLS-bearing), `criticality_assessment`, `calibration_record` (compartment-partitioned), `scoring_run`, `tier_policy`, `prediction_provenance`; a working bulk-ingest endpoint (idempotent, transactional, baseline-fenced, outbox-emitting); get-prediction, get-criticality, expected-consequence reads; a real Alembic migration (`versions/20260805072746_pdm_initial_schema.py`, applied and round-tripped against real Postgres); RLS holdout isolation, verified end to end against a real Postgres container, not just reviewed as DDL | 14 passing, incl. one real HTTP→DB integration test and 10 real-Postgres RLS tests |
 
-**Total: 26 passing tests**, all newly written this session, all genuinely
+**Total: 36 passing tests**, all newly written this session, all genuinely
 exercised (not just "written and assumed to work" — see the gotchas below,
 several were only caught by actually running them).
 
 ## What's NOT built yet for PdM
 
-- **Alembic migration files.** Models exist; no `alembic revision` /
-  `upgrade()`/`downgrade()` has been written. `services/pdm/src/fathom_pdm/migrations/`
-  has empty `env.py`/`versions/` directories only.
 - **Dockerfile.** Not written at all yet for `services/pdm`.
 - **Helm chart.** `services/pdm/helm/` directories exist (empty) — no
   `values.yaml`, no templates.
@@ -50,13 +47,6 @@ several were only caught by actually running them).
   `migration_requires_rescore` constraints) but not the *computation* —
   22-pdm.md §3.3/§3.4's `raw_band`/`proposed_tier` hysteresis logic, the
   five-input scoring formula, none of that is implemented as code yet.
-- **RLS enforcement testing.** The `CREATE POLICY` statements are
-  documented in 22-pdm.md §4.5 but have not been transcribed into the
-  Alembic migration, and — more importantly — **SQLite cannot test row-level
-  security at all**. This needs a real PostgreSQL instance (testcontainers,
-  per `09-monorepo-and-conventions.md` §2.2) to actually verify. This is
-  arguably the single highest-priority remaining item, since RLS is PdM's
-  most security-critical mechanism.
 - **The Domino Job entrypoint script** and the Domino Model Registry
   binding logic (22-pdm.md §5.6) — nothing Domino-specific has been
   exercised against a live workspace at all. The `.env.example` has
@@ -119,11 +109,47 @@ because they'll bite again if not accounted for:
 6. **Two separate `DeclarativeBase` classes must both be migrated.**
    `fathom_sync.Base` (outbox/inbox/producer_sequence) and
    `fathom_py_common.idempotency.IdempotencyBase` (idempotency_keys) are
-   each their own metadata, separate from a service's own `Base`. Any
-   migration or test schema setup needs `create_all()` (or the real Alembic
-   equivalent) against **all three** metadatas, not just the service's own
-   models. This is currently handled ad hoc in test fixtures; the *real*
-   Alembic migration (not yet written) needs to do the same thing properly.
+   each their own metadata, separate from a service's own `Base`. The real
+   Alembic migration handles this correctly: `env.py`'s `target_metadata` is
+   a list of all three, confirmed by a successful autogenerate + a clean
+   `upgrade`/`downgrade` round-trip against real Postgres.
+7. **RLS roles need `GRANT USAGE ON SCHEMA`, not just table-level grants.**
+   `22-pdm.md §4.5`'s original DDL created `fathom_pdm_serving` /
+   `fathom_pdm_research` and granted table privileges on `pdm.prediction`,
+   but never granted `USAGE` on the `pdm` schema itself. PostgreSQL checks
+   schema `USAGE` before object-level privileges, so every query either
+   role issued failed with `permission denied for schema pdm` — confirmed
+   against a real container, then fixed in both the spec and the migration.
+   Fails closed, not a security hole, but would have made the entire
+   mechanism silently unusable. Caught only by actually connecting as one
+   of the roles and running a query, not by reading the DDL.
+8. **PostgreSQL RLS: an UPDATE's target row must satisfy the table's SELECT
+   policy too, not just the UPDATE-scoped policy — a real bug in a security
+   control this session had already reviewed and "fixed" once.** The
+   original design split `actionable_read` (SELECT) from `serving_invalidate`
+   (`FOR UPDATE ... USING (true)`), reasoning that the UPDATE policy's
+   `USING (true)` would let `fathom_pdm_serving` invalidate a research_only
+   row it could never SELECT. Verified against a real container: this
+   updated **zero rows, silently, every time** — PostgreSQL requires an
+   UPDATE's WHERE-clause row visibility to also pass any applicable SELECT
+   policy for the same role, because that WHERE clause is itself a read.
+   No combination of SELECT/UPDATE policies on one role can express
+   "writable but not readable" in Postgres's RLS model — this was never
+   fixable by rearranging policies. The actual fix: a `SECURITY DEFINER`
+   function (`pdm.invalidate_prediction()`), owned by a dedicated
+   `BYPASSRLS` role (`fathom_pdm_invalidator`) that `fathom_pdm_serving`
+   cannot otherwise assume, `EXECUTE`-granted to `fathom_pdm_serving` alone.
+   `fathom_pdm_serving` now holds **no UPDATE grant on the table at all** —
+   invalidation, for both actionable and research_only rows, goes through
+   the function exclusively. This is the single most important finding from
+   building PdM end to end: a spec-level security control had already been
+   reviewed, flagged as a bug, and "corrected" once earlier this session —
+   and the correction itself was wrong, in a way that only running it
+   against a real database (not re-reading the DDL more carefully) could
+   have caught. See `docs/build/22-pdm.md` §4.5 for the full corrected
+   mechanism and `services/pdm/tests/integration/test_rls_holdout_isolation.py`
+   for the test that proves it (and that would have failed loudly against
+   the old design).
 
 ## How to run tests (you'll need to redo this — nothing here survives)
 
@@ -137,7 +163,8 @@ python3 -m venv /tmp/fathom-test-venv   # or use `uv` if available — it wasn't
   "pydantic>=2.9" "pytest>=8.3" "pytest-asyncio>=0.24" \
   "sqlalchemy>=2.0" "aiosqlite>=0.20" \
   "fastapi>=0.115" "pydantic-settings>=2.5" "structlog>=24.4" \
-  "prometheus-client>=0.21" "httpx>=0.27" "uvicorn[standard]>=0.32" "asyncpg>=0.30" "alembic>=1.14"
+  "prometheus-client>=0.21" "httpx>=0.27" "uvicorn[standard]>=0.32" "asyncpg>=0.30" "alembic>=1.14" \
+  "ruff" "testcontainers>=4.15" "psycopg[binary]>=3.2"
 
 # Editable-install every package, in dependency order:
 for p in canonical-schemas py-sync contracts py-common; do
@@ -155,27 +182,35 @@ The real target stack is `uv` (per `09-monorepo-and-conventions.md` §2.2),
 not raw `pip` — `uv` wasn't installed in this environment, so pip was used
 as a substitute. Worth installing `uv` properly for the real project.
 
+The RLS suite (`services/pdm/tests/integration/test_rls_holdout_isolation.py`)
+needs Docker/Podman reachable (spins up its own `postgres:16-alpine`
+testcontainer per run — independent of any long-lived container you may
+also have running for interactive migration work). If `docker ps` fails
+against a "no such file" socket error, this environment uses Podman as the
+Docker backend: `podman machine start podman-machine-default`, then export
+`DOCKER_HOST` to the machine's API socket (see `podman machine inspect
+podman-machine-default` for the path) — needed per shell invocation, since
+shell state doesn't persist between separate tool calls.
+
 ## Recommended next steps, roughly in priority order
 
-1. **Decide: finish PdM to full completion, or move to service #2 now?**
-   The user hadn't decided this before signing off — worth asking first
-   thing. Arguments for finishing PdM: Alembic/Docker/Helm/RLS-testing are
-   exactly the pieces most likely to surface *more* Domino-specific issues,
-   which was the whole point of picking one service first. Arguments for
-   moving on: the shared-infrastructure pattern (packages/*) is now
-   validated and is the part that was genuinely uncertain; Docker/Helm/Alembic
-   are comparatively mechanical and low-risk to defer.
-2. **If finishing PdM:** Alembic migration first (needed for literally
-   everything else — Docker's migration hook, Helm's migration Job, RLS
-   testing all depend on a real migration existing), then RLS testing
-   against a real Postgres (testcontainers), then Dockerfile, then Helm
-   chart, then the actual hysteresis/scoring algorithm, then event
-   consumers, then the Domino-specific pieces (which need the user's actual
-   Domino project/workspace details — was mid-outage when this session
-   started, should be back up by now).
-3. **Either way:** get the user's Domino project/workspace details, since
-   several remaining PdM pieces (Domino Job entrypoint, Model Registry
-   binding) are blocked on it, and it's needed for every other service too.
+The user has explicitly chosen to finish PdM before moving to service #2,
+in this order: ~~Alembic migration~~ → ~~RLS testing~~ → Dockerfile → Helm
+chart → hysteresis/scoring algorithm → event consumers → Domino Job
+entrypoint/Model Registry binding. The first two are done (see above).
+
+1. **Dockerfile and Helm chart** (tasks #23/#24) are independent of each
+   other and of everything else remaining — genuinely parallelizable across
+   two subagents if picking this up with orchestration available.
+2. **The hysteresis/scoring algorithm** (#25) and **event consumers** (#26)
+   are more sequential: consumers need the invalidation pattern this
+   session just built (`PredictionRepository.invalidate()` now calls
+   `pdm.invalidate_prediction()` by id, not by a pre-loaded object — see bug
+   #8 above for why), so build/review that pattern before wiring the ~15
+   consumed event types.
+3. **Domino Job entrypoint + Model Registry binding** (#27) needs the
+   user's real Domino project/workspace details — get these regardless of
+   sequencing, since every other service will need them too.
 
 ## Where to find more context
 

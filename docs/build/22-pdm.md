@@ -373,12 +373,13 @@ CREATE TABLE pdm.prediction (
         calibration_population >= 50 OR fallback_level >= 3)
 );
 
--- §4.5: the holdout isolation mechanism. Two roles, four policies split by
--- command, one table. [AMENDMENT] Was a single FOR ALL policy on the serving
--- role; see §4.5's full treatment for why that made an INSERT of a
--- research_only row a policy violation (fixed by an explicit WITH CHECK)
--- and separately made an UPDATE unable to ever reach a research_only row at
--- all (fixed by splitting SELECT from UPDATE, below).
+-- §4.5: the holdout isolation mechanism. Two roles, three policies plus one
+-- SECURITY DEFINER function, one table -- see §4.5's full treatment for the
+-- two corrections folded in here: an INSERT of a research_only row being a
+-- policy violation (fixed by an explicit WITH CHECK), and invalidation of a
+-- research_only row being unreachable through any UPDATE policy at all,
+-- because PostgreSQL gates an UPDATE's target rows through the same SELECT
+-- policy as a plain query (fixed by invalidate_prediction(), not a policy).
 ALTER TABLE pdm.prediction ENABLE ROW LEVEL SECURITY;
 ALTER TABLE pdm.prediction FORCE ROW LEVEL SECURITY;
 CREATE POLICY actionable_read ON pdm.prediction
@@ -387,12 +388,11 @@ CREATE POLICY actionable_read ON pdm.prediction
 CREATE POLICY serving_insert ON pdm.prediction
     FOR INSERT TO fathom_pdm_serving
     WITH CHECK (serving_class IN ('actionable', 'research_only'));
-CREATE POLICY serving_invalidate ON pdm.prediction
-    FOR UPDATE TO fathom_pdm_serving
-    USING (true)
-    WITH CHECK (serving_class IN ('actionable', 'research_only'));
 CREATE POLICY research_only  ON pdm.prediction
     FOR SELECT TO fathom_pdm_research USING (serving_class = 'research_only');
+-- fathom_pdm_serving holds no UPDATE grant on this table at all; see §4.5
+-- for pdm.invalidate_prediction(), the SECURITY DEFINER function that is
+-- the only way this role can invalidate a row.
 ```
 
 Four notes on the transcription, each of which is a defect if varied:
@@ -749,11 +749,18 @@ Five mechanisms, in order of how hard each is to circumvent:
 
 ```sql
 -- Serving path: the API's normal connection. RLS makes research rows
--- non-existent to a plain SELECT -- it does not, and must not, block this
--- role's UPDATE from reaching an existing research_only row. See the
--- amendment below for why those are different things.
+-- non-existent to a plain SELECT. Invalidating a research_only row is a
+-- separate mechanism entirely -- see the correction below for why this
+-- role holds no UPDATE grant on the table at all.
 CREATE ROLE fathom_pdm_serving;
-GRANT SELECT, INSERT, UPDATE ON pdm.prediction TO fathom_pdm_serving;
+-- [AMENDMENT] Table-level GRANTs alone are inert without this: PostgreSQL
+-- checks schema USAGE before it ever looks at object-level privileges, and
+-- neither RLS role owns or was granted access to the `pdm` schema itself.
+-- Without it every query these roles issue fails with "permission denied
+-- for schema pdm" -- not a hole, but one that would have made the whole
+-- mechanism silently unusable rather than silently insecure.
+GRANT USAGE ON SCHEMA pdm TO fathom_pdm_serving;
+GRANT SELECT, INSERT ON pdm.prediction TO fathom_pdm_serving;
 
 CREATE POLICY actionable_read ON pdm.prediction FOR SELECT TO fathom_pdm_serving
     USING (serving_class = 'actionable');
@@ -761,45 +768,86 @@ CREATE POLICY actionable_read ON pdm.prediction FOR SELECT TO fathom_pdm_serving
 CREATE POLICY serving_insert ON pdm.prediction FOR INSERT TO fathom_pdm_serving
     WITH CHECK (serving_class IN ('actionable', 'research_only'));
 
-CREATE POLICY serving_invalidate ON pdm.prediction FOR UPDATE TO fathom_pdm_serving
-    USING (true)
-    WITH CHECK (serving_class IN ('actionable', 'research_only'));
-    -- [AMENDMENT] The previous single FOR ALL policy's USING clause
-    -- (serving_class = 'actionable') did two things at once, and only the
-    -- first was intended: in PostgreSQL, FOR ALL's USING clause gates which
-    -- rows SELECT returns *and* which existing rows UPDATE or DELETE may
-    -- target -- it is not a read-only predicate, whatever the earlier
-    -- comment here claimed ("USING still isolates READS" was wrong). That
-    -- silently made every UPDATE this role issues against a research_only
-    -- row a zero-row no-op, because the row was never a candidate for the
-    -- update to begin with. §8.1's invalidation triggers and §13.4's
-    -- label_set_retracted cascade run exactly that UPDATE -- setting
-    -- status = 'invalidated' and invalidation_cause -- against holdout
-    -- predictions, and needed it to actually take effect: "Invalidation is
-    -- loud" (§8.1) is not satisfied by a silently-ignored write. Splitting
-    -- SELECT from UPDATE fixes it without loosening the read boundary:
-    -- actionable_read's USING is the only thing a plain read is subject to,
-    -- so an ad-hoc query, a join, a new endpoint, or an admin console
-    -- session still returns zero rows for a holdout item, exactly as
-    -- before. serving_invalidate's USING (true) lets this role's UPDATE
-    -- target any row regardless of its current serving_class, because this
-    -- role is the sole writer for both strata and isolation is a read
-    -- property, not a write one -- that was always the design intent; the
-    -- single-policy form just implemented it in a way PostgreSQL's own FOR
-    -- ALL semantics contradicted. WITH CHECK is unchanged: the row's value
-    -- after the update must still be a real serving_class.
-
 -- Research path: a distinct role, distinct connection pool, SELECT only.
 CREATE ROLE fathom_pdm_research;
+GRANT USAGE ON SCHEMA pdm TO fathom_pdm_research;
 GRANT SELECT ON pdm.prediction TO fathom_pdm_research;
 CREATE POLICY research_only ON pdm.prediction FOR SELECT TO fathom_pdm_research
     USING (serving_class = 'research_only');
 
 ALTER TABLE pdm.prediction ENABLE ROW LEVEL SECURITY;
 ALTER TABLE pdm.prediction FORCE ROW LEVEL SECURITY;   -- applies to the table owner too
+
+-- [CORRECTION, verified against a real PostgreSQL container -- see the
+-- struck-through amendment below for the reasoning this replaces] A
+-- previous revision of this section split `actionable_read` (SELECT) from
+-- a `serving_invalidate` policy (`FOR UPDATE ... USING (true)`), reasoning
+-- that an UPDATE-scoped USING(true) would let fathom_pdm_serving reach a
+-- research_only row without ever being able to SELECT it. That does not
+-- work: PostgreSQL requires the row targeted by an UPDATE's WHERE clause to
+-- ALSO satisfy any applicable SELECT policy for the same role, because the
+-- WHERE clause is itself a read -- `actionable_read`'s
+-- `serving_class = 'actionable'` USING clause silently vetoed every such
+-- UPDATE regardless of what `serving_invalidate` said. Confirmed against a
+-- real container: with the split policies exactly as drafted, invalidating
+-- a research_only row updated zero rows, every time, with no error. No
+-- combination of SELECT/UPDATE policies on one role can express "writable
+-- but not readable" -- Postgres's RLS model has no such distinction, so
+-- this was never fixable by rearranging policies.
+--
+-- The actual mechanism is a SECURITY DEFINER function, owned by a
+-- dedicated role that BYPASSES row security and that fathom_pdm_serving
+-- cannot otherwise assume, EXECUTE-granted to fathom_pdm_serving alone.
+-- The function's body is the entire narrow write it is permitted to
+-- perform: it can set status/invalidation_cause/invalidated_at on a row
+-- found by prediction_id, nothing else -- it cannot be used to read,
+-- join, or change a row's serving_class.
+CREATE ROLE fathom_pdm_invalidator BYPASSRLS;
+GRANT USAGE ON SCHEMA pdm TO fathom_pdm_invalidator;
+GRANT SELECT, UPDATE ON pdm.prediction TO fathom_pdm_invalidator;
+
+CREATE FUNCTION pdm.invalidate_prediction(p_prediction_id uuid, p_cause text)
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pdm, pg_temp
+AS $$
+DECLARE
+    v_row_count int;
+BEGIN
+    UPDATE pdm.prediction
+    SET status = 'invalidated',
+        invalidation_cause = p_cause,
+        invalidated_at = now()
+    WHERE prediction_id = p_prediction_id
+      AND serving_class IN ('actionable', 'research_only');
+    GET DIAGNOSTICS v_row_count = ROW_COUNT;
+    RETURN v_row_count > 0;
+END;
+$$;
+
+ALTER FUNCTION pdm.invalidate_prediction(uuid, text) OWNER TO fathom_pdm_invalidator;
+REVOKE ALL ON FUNCTION pdm.invalidate_prediction(uuid, text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION pdm.invalidate_prediction(uuid, text) TO fathom_pdm_serving;
 ```
 
-This is the load-bearing control and the reason it is not merely a `WHERE` clause. A `WHERE serving_class = 'actionable'` predicate in a repository method is one careless refactor, one new query path, one debugging session, or one "just for this report" join away from being absent — and its absence produces *no error*, only a silently contaminated fleet. Under RLS, an ad-hoc `SELECT`, a new endpoint, a hurried join, a migration script's read, and an admin console session on the serving role all return zero rows for holdout items, because `actionable_read`'s policy is the only thing a plain read is subject to, and those rows are not visible to it at all. The one narrow exception is `serving_invalidate`'s `UPDATE`, and it is an exception on purpose: it can reach a research_only row *to invalidate it*, never to select it, join it into a report, or expose it through any read path — invalidation is a write, no different in kind from the ingest write that created the row, and holdout isolation was always a read property (§4.5 above), not a write one. `FORCE ROW LEVEL SECURITY` closes the table-owner bypass. The research role holds no `INSERT`, `UPDATE`, or `DELETE` on any table, mirroring [13 §8.6](13-synthetic-data-generator.md)'s credential separation for the truth partition.
+<details>
+<summary>Superseded amendment (kept for the record; the correction above supersedes it)</summary>
+
+> [AMENDMENT] The previous single `FOR ALL` policy's `USING` clause
+> (`serving_class = 'actionable'`) did two things at once, and only the
+> first was intended: in PostgreSQL, `FOR ALL`'s `USING` clause gates which
+> rows SELECT returns *and* which existing rows UPDATE or DELETE may
+> target — it is not a read-only predicate, whatever the earlier comment
+> here claimed ("USING still isolates READS" was wrong). That silently
+> made every UPDATE this role issues against a research_only row a
+> zero-row no-op, because the row was never a candidate for the update to
+> begin with. Splitting SELECT from UPDATE was believed to fix it without
+> loosening the read boundary — it did not; see the correction above.
+
+</details>
+
+This is the load-bearing control and the reason it is not merely a `WHERE` clause. A `WHERE serving_class = 'actionable'` predicate in a repository method is one careless refactor, one new query path, one debugging session, or one "just for this report" join away from being absent — and its absence produces *no error*, only a silently contaminated fleet. Under RLS, an ad-hoc `SELECT`, a new endpoint, a hurried join, a migration script's read, and an admin console session on the serving role all return zero rows for holdout items, because `actionable_read`'s policy is the only thing a plain read is subject to, and those rows are not visible to it at all. Invalidating a research_only row goes through `pdm.invalidate_prediction()` instead of a direct `UPDATE`, and it is a narrow exception on purpose: the function can set exactly three columns on a row found by id, never select it, join it into a report, or expose it through any read path — invalidation is a write, no different in kind from the ingest write that created the row, and holdout isolation was always a read property (§4.5 above), not a write one. `FORCE ROW LEVEL SECURITY` closes the table-owner bypass. The research role holds no `INSERT`, `UPDATE`, or `DELETE` on any table, mirroring [13 §8.6](13-synthetic-data-generator.md)'s credential separation for the truth partition.
 
 **4. Two API routes, with different annotations and different authorization.**
 
@@ -1533,7 +1581,7 @@ The third row is a deliberate departure from a uniform rule and the reasoning mu
 
 Every store is **operationally append-only, not legally immutable**, and therefore purgeable. Envelope-level encryption with per-classification keys makes crypto-shredding the mechanism where row deletion would break referential integrity. `prediction` uses tombstones on the compacted topic that preserve the compaction invariant.
 
-**Neither database role holds `DELETE` on `pdm.prediction`, and neither needs to.** Mirroring `23-pma.md` §10.5's *"row-level deletion is forbidden by trigger"* pattern for its own append-only stores, this table's purge is crypto-shredding the classification key (03 §13.1), not a SQL `DELETE` — so there is no missing grant to add here, and none should be. What `fathom_pdm_serving` does need is an `UPDATE` that can reach a `research_only` row: the retraction cascade below sets `status = 'invalidated'` and `invalidation_cause = 'label_set_retracted'` on a holdout prediction exactly as it does on an actionable one, and §4.5.3's split RLS policies (`serving_invalidate`) are what make that reach possible without granting this role, or any role, a `DELETE` privilege it does not need.
+**Neither database role holds `DELETE` on `pdm.prediction`, and neither needs to.** Mirroring `23-pma.md` §10.5's *"row-level deletion is forbidden by trigger"* pattern for its own append-only stores, this table's purge is crypto-shredding the classification key (03 §13.1), not a SQL `DELETE` — so there is no missing grant to add here, and none should be. What the retraction cascade below needs is a way to reach a `research_only` row: it sets `status = 'invalidated'` and `invalidation_cause = 'label_set_retracted'` on a holdout prediction exactly as it does on an actionable one, and §4.5's `pdm.invalidate_prediction()` — a SECURITY DEFINER function, not an RLS policy, because no policy can make a row writable without also making it readable to the same role — is what makes that reach possible without granting `fathom_pdm_serving`, or any role, a `DELETE` privilege it does not need.
 
 A `LabelSet` retraction cascades: the label set is tombstoned, every `model_binding` fitted on it is deactivated, every prediction from those bindings is invalidated with `label_set_retracted`, and re-scoring is queued — because a retracted label set means the models fitted on it were fitted on data that should not have existed, and leaving their predictions serving is the spillage propagating.
 
@@ -1614,7 +1662,8 @@ Each carries the finding that makes it a defect rather than a preference. 09 §9
 
 ### 15.3 Holdout isolation
 
-- [ ] Both database roles exist; all four RLS policies exist, split by command per §4.5.3 (`actionable_read`, `serving_insert`, `serving_invalidate`, `research_only`); `ENABLE` **and** `FORCE ROW LEVEL SECURITY` on `pdm.prediction`; no other role holds a grant on it, and neither role holds `DELETE` (§13.4: purge is crypto-shred, not `DELETE`).
+- [ ] Both database roles exist; all three RLS policies exist, split by command per §4.5.3 (`actionable_read`, `serving_insert`, `research_only`); `pdm.invalidate_prediction()` exists, is owned by the BYPASSRLS `fathom_pdm_invalidator` role, and is EXECUTE-granted only to `fathom_pdm_serving` (not `PUBLIC`); `ENABLE` **and** `FORCE ROW LEVEL SECURITY` on `pdm.prediction`; no other role holds a grant on it, and neither role holds `DELETE` (§13.4: purge is crypto-shred, not `DELETE`).
+- [ ] Invalidating a `research_only` row via `pdm.invalidate_prediction()` actually succeeds under `fathom_pdm_serving`, verified against a real PostgreSQL connection — not merely reviewed as DDL. A plain `UPDATE` under the same role, by contrast, must fail (no grant).
 - [ ] Research route on a separate connection pool under `fathom_pdm_research`, requiring `research_analyst`, not agent-eligible.
 - [ ] `serving_class` is absent from the ingest request schema.
 - [ ] `fathom.pdm.research_prediction.v1` exists; `maintenance` and `fleet-status` principals have no read ACL, asserted in the topic registration test.
