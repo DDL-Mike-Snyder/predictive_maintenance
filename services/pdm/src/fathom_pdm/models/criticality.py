@@ -27,7 +27,11 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from . import Base
 
-_JsonVariant = JSON().with_variant(JSONB(), "postgresql")
+# [CORRECTION -- see models/prediction.py's own comment for the full
+# account.] `none_as_null=True` on both sides: without it, a Python `None`
+# bound to `attributable_level_shift` serializes as the JSON string
+# `"null"`, not SQL `NULL`.
+_JsonVariant = JSON(none_as_null=True).with_variant(JSONB(none_as_null=True), "postgresql")
 
 
 class CriticalityAssessment(Base):

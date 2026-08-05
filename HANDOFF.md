@@ -1,10 +1,14 @@
 # FATHOM — handoff / continuation notes
 
 **Read this first if you're picking this up cold.** Last updated 2026-08-05
-(second update, same day: Alembic migration + real-Postgres RLS testing now
-done — see the updated tables below). Everything below is committed on
-`main` unless stated otherwise. `git log --oneline` tells the true story in
-detail; this file is the map.
+(third update, same day: **#27, the last item on the user's explicit PdM
+checklist, is now done** — model-registry binding + a real Domino Job
+entrypoint, both exercised against the user's actual live Domino workspace,
+not just reviewed as code. See the updated tables and the new bugs #13–#15
+below). Everything below is **NOT YET COMMITTED** as of this update — it
+exists in the working tree only; say so explicitly to whoever picks this up
+next if that's still true. `git log --oneline` / `git status` tell the true
+story; this file is the map.
 
 ## Where things stand, in one paragraph
 
@@ -17,7 +21,57 @@ third pass. We picked **PdM (Predictive Maintenance)** as the first service
 to build end-to-end, specifically to prove the shared-infrastructure pattern
 and surface Domino-specific issues before repeating it across the other 8
 domain services + 8 platform services. That vertical slice is now a real,
-tested, committed skeleton — see "What's built" below.
+tested skeleton with **all seven items on the user's explicit checklist
+done** — see "What's built" below.
+
+## This update: #27 (Domino Job entrypoint + Model Registry binding)
+
+The user provided real access this session: the Domino instance
+(`https://mikesn136713.cs.domino.tech`), a live `dom connect` SSH tunnel to
+their `mike_snyder`'s vscode session workspace, and confirmed this repo is
+checked out there at `/mnt/code` (git-based project, was 5 commits behind
+`origin/main`, fast-forwarded). Real values discovered by actually connecting,
+not guessed: `DOMINO_PROJECT_ID=6a7109c166c85009d461fcef`,
+`DOMINO_PROJECT_NAME=predictive_maintenance` (confirmed via
+`GET /api/projects/v1/projects/{id}`). **The Domino Model Registry is
+currently empty** (`GET /api/registeredmodels/v1` → `{"items":[]}`) — there
+is no real registered model anywhere in this instance yet, so the binding
+logic below is real and tested but has never bound an actual live registry
+entry (nothing exists to bind to).
+
+Two things got built:
+
+1. **Model-registry binding** (22-pdm.md §5.6). `models/__init__.py`'s own
+   docstring had explicitly deferred `model_binding`/`label_set`/
+   `propensity_model` as "a substantial second vertical slice" — the user
+   confirmed the right move was to add `propensity_model`/`label_set` as
+   **schema-only** tables (columns per §2.3/§2.4, no IPCW-fitting logic) so
+   `model_binding`'s FK and §5.6's three binding-refusal checks (propensity
+   model accepted, label set's family powered, calibration record exists
+   for the triple) are real queries against real tables, not stubs. New:
+   `models/{propensity_model,label_set,model_binding}.py`, a new migration
+   (`versions/20260805141953_pdm_model_binding.py`), `repositories/
+   model_binding.py`, `services/model_binding.py` (refusal checks +
+   deactivate-and-invalidate-the-superseded-binding + queue a
+   `binding_activation` re-score + publish `model_binding.activated`),
+   `api/v1/model_bindings.py` (`POST /model-bindings`,
+   `POST /model-bindings/{id}/activate`).
+2. **Domino Job entrypoint** (`models/tier0-historical/entrypoint.py`) —
+   stdlib-only (no `fathom_pdm` import, no dependency install step), reads
+   `DOMINO_RUN_ID` for `domino_execution_ref`, POSTs to PdM's real bulk-ingest
+   API. The actual tier-0 Weibull MLE fit is explicitly NOT implemented
+   (same out-of-scope boundary as everywhere else in this vertical slice —
+   see the script's own docstring); it emits the one shape a fit-free
+   stand-in can honestly claim (`class_estimate`, `population_hazard_rate`
+   only, per §5.5's last row). **Actually run end to end inside the real
+   workspace** — genuine `DOMINO_RUN_ID=6a732adddb7d90254e2fe880` read from
+   the platform, a real HTTP round trip to a real (locally-started, sqlite)
+   PdM instance running inside that same workspace, real predictions written.
+
+Three more real bugs found the same way every other one in this file was —
+by actually running the thing, not by re-reading the code — see #13–#15
+below. All are fixed, and the fixes are verified by the new tests, not just
+asserted.
 
 ## What's built and tested (commit `02af267`, plus spec fixes before it)
 
@@ -31,11 +85,14 @@ survive between sessions).
 | `packages/py-sync` | Transactional outbox (partition-key derivation, D5 compaction-key guard), inbox (D2 record-before-processed), `MonotonicSequencer`, epoch fencing both directions (`EpochFence` consumer-side + `BaselineFencedComputation` producer-side), conflict-policy declarations, divergence budgets | 5 passing |
 | `packages/contracts` | The `@operation`/`operation_extra` decorator (`x-substitution`/`x-side-effects`, import-time enforcement) | untested (simple, no test dir yet) |
 | `packages/py-common` | RFC 9457 problem details, correlation-ID middleware, classification middleware, idempotency (see gotcha #2 below), ETag/If-Match, health/readyz/metrics, structured logging, cursor pagination. **This whole package is a corpus gap** — `10-shared-packages.md` explicitly disclaims owning it; it's authored from `09-monorepo-and-conventions.md` §5's prose contract | 6 passing |
-| `services/pdm` | DB models for `prediction` (RLS-bearing), `criticality_assessment`, `calibration_record` (compartment-partitioned), `scoring_run`, `tier_policy`, `prediction_provenance`; a working bulk-ingest endpoint (idempotent, transactional, baseline-fenced, outbox-emitting); get-prediction, get-criticality, expected-consequence reads; a real Alembic migration (`versions/20260805072746_pdm_initial_schema.py`, applied and round-tripped against real Postgres); RLS holdout isolation, verified end to end against a real Postgres container, not just reviewed as DDL; a real `Dockerfile` (builds and runs, `/healthz`/`/readyz` verified against real Postgres) and a complete Helm chart (`helm/`, depends on the new `deploy/helm/_fathom-common` library chart, `helm lint`/`template`/`unittest` all passing); the criticality scoring/tier-assignment/hysteresis algorithm (`services/criticality.py` — the formula, band function, and hysteresis gate only; §3.1's per-input normalization and §3.3's ceiling-input read models are event-consumer work, not built yet, see the module's own docstring); two event consumers (`events/consumers.py` — `configuration.baseline_changed`, `installed_item.removed`, both invalidating affected predictions, verified against a real Postgres connection authenticated as the actual `fathom_pdm_serving` role, not the migration-owning superuser) | 38 passing, incl. one real HTTP→DB integration test, 10 real-Postgres RLS tests, 20 scoring/hysteresis unit tests, and 4 real-Postgres event-consumer tests |
+| `services/pdm` | DB models for `prediction` (RLS-bearing), `criticality_assessment`, `calibration_record` (compartment-partitioned), `scoring_run`, `tier_policy`, `prediction_provenance`, plus (this update) `model_binding`, `propensity_model`, `label_set`; a working bulk-ingest endpoint (idempotent, transactional, baseline-fenced, outbox-emitting); get-prediction, get-criticality, expected-consequence reads; model-binding create/activate (§5.6's refusal checks, superseded-binding invalidation, re-score queuing, `model_binding.activated` publish); two Alembic migrations (`20260805072746_pdm_initial_schema.py`, `20260805141953_pdm_model_binding.py`, both applied and round-tripped against real Postgres); RLS holdout isolation, verified end to end against a real Postgres container, not just reviewed as DDL; a real `Dockerfile` (builds and runs, `/healthz`/`/readyz` verified against real Postgres) and a complete Helm chart (`helm/`, depends on the new `deploy/helm/_fathom-common` library chart, `helm lint`/`template`/`unittest` all passing); the criticality scoring/tier-assignment/hysteresis algorithm (`services/criticality.py` — the formula, band function, and hysteresis gate only; §3.1's per-input normalization and §3.3's ceiling-input read models are event-consumer work, not built yet, see the module's own docstring); two event consumers (`events/consumers.py` — `configuration.baseline_changed`, `installed_item.removed`, both invalidating affected predictions, verified against a real Postgres connection authenticated as the actual `fathom_pdm_serving` role, not the migration-owning superuser) | 46 passing, incl. one real HTTP→DB integration test, 10 real-Postgres RLS tests, 20 scoring/hysteresis unit tests, 4 real-Postgres event-consumer tests, 6 model-binding sqlite e2e tests, and 2 real-Postgres model-binding-as-`fathom_pdm_serving` tests |
+| `models/tier0-historical` | `entrypoint.py` — the Domino Job entrypoint (this update). Stdlib-only, no monorepo package dependency; reads Domino's own injected `DOMINO_RUN_ID`, POSTs to PdM's bulk-ingest API. Tier-0's real Weibull MLE fit is explicitly a placeholder (see script docstring) | exercised manually end-to-end (locally and inside the real Domino workspace over SSH), not under `pytest` — it has no monorepo package dependency to test against in-process, by design |
 
-**Total: 60 passing tests**, all newly written this session, all genuinely
-exercised (not just "written and assumed to work" — see the gotchas below,
-several were only caught by actually running them).
+**Total: 46 passing tests** in `services/pdm` alone (up from 38), plus 5 in
+`packages/py-sync` (unchanged) and the rest of the earlier table's counts
+unchanged. All newly written this session or the one before it, all
+genuinely exercised (not just "written and assumed to work" — see the
+gotchas below, several were only caught by actually running them).
 
 **Repo-wide finding, this pass: `ruff` had never actually been run across
 the whole `services/`/`packages/` tree before now** (only spot-checked on
@@ -54,23 +111,34 @@ whatever task was in progress when it was found.
 
 ## What's NOT built yet for PdM
 
-- **The Domino Job entrypoint script** and the Domino Model Registry
-  binding logic (22-pdm.md §5.6) — nothing Domino-specific has been
-  exercised against a live workspace at all. The `.env.example` has
-  placeholder `FATHOM_DOMINO__*` vars with no real values.
+- **The real tier-0..3 model fits.** `models/tier0-historical/entrypoint.py`
+  (this update) is real wiring, not a real model: the Weibull MLE / IPCW
+  fit tier 0's own method specifies (22-pdm.md §5.1) needs real
+  per-`(equipment_family, niin)` telemetry and failure-label infrastructure
+  this vertical slice doesn't build (same boundary as everything else
+  below). `models/tier1-survival`, `tier2-degradation`, `tier3-hybrid`,
+  `causal` are still empty directories — only tier 0 got an entrypoint, as
+  the simplest tier, to prove the wiring once.
+- **`POST /scoring-runs`** (22-pdm.md §10, line ~1356; on-demand re-score
+  creation) — declared in the spec's own API-surface table but not
+  implemented. `entrypoint.py` takes an existing `--scoring-run-id` rather
+  than minting one for exactly this reason; whatever orchestrates real
+  scoring runs (Domino Flow scheduling) needs this endpoint first.
 - **Most event consumers.** Of `catalog.CONSUMES`' ~19 declared types, only
   the two that are both externally-evented AND have a fully-specified local
   effect are wired: `configuration.baseline_changed` and
   `installed_item.removed` (both invalidate affected predictions via
-  `pdm.invalidate_prediction()`, `events/consumers.py`). The other four
-  invalidation triggers in 22-pdm.md §8.1's own table are internal (tier
-  reassignment, binding deactivation, calibration withdrawal, label-set
-  retraction) — triggered by other PdM subsystems that don't exist yet, not
-  by consuming an event at all. The remaining ~15 declared types (telemetry
-  health indicators, maintenance actions, failure-intel findings, etc.) feed
-  the tier 0-3 model scoring pipeline itself, which needs real model
-  execution (Domino Jobs) this vertical slice doesn't build. `dispatch_event()`
-  raises `UnhandledEventTypeError` for all of these rather than silently
+  `pdm.invalidate_prediction()`, `events/consumers.py`). Of the other four
+  internal invalidation triggers in 22-pdm.md §8.1's own table, **binding
+  deactivation is now wired** (this update: `services/model_binding
+  .activate_binding` invalidates the superseded binding's own predictions
+  directly, not via a consumed event) — tier reassignment, calibration
+  withdrawal, and label-set retraction remain unbuilt, triggered by other
+  PdM subsystems that don't exist yet. The remaining ~15 declared types
+  (telemetry health indicators, maintenance actions, failure-intel
+  findings, etc.) feed the tier 0-3 model scoring pipeline itself, which
+  needs the real model execution named above. `dispatch_event()` raises
+  `UnhandledEventTypeError` for all of these rather than silently
   no-op'ing, so a future consumer loop can tell "nothing to do" apart from
   "this needs a handler built." **No Kafka client/consumer-loop
   infrastructure exists anywhere in this codebase** (checked: zero
@@ -79,8 +147,9 @@ whatever task was in progress when it was found.
   message, not the loop itself; building that is shared `packages/py-sync`
   infrastructure, not PdM-specific.
 - **Every other service.** Only PdM has been touched. The other 8 domain
-  services + 8 platform services + `apps/` + `agents/` + `models/` are
-  still just empty directories.
+  services + 8 platform services + `apps/` + `agents/` are still just empty
+  directories (`models/` now has one file, `tier0-historical/entrypoint.py`
+  — see above for what it does and doesn't cover).
 
 ## Real bugs found by actually building this (useful for the *next* service)
 
@@ -230,6 +299,56 @@ because they'll bite again if not accounted for:
     rather than trusting a prose cross-reference — these were both
     authored from prose summaries earlier this session, not the tables
     themselves.
+13. **`fathom_pdm_serving` could never actually publish an event, in any
+    service, since the very first migration that granted it INSERT on
+    `outbox` — caught only by activating a model binding as that role for
+    real, the first code path ever to call `OutboxWriter.emit()` under it**
+    (every earlier test either used SQLite or the migration-owning
+    superuser; `bulk_ingest_predictions` already published events, but
+    never under the real role until now). Two independent grant gaps, both
+    from the same root cause (Postgres autoincrement PKs need sequence
+    privilege to fire their own `nextval()` default, and — separately —
+    reading a column back via `RETURNING` needs the same privilege as
+    `SELECT`ing it): fixed `packages/py-sync/fathom_sync/models
+    .OutboxRow.__table_args__` to set `implicit_returning=False` (nothing
+    in `emit()`'s own return value ever used the PK RETURNING would have
+    fetched anyway — this fix is shared, so it protects every other
+    service's own outbox table too, not just PdM's), and granted
+    `fathom_pdm_serving` explicit `USAGE` on `outbox_outbox_id_seq` in
+    PdM's own migration. **Every other service will hit the exact same
+    wall the first time its own serving role actually publishes an
+    event** — budget for the sequence-USAGE grant from the start, the same
+    lesson as bug #11.
+14. **`pdm.prediction.rul` (and four other nullable JSON-variant columns)
+    could never actually store SQL `NULL` — caught only by ingesting a
+    real non-item-conditional prediction (`reference_class='class_estimate'`,
+    `rul=None`) through the bulk-ingest API for the first time.** Every
+    earlier test's prediction payloads happened to be item-conditional
+    (`rul` always present). SQLAlchemy's `JSON`/`JSONB` default to
+    `none_as_null=False`: a Python `None` bound to the column serializes as
+    the JSON string `"null"`, not SQL `NULL` — dialect-agnostic, so this
+    was never a SQLite-only quirk, and would have failed identically
+    against real Postgres. `rul_only_when_item_conditional`'s `rul IS NULL`
+    check constraint rejected every such row. Fixed by adding
+    `none_as_null=True` to the `_JsonVariant` type alias in all four
+    affected model files (`prediction.py`, `criticality.py`,
+    `provenance.py`, `scoring_run.py`) — a DDL-invisible, Python-side-only
+    fix (no migration needed). Worth grep'ing for `_JsonVariant` in every
+    future service's own models before assuming a nullable JSON column
+    round-trips `None` correctly.
+15. **SQLAlchemy's autoflush ordering has no dependency graph across plain
+    FK columns without an ORM `relationship()`** — two sibling `session
+    .add()` calls (e.g. `propensity_model` then `label_set`, where
+    `label_set.propensity_model_id` is a bare FK column) can flush in
+    either order in the same transaction, and against real Postgres (never
+    caught under SQLite, which doesn't enforce the FK at all by default)
+    this intermittently 500s with a real FK violation depending on which
+    order won. Fixed in this session's own new test fixtures with an
+    explicit `await session.flush()` between the two `add()` calls, not by
+    adding `relationship()`s to the production models (which have no other
+    reason to want one). Worth remembering for any future test that seeds
+    more than one FK-linked row in a single session without a
+    relationship-aware ORM graph to lean on.
 
 ## How to run tests (you'll need to redo this — nothing here survives)
 
@@ -274,14 +393,13 @@ shell state doesn't persist between separate tool calls.
 
 ## Recommended next steps, roughly in priority order
 
-The user has explicitly chosen to finish PdM before moving to service #2,
-in this order: ~~Alembic migration~~ → ~~RLS testing~~ → ~~Dockerfile~~ →
-~~Helm chart~~ → ~~hysteresis/scoring algorithm~~ → ~~event consumers~~ →
-Domino Job entrypoint/Model Registry binding. All six are done — **only
-#27 remains** on the user's explicit checklist. Dockerfile and Helm chart
-were built in parallel across two Sonnet subagents (per the user's explicit
-interest in parallelizing genuinely independent PdM work) — both
-independently re-verified afterward (real `docker build` + container run +
+The user's explicit PdM checklist is now **fully done**: ~~Alembic
+migration~~ → ~~RLS testing~~ → ~~Dockerfile~~ → ~~Helm chart~~ →
+~~hysteresis/scoring algorithm~~ → ~~event consumers~~ → ~~Domino Job
+entrypoint/Model Registry binding~~. Dockerfile and Helm chart were built
+in parallel across two Sonnet subagents (per the user's explicit interest
+in parallelizing genuinely independent PdM work) — both independently
+re-verified afterward (real `docker build` + container run +
 `/healthz`/`/readyz`, and `helm lint`/`helm template`/`helm unittest` rerun
 from scratch), not just trusted from the subagents' own reports. Building
 `services/pdm/helm` also required building `deploy/helm/_fathom-common`
@@ -290,26 +408,38 @@ and the two namespace-wide default-deny NetworkPolicy charts
 (`fathom-sustainment`, `fathom-data`) first, since none of that shared Helm
 infrastructure existed yet — done directly rather than delegated, since
 it's foundational/shared, not PdM's own deliverable. The scoring/hysteresis
-algorithm and the event consumers were both built directly (not delegated)
-since each needed careful judgment, not mechanical transcription — see
-bugs #9 and #11/#12 above for what that judgment caught.
+algorithm, the event consumers, and #27's model-binding + entrypoint were
+all built directly (not delegated) since each needed careful judgment, not
+mechanical transcription — see bugs #9, #11/#12, and #13-15 above for what
+that judgment caught.
 
-1. **Domino Job entrypoint + Model Registry binding** (#27) needs the
-   user's real Domino project/workspace details — the only remaining item
-   on the explicit PdM checklist, and the only one blocked on something
-   only the user can provide. Get these regardless of what happens next,
-   since every other service will need them too.
+1. **Nothing in this repo is committed yet as of this update** — `git
+   status`/`git diff` first. Decide whether to commit #27's work (new
+   models, migration, repositories/services/API, tests, the entrypoint
+   script, the `packages/py-sync` outbox fix, the four `none_as_null`
+   model fixes) before doing anything else with the working tree.
 2. **Decide: is PdM "done enough" to move to service #2, or push further
    first?** Genuinely out-of-scope-for-this-vertical-slice items remain --
-   most of `CONSUMES`' ~19 event types (need the tier 0-3 model scoring
+   the real tier 0-3 model fits (needs real telemetry/failure-label
+   infrastructure), most of `CONSUMES`' ~19 event types (need that same
    pipeline + real Registry/Telemetry/Failure-Intel read models), the
    Kafka consumer-loop/client infrastructure itself (shared `py-sync` work,
-   not PdM-specific), §3.1's input-normalization curves, §3.3's ceiling
-   read models, §8.3's re-score-before-publication orchestration and
-   dual-binding shadow scoring. None of these were ever on the user's
-   explicit 7-item checklist — worth naming them plainly rather than
-   letting "PdM is done" quietly expand to mean "PdM is complete."
-3. **Separate from the PdM checklist**: ~206 untriaged `ruff` findings
+   not PdM-specific), `POST /scoring-runs` (on-demand re-score creation --
+   the entrypoint assumes one already exists), §3.1's input-normalization
+   curves, §3.3's ceiling read models, §8.3's re-score-before-publication
+   orchestration and dual-binding shadow scoring. None of these were ever
+   on the user's explicit 7-item checklist — worth naming them plainly
+   rather than letting "PdM is done" quietly expand to mean "PdM is
+   complete."
+3. **If a real model does get registered in Domino's Model Registry**
+   (it's currently empty — see above), worth a real end-to-end test of
+   `POST /model-bindings` + `/activate` against that actual
+   `registry_model_version`/`registry_model_uri`, not just the
+   manually-supplied strings this session's tests use — §5.6 says PdM only
+   ever records what it's given, so this would mainly confirm the real
+   value's shape matches what the tests already assume, not exercise new
+   code.
+4. **Separate from the PdM checklist**: ~206 untriaged `ruff` findings
    remain across the whole `services/`/`packages/` tree (see above). The
    user was asked and explicitly chose to defer this — don't re-raise it
    unless asked, but it's still there.

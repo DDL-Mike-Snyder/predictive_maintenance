@@ -18,7 +18,11 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from . import Base
 
-_JsonVariant = JSON().with_variant(JSONB(), "postgresql")
+# [CORRECTION -- see models/prediction.py's own comment for the full
+# account.] `none_as_null=True` on both sides: without it, a Python `None`
+# bound to `baseline_epoch_at_publish`/`rejection_summary` serializes as the
+# JSON string `"null"`, not SQL `NULL`.
+_JsonVariant = JSON(none_as_null=True).with_variant(JSONB(none_as_null=True), "postgresql")
 _UuidArray = ARRAY(UUID(as_uuid=True)).with_variant(JSON(), "sqlite")
 
 

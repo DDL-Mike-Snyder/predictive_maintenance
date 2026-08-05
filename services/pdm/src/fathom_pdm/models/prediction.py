@@ -29,7 +29,17 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from . import Base
 
-_JsonVariant = JSON().with_variant(JSONB(), "postgresql")
+# [CORRECTION, found while exercising a real non-item-conditional prediction
+# through the bulk-ingest API for the first time -- every prior test's
+# payloads happened to only ever exercise `reference_class='item'`, where
+# `rul` is always present, never `None`.] SQLAlchemy's `JSON`/`JSONB`
+# default to `none_as_null=False`: a Python `None` bound to the column
+# serializes as the JSON string `"null"`, not SQL `NULL`. For `rul`
+# specifically that's fatal -- `rul_only_when_item_conditional`'s `rul IS
+# NULL` check constraint sees a non-NULL '"null"' string and rejects every
+# non-item-conditional prediction, real Postgres and SQLite alike (this
+# default is dialect-agnostic, not a SQLite quirk).
+_JsonVariant = JSON(none_as_null=True).with_variant(JSONB(none_as_null=True), "postgresql")
 
 
 class Prediction(Base):

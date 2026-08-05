@@ -114,6 +114,24 @@ class OutboxRow(Base):
         ),
         Index("outbox_unpublished", "shard", "outbox_id", postgresql_where="published_at IS NULL"),
         Index("outbox_prunable", "published_at", postgresql_where="published_at IS NOT NULL"),
+        # [CORRECTION, found while building services/pdm's model-binding
+        # activation against the real `fathom_pdm_serving` role for the
+        # first time -- the first code path to actually call `emit()`
+        # under that role rather than sqlite or the migration-owning
+        # superuser.] SQLAlchemy's Postgres dialects default to fetching an
+        # autoincrement PK back via an implicit `RETURNING outbox_id`
+        # after INSERT. Every service's own migration grants this role
+        # INSERT ONLY on its outbox table, by design (11 §2.2: "it never
+        # publishes... the relay's job" -- the writer must not also be able
+        # to read pending rows). `RETURNING` a column requires the same
+        # privilege as `SELECT`ing it, so every INSERT would fail with
+        # "permission denied for table outbox" under that intentionally
+        # narrower grant -- and nothing in `emit()`'s own return value
+        # (`EventId` carries only the client-generated `event_id`, never
+        # `outbox_id`) ever uses the value RETURNING would fetch anyway.
+        # `implicit_returning=False` turns that fetch off at the source,
+        # for every service that imports this table, not just PdM's.
+        {"implicit_returning": False},
     )
 
 

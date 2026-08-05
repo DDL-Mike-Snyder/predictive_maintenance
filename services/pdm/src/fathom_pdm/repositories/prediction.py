@@ -28,7 +28,7 @@ import uuid
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from fathom_pdm.models import Prediction
+from fathom_pdm.models import Prediction, PredictionProvenance
 
 
 class PredictionRepository:
@@ -67,6 +67,22 @@ class PredictionRepository:
         stmt = select(Prediction).where(
             Prediction.installed_item_id == installed_item_id,
             Prediction.status == "active",
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
+    async def get_all_active_for_model_binding(
+        self, session: AsyncSession, *, model_binding_id: uuid.UUID
+    ) -> list[Prediction]:
+        """§8.1's `binding_deactivated` trigger: every active prediction the
+        superseded binding produced, via `prediction_provenance.model_binding_id`
+        (`prediction` carries no `model_binding_id` column of its own)."""
+        stmt = (
+            select(Prediction)
+            .join(PredictionProvenance, Prediction.provenance_id == PredictionProvenance.provenance_id)
+            .where(
+                PredictionProvenance.model_binding_id == model_binding_id,
+                Prediction.status == "active",
+            )
         )
         return list((await session.execute(stmt)).scalars().all())
 
