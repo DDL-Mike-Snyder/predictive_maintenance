@@ -133,6 +133,10 @@ CREATE TABLE pdm.criticality_assessment (
     effective_at         timestamptz NOT NULL,
     superseded_at        timestamptz,
     classification       jsonb   NOT NULL,   -- 03 §7.3, with inherited_from
+    -- §3.4: proposed_tier here is already hysteresis-settled by the time this
+    -- row is written; this equality does not re-derive it from `score` and is
+    -- therefore not in tension with the persistence hold hysteresis requires
+    -- -- see §3.3's `raw_band` / `proposed_tier` split for how the two compose.
     CONSTRAINT tier_is_capped
         CHECK (assigned_tier = LEAST(proposed_tier, data_availability_ceiling)),
     CONSTRAINT migration_requires_rescore                  -- §8.3, [D36]
@@ -142,7 +146,7 @@ CREATE TABLE pdm.criticality_assessment (
 
 **[AMENDMENT — real defect, found in adversarial review.]** `migration_requires_rescore` originally had no `published_at IS NULL` escape, which meant it applied to every row at every point in its life — including §8.3 step 1's own required intermediate state, *"[t]he assessment row is written. NOTHING IS PUBLISHED YET,"* which sets `previous_tier` (it is a migration) with `rescore_scoring_run_id` still null (the re-score has not started). That row could never be inserted: the constraint made step 1 of its own workflow impossible, not merely step 5. `published_at` is set only in §8.3 step 5's single transaction, alongside `rescore_scoring_run_id` and the outbox emission — the constraint now binds exactly what it was always meant to: a migration may sit unpublished with no re-score (steps 1-4), but may never be marked published without one.
 
-`tier_is_capped` and `migration_requires_rescore` are the two invariants of §3 and §8 expressed where they cannot be bypassed. A tier assignment that exceeds what the available data supports, or a tier *migration* published without a completed re-score, is rejected by the database and not by a code review.
+`tier_is_capped` and `migration_requires_rescore` are the two invariants of §3 and §8 expressed where they cannot be bypassed. A tier assignment that exceeds what the available data supports, or a tier *migration* published without a completed re-score, is rejected by the database and not by a code review. Hysteresis (§3.4) does not weaken `tier_is_capped`, and does not need an exception carved into it: hysteresis governs how `proposed_tier` is *derived* from `score` before this constraint ever sees the row, not whether the ceiling clamp applies once it is written.
 
 ### 2.2 `tier_policy` and `model_binding`
 
@@ -369,15 +373,23 @@ CREATE TABLE pdm.prediction (
         calibration_population >= 50 OR fallback_level >= 3)
 );
 
--- §4.5: the holdout isolation mechanism. Two roles, two policies, one table.
--- [AMENDMENT] Both policies now carry an explicit WITH CHECK, distinct from
--- USING -- see §4.5's full treatment for why a FOR ALL policy with no WITH
--- CHECK made every INSERT of a research_only row a policy violation.
+-- §4.5: the holdout isolation mechanism. Two roles, four policies split by
+-- command, one table. [AMENDMENT] Was a single FOR ALL policy on the serving
+-- role; see §4.5's full treatment for why that made an INSERT of a
+-- research_only row a policy violation (fixed by an explicit WITH CHECK)
+-- and separately made an UPDATE unable to ever reach a research_only row at
+-- all (fixed by splitting SELECT from UPDATE, below).
 ALTER TABLE pdm.prediction ENABLE ROW LEVEL SECURITY;
 ALTER TABLE pdm.prediction FORCE ROW LEVEL SECURITY;
-CREATE POLICY actionable_only ON pdm.prediction
-    FOR ALL TO fathom_pdm_serving
-    USING (serving_class = 'actionable')
+CREATE POLICY actionable_read ON pdm.prediction
+    FOR SELECT TO fathom_pdm_serving
+    USING (serving_class = 'actionable');
+CREATE POLICY serving_insert ON pdm.prediction
+    FOR INSERT TO fathom_pdm_serving
+    WITH CHECK (serving_class IN ('actionable', 'research_only'));
+CREATE POLICY serving_invalidate ON pdm.prediction
+    FOR UPDATE TO fathom_pdm_serving
+    USING (true)
     WITH CHECK (serving_class IN ('actionable', 'research_only'));
 CREATE POLICY research_only  ON pdm.prediction
     FOR SELECT TO fathom_pdm_research USING (serving_class = 'research_only');
@@ -508,10 +520,16 @@ Rationale for the *ordering*, offered as the basis SMEs should argue with: missi
 ### 3.3 Tier assignment — the score proposes, data availability caps
 
 ```
-proposed_tier  = 3  if score >= 80        [PLACEHOLDER P-3: band edges]
+raw_band       = 3  if score >= 80        [PLACEHOLDER P-3: band edges]
                  2  if 60 <= score < 80
                  1  if 35 <= score < 60
                  0  if score < 35
+
+proposed_tier  = raw_band            if no prior assessment exists for this (niin, equipment_family)
+                 previous            if raw_band differs from the previous assessment's proposed_tier
+                 proposed_tier            but has not yet persisted across 2 consecutive assessments
+                                          at >= 5 points past the crossed edge  [PLACEHOLDER P-4, §3.4]
+                 raw_band             otherwise (no crossing pending, or a crossing has now persisted)
 
 data_availability_ceiling =
     3  if  the item's family has spotlight-grade channel coverage mapped at this position
@@ -524,15 +542,17 @@ data_availability_ceiling =
 assigned_tier = min(proposed_tier, data_availability_ceiling)
 ```
 
+`raw_band` is a pure, memoryless function of `score` and is never itself persisted; `proposed_tier` is the hysteresis-settled value §3.4 describes, and it is what this table's `tier_is_capped` constraint reads and what is written to the row. The two never need to be reconciled after the fact: a crossing that has not yet persisted is simply not written as a change. Because `tier_is_capped` is silent on how `proposed_tier` was derived, it composes with hysteresis rather than forbidding it — the constraint fires *after* §3.4 has already decided what `proposed_tier` is for this assessment, not before.
+
 The ceiling is the mechanic that makes tier assignment honest. A mission-critical NIIN with no instrumentation is a **tier-0 item with a criticality score of 92**, not a tier-3 item with fabricated inputs — and that pairing is itself the most useful output of the scorer, because it is a directly actionable instrumentation-investment list. `GET /criticality?ceiling_limited=true` returns exactly that list, and 06 §9.3 describes this as the tiering model's use as an investment prioritization tool.
 
 The tier-1 ceiling condition names `counter_epoch` deliberately. D9's usage-counter defect means a reset or a replaced meter breaks the item's usage clock; an item whose `counter_epoch` has advanced without a corresponding `usage_counter.reset` reconciliation does not have a usable usage covariate and drops to the tier-0 ceiling until it does.
 
 ### 3.4 Hysteresis, and what hysteresis does not fix
 
-A tier change requires the score to cross a band edge by **≥ 5 points** and to persist across **2 consecutive assessments** — **[PLACEHOLDER P-4]**.
+A tier change requires the score to cross a band edge by **≥ 5 points** and to persist across **2 consecutive assessments** — **[PLACEHOLDER P-4]**. Mechanically, this is the gate between §3.3's `raw_band` and `proposed_tier`: `raw_band` is recomputed fresh from `score` every assessment, with no memory of the previous one, while `proposed_tier` — the value actually written to `criticality_assessment` and read by `tier_is_capped` — holds at its previous value until a crossing has persisted for 2 consecutive assessments, at which point it adopts `raw_band`. Nothing in `tier_is_capped` forbids this hold; the constraint only relates `proposed_tier`, the ceiling, and `assigned_tier` to each other, and is satisfied whichever of the two `proposed_tier` turns out to be.
 
-State plainly what this achieves and what it does not, because D36 makes the distinction: *"Hysteresis damps oscillation around a threshold, not a level shift."* Hysteresis stops a NIIN flapping between tier 1 and tier 2 as its CASREP percentile jitters. It does nothing whatsoever about the discontinuity in *published value* when a sensor-installation campaign moves 300 NIINs from a population rate to an item-conditional estimate. That is §8's problem and it needs a different mechanism.
+State plainly what this achieves and what it does not, because D36 makes the distinction: *"Hysteresis damps oscillation around a threshold, not a level shift."* Hysteresis stops a NIIN flapping between tier 1 and tier 2 as its score jitters near a band edge — including jitter carried in from the CASREP-history input, which §3.1 now maps through a fixed, pre-calibrated curve rather than a live percentile rank. It does nothing whatsoever about the discontinuity in *published value* when a sensor-installation campaign moves 300 NIINs from a population rate to an item-conditional estimate. That is §8's problem and it needs a different mechanism.
 
 ### 3.5 Dry-run before activation
 
@@ -595,6 +615,7 @@ A `configuration.baseline_changed` that alters the item's parent configuration i
 | `preventive_replacement` | false | **`opportunistic`** | **`dependent`** | 0 | **Yes** |
 | `preventive_replacement` | false | `pms_periodicity` | `conditionally_independent` | 0 | No, subject to §4.3's stated assumption and its sensitivity test |
 | `preventive_replacement` | false | `opportunistic_pms` | `conditionally_independent` | 0 | No, same assumption |
+| `preventive_replacement` | false | **absent / NULL** | **`dependent`** | 0 | **Yes — fail-closed; see below** |
 | `admin_censor` | — | — | `independent` | 0 | No |
 | `mission_end_censor` | — | — | `independent` | 0 | No |
 | `config_censor` | — | — | `independent` | 0 | No |
@@ -602,9 +623,13 @@ A `configuration.baseline_changed` that alters the item's parent configuration i
 
 `triggering_driver = 'opportunistic'` is classified as dependent because [13 §8.4](13-synthetic-data-generator.md) defines it as *"an availability or another work item opened access, **and a prediction contributed to the decision**"* — a prediction contributed, therefore the censoring is prediction-driven. `opportunistic_pms` is the case where *only* periodicity contributed. Collapsing these two into one "opportunistic" bucket loses the distinction the correction depends on, and is the most likely implementation error in this table.
 
+**A `preventive_replacement` whose `triggering_driver` was never captured** — [13 §9.10](13-synthetic-data-generator.md) deliberately injects exactly this, *"field not captured,"* as the realistic missing-treatment-record condition production data will also exhibit — is classified `dependent`, not `conditionally_independent` and not `independent`. This is the same fail-closed direction of error §4.5.1 uses elsewhere in this document: classifying an unrecorded driver as `independent` would silently drop it from the IPCW weight and reintroduce D1 on exactly the records where the treatment-assignment mechanism is least well understood, which is the single most damaging error this table exists to prevent (§14 item 2). Classifying it `dependent` means it is weighted — conservatively, since the alternative undercounts the correction — and its absence is recorded rather than hidden, the same way an unresolved `triggering_prediction_id` is recorded below rather than silently downgraded.
+
+§2.3's `dependent_censoring_has_a_driver` CHECK constraint permits exactly this row: it rejects `censoring_class = 'dependent'` paired with `pms_periodicity` or `opportunistic_pms` (nonsensical combinations), but a NULL `triggering_driver` on a `dependent` row satisfies the constraint under standard SQL three-valued logic, because a CHECK only fails on `FALSE`, never on `NULL`. That is not an oversight to close by forcing `triggering_driver NOT NULL` here — doing so would reject the exact production condition this row exists to describe. It is this table's *only* mechanism for the missing-driver case, and is correct as written.
+
 **The `triggering_prediction_id` is not decorative.** Where present it resolves to a row in `pdm.prediction`, which gives the propensity model the *exact* prediction the policy acted on — its `p_failure` (or `population_hazard_rate`), `reference_class`, `rul.p50`, `confidence`, `fallback_level`, `horizon_days`, and `computed_at`. Those are the policy's own decision inputs. Without them the propensity model is guessing at the treatment-assignment mechanism; with them it is *modelling the recorded mechanism*, which is why 03 §6 says the three fields are *"the treatment-assignment mechanism, without which neither calibration nor causal analysis can condition on the intervention policy."*
 
-A `triggering_driver = 'prediction'` whose `triggering_prediction_id` does not resolve is a **data-quality defect, recorded and counted**, not silently downgraded to `conditionally_independent`. `label_set.ipcw_summary.unresolved_treatment_refs` carries the count, and the label set is marked `powered = false` for any family where it exceeds **[PLACEHOLDER P-6] 5%** of dependent-censoring events.
+A `triggering_driver = 'prediction'` whose `triggering_prediction_id` does not resolve is a **data-quality defect, recorded and counted**, not silently downgraded to `conditionally_independent`. `label_set.ipcw_summary.unresolved_treatment_refs` carries the count, and the label set is marked `powered = false` for any family where it exceeds **[PLACEHOLDER P-6] 5%** of dependent-censoring events. `label_set.ipcw_summary` carries the missing-driver count the same way, under its own key, so a family where the treatment record is systematically uncaptured is as visible as one where it is systematically unresolved.
 
 **Grid.** Person-time is discretized to **weekly** intervals — **[PLACEHOLDER P-1]**. Basis for the proposal: maintenance opportunity is the unit of treatment assignment and it does not arrive at daily resolution; weekly keeps the pooled-logistic design matrix at ~8,400 items × ~104 weeks ≈ 8.7×10⁵ person-intervals, which fits comfortably in one Domino Job. Daily is the alternative and is affordable at demonstration scale; the choice must be made once and recorded on `label_set.grid`, because a weight computed on one grid is not comparable to one computed on another.
 
@@ -713,19 +738,46 @@ Five mechanisms, in order of how hard each is to circumvent:
 **3. PostgreSQL row-level security under two roles — the mechanism that survives a refactor.**
 
 ```sql
--- Serving path: the API's normal connection. RLS makes research rows non-existent.
+-- Serving path: the API's normal connection. RLS makes research rows
+-- non-existent to a plain SELECT -- it does not, and must not, block this
+-- role's UPDATE from reaching an existing research_only row. See the
+-- amendment below for why those are different things.
 CREATE ROLE fathom_pdm_serving;
 GRANT SELECT, INSERT, UPDATE ON pdm.prediction TO fathom_pdm_serving;
-CREATE POLICY actionable_only ON pdm.prediction FOR ALL TO fathom_pdm_serving
-    USING (serving_class = 'actionable')
+
+CREATE POLICY actionable_read ON pdm.prediction FOR SELECT TO fathom_pdm_serving
+    USING (serving_class = 'actionable');
+
+CREATE POLICY serving_insert ON pdm.prediction FOR INSERT TO fathom_pdm_serving
     WITH CHECK (serving_class IN ('actionable', 'research_only'));
-    -- [AMENDMENT] A FOR ALL policy with no explicit WITH CHECK defaults the check
-    -- to the USING expression -- which made this the only role able to INSERT at
-    -- all (§4.5's own scoring-run ingest path) unable to insert a research_only
-    -- row, breaking the §4.5 fail-closed write §8.3 requires. USING still
-    -- isolates READS (a research row is invisible on this connection); WITH
-    -- CHECK is deliberately wider, because this role is the sole writer for
-    -- both strata and isolation is a read property, not a write one.
+
+CREATE POLICY serving_invalidate ON pdm.prediction FOR UPDATE TO fathom_pdm_serving
+    USING (true)
+    WITH CHECK (serving_class IN ('actionable', 'research_only'));
+    -- [AMENDMENT] The previous single FOR ALL policy's USING clause
+    -- (serving_class = 'actionable') did two things at once, and only the
+    -- first was intended: in PostgreSQL, FOR ALL's USING clause gates which
+    -- rows SELECT returns *and* which existing rows UPDATE or DELETE may
+    -- target -- it is not a read-only predicate, whatever the earlier
+    -- comment here claimed ("USING still isolates READS" was wrong). That
+    -- silently made every UPDATE this role issues against a research_only
+    -- row a zero-row no-op, because the row was never a candidate for the
+    -- update to begin with. §8.1's invalidation triggers and §13.4's
+    -- label_set_retracted cascade run exactly that UPDATE -- setting
+    -- status = 'invalidated' and invalidation_cause -- against holdout
+    -- predictions, and needed it to actually take effect: "Invalidation is
+    -- loud" (§8.1) is not satisfied by a silently-ignored write. Splitting
+    -- SELECT from UPDATE fixes it without loosening the read boundary:
+    -- actionable_read's USING is the only thing a plain read is subject to,
+    -- so an ad-hoc query, a join, a new endpoint, or an admin console
+    -- session still returns zero rows for a holdout item, exactly as
+    -- before. serving_invalidate's USING (true) lets this role's UPDATE
+    -- target any row regardless of its current serving_class, because this
+    -- role is the sole writer for both strata and isolation is a read
+    -- property, not a write one -- that was always the design intent; the
+    -- single-policy form just implemented it in a way PostgreSQL's own FOR
+    -- ALL semantics contradicted. WITH CHECK is unchanged: the row's value
+    -- after the update must still be a real serving_class.
 
 -- Research path: a distinct role, distinct connection pool, SELECT only.
 CREATE ROLE fathom_pdm_research;
@@ -737,7 +789,7 @@ ALTER TABLE pdm.prediction ENABLE ROW LEVEL SECURITY;
 ALTER TABLE pdm.prediction FORCE ROW LEVEL SECURITY;   -- applies to the table owner too
 ```
 
-This is the load-bearing control and the reason it is not merely a `WHERE` clause. A `WHERE serving_class = 'actionable'` predicate in a repository method is one careless refactor, one new query path, one debugging session, or one "just for this report" join away from being absent — and its absence produces *no error*, only a silently contaminated fleet. Under RLS, an ad-hoc query, a new endpoint, a hurried join, a migration script, and an admin console session on the serving role all return zero rows for holdout items, because those rows are not visible to that role at all. `FORCE ROW LEVEL SECURITY` closes the table-owner bypass. The research role holds no `INSERT`, `UPDATE`, or `DELETE` on any table, mirroring [13 §8.6](13-synthetic-data-generator.md)'s credential separation for the truth partition.
+This is the load-bearing control and the reason it is not merely a `WHERE` clause. A `WHERE serving_class = 'actionable'` predicate in a repository method is one careless refactor, one new query path, one debugging session, or one "just for this report" join away from being absent — and its absence produces *no error*, only a silently contaminated fleet. Under RLS, an ad-hoc `SELECT`, a new endpoint, a hurried join, a migration script's read, and an admin console session on the serving role all return zero rows for holdout items, because `actionable_read`'s policy is the only thing a plain read is subject to, and those rows are not visible to it at all. The one narrow exception is `serving_invalidate`'s `UPDATE`, and it is an exception on purpose: it can reach a research_only row *to invalidate it*, never to select it, join it into a report, or expose it through any read path — invalidation is a write, no different in kind from the ingest write that created the row, and holdout isolation was always a read property (§4.5 above), not a write one. `FORCE ROW LEVEL SECURITY` closes the table-owner bypass. The research role holds no `INSERT`, `UPDATE`, or `DELETE` on any table, mirroring [13 §8.6](13-synthetic-data-generator.md)'s credential separation for the truth partition.
 
 **4. Two API routes, with different annotations and different authorization.**
 
@@ -839,7 +891,7 @@ The families' shapes are specified in [13 §7.2](13-synthetic-data-generator.md)
 | 0 | family cell n ≥ 50, NIIN cell short | `equipment_family` | calibrated | **null** | required | 2 |
 | 0 | both short | `class_estimate` | **null** | **null** | required | 3–4 |
 | 1 | usage clock intact, β ≠ 1, cell n ≥ 50 | `item` | calibrated | **required** | **null** | 0 |
-| 1 | usage clock broken **or** β ≈ 1 | `niin_fleet` | calibrated if n ≥ 50 | **null** | required | 1–2 |
+| 1 | usage clock broken **or** β ≈ 1, cell n ≥ 50 | `niin_fleet` | calibrated | **null** | required | 1–2 |
 | 1 | cell n < 50 | `class_estimate` | **null** | **null** | required | 3–4 |
 | 2 | cell n ≥ 50 | `item` | calibrated | **required** | **null** | 0 |
 | 2 | cell n < 50 | `class_estimate` | **null** | **null** | required | 3–4 |
@@ -1213,7 +1265,7 @@ Base path `/api/v1/pdm/`. Every operation declares `x-substitution` and `x-side-
 | `GET /predictions/{id}` | required | `none` | yes | 404 + `prediction-not-actionable` for a research prediction |
 | `GET /predictions/{id}/provenance` | required | `none` | yes | §2.6: gate decision, fallback path, feature observations with definition-time, suppressed factors, transition annotation, staleness posture |
 | `GET /research/predictions?…` | **internal** | `none` | **no** | Research projection. `fathom_pdm_research` role, `research_analyst` ABAC role, `X-Fathom-Prediction-Use: research-only` |
-| `GET /criticality?niin=&installed_item_id=&equipment_family=&ceiling_limited=&changed_since=&cursor=` | required | `none` | yes | Carries `score`, `proposed_tier`, `data_availability_ceiling`, `assigned_tier`, `tier_policy_version`, **`sme_validated`**, transition annotation |
+| `GET /criticality?niin=&installed_item_id=&equipment_family=&ceiling_limited=&changed_since=&cursor=` | required | `none` | yes | Carries `score`, `proposed_tier`, `data_availability_ceiling`, `assigned_tier`, `tier_policy_version`, **`sme_validated`**, **`published_at`**, transition annotation. Returns only the latest row with `published_at IS NOT NULL` per NIIN — an in-flight migration's §8.3 steps 1–4 row is never served, so a caller cannot observe a tier change before step 6's atomic commit makes the re-scored predictions readable too |
 | `GET /criticality/{id}/inputs` | internal | `none` | yes | The five scored inputs with their provenance — the scorer's explicability requirement |
 | `GET /scoring-runs?stratum=&trigger=&status=&changed_since=&cursor=` | required | `none` | yes | |
 | `GET /scoring-runs/{id}` | required | `none` | yes | Includes `baseline_epoch_at_start`/`_at_publish`, rejection summary, read-model lag at start |
@@ -1375,7 +1427,7 @@ Hypothesis-based, in `tests/contract/`:
 
 - **D3:** a scoring run reads epoch B1, the harness advances the asset to B2 mid-run, ingest is attempted → 422, `predictions_rejected` incremented, run `fenced_out`, **no prediction stored**.
 - **D2:** the `configuration.baseline_changed` handler is killed between the inbox record and the state change; on redelivery the invalidation **is** applied, because `processed_at` was never set. Fault injection, not inspection.
-- **D36:** a tier migration is executed; assert `prediction.invalidated` precedes `criticality_tier.assigned`; assert `criticality_tier.assigned` cannot be emitted with a null `rescore_scoring_run_id`; assert `attributable_level_shift.delta` is present, non-null, and equals the recomputed dual-binding difference.
+- **D36:** a tier migration is executed; assert `prediction.invalidated` precedes `criticality_tier.assigned`; assert the migrated NIIN's `criticality_tier.assigned` cannot be emitted with a null `rescore_scoring_run_id` — `migration_requires_rescore` (§2.1) binds this only where `previous_tier` is set and `published_at` is set, which is exactly this row, so the assertion is scoped to it; a first-ever assignment elsewhere in the same scored cohort legitimately carries a null `rescore_scoring_run_id` and is exempt by the same constraint (§8.3), and must not be made to fail this assertion; assert `attributable_level_shift.delta` is present, non-null, and equals the recomputed dual-binding difference.
 - **Obligation 2:** every state change reachable through the contract produces its event, by fault injection at every commit point.
 
 ### 12.4 Holdout isolation — negative-path conformance
@@ -1469,7 +1521,11 @@ The third row is a deliberate departure from a uniform rule and the reasoning mu
 
 03 §13, `[D15]`. Per store: `prediction`, `criticality_assessment`, `calibration_record`, `model_binding`, `label_set`/`label_observation`, `propensity_model`, `prediction_provenance`, and the object-store artifacts.
 
-Every store is **operationally append-only, not legally immutable**, and therefore purgeable. Envelope-level encryption with per-classification keys makes crypto-shredding the mechanism where row deletion would break referential integrity. `prediction` uses tombstones on the compacted topic that preserve the compaction invariant. A `LabelSet` retraction cascades: the label set is tombstoned, every `model_binding` fitted on it is deactivated, every prediction from those bindings is invalidated with `label_set_retracted`, and re-scoring is queued — because a retracted label set means the models fitted on it were fitted on data that should not have existed, and leaving their predictions serving is the spillage propagating.
+Every store is **operationally append-only, not legally immutable**, and therefore purgeable. Envelope-level encryption with per-classification keys makes crypto-shredding the mechanism where row deletion would break referential integrity. `prediction` uses tombstones on the compacted topic that preserve the compaction invariant.
+
+**Neither database role holds `DELETE` on `pdm.prediction`, and neither needs to.** Mirroring `23-pma.md` §10.5's *"row-level deletion is forbidden by trigger"* pattern for its own append-only stores, this table's purge is crypto-shredding the classification key (03 §13.1), not a SQL `DELETE` — so there is no missing grant to add here, and none should be. What `fathom_pdm_serving` does need is an `UPDATE` that can reach a `research_only` row: the retraction cascade below sets `status = 'invalidated'` and `invalidation_cause = 'label_set_retracted'` on a holdout prediction exactly as it does on an actionable one, and §4.5.3's split RLS policies (`serving_invalidate`) are what make that reach possible without granting this role, or any role, a `DELETE` privilege it does not need.
+
+A `LabelSet` retraction cascades: the label set is tombstoned, every `model_binding` fitted on it is deactivated, every prediction from those bindings is invalidated with `label_set_retracted`, and re-scoring is queued — because a retracted label set means the models fitted on it were fitted on data that should not have existed, and leaving their predictions serving is the spillage propagating.
 
 ---
 
@@ -1548,7 +1604,7 @@ Each carries the finding that makes it a defect rather than a preference. 09 §9
 
 ### 15.3 Holdout isolation
 
-- [ ] Both database roles exist; both RLS policies exist; `ENABLE` **and** `FORCE ROW LEVEL SECURITY` on `pdm.prediction`; no other role holds a grant on it.
+- [ ] Both database roles exist; all four RLS policies exist, split by command per §4.5.3 (`actionable_read`, `serving_insert`, `serving_invalidate`, `research_only`); `ENABLE` **and** `FORCE ROW LEVEL SECURITY` on `pdm.prediction`; no other role holds a grant on it, and neither role holds `DELETE` (§13.4: purge is crypto-shred, not `DELETE`).
 - [ ] Research route on a separate connection pool under `fathom_pdm_research`, requiring `research_analyst`, not agent-eligible.
 - [ ] `serving_class` is absent from the ingest request schema.
 - [ ] `fathom.pdm.research_prediction.v1` exists; `maintenance` and `fleet-status` principals have no read ACL, asserted in the topic registration test.
@@ -1620,7 +1676,7 @@ Every **[PLACEHOLDER]** in this document, with its basis and its consequence. **
 | **P-1** | Person-time grid | weekly | Maintenance opportunity does not arrive daily; ~8.7×10⁵ person-intervals fits one Job | Weights on different grids are incomparable. Choose once, record on the label set |
 | **P-2** | Criticality weights `{0.30, 0.25, 0.20, 0.15, 0.10}` | as shown | Mission and consequence dominate; feasibility inputs are small because feasibility belongs in the ceiling | **Blocks a Navy-facing presentation of the tiering story.** 04 §4's first Phase 3 question. `sme_validated = false` until a workshop settles it |
 | **P-3** | Tier band edges `{80, 60, 35}` | as shown | Even spread over the top two bands, wider tier-0 tail matching the long-tail population | Shifts the tier-2/3 population and therefore the scoring cost |
-| **P-4** | Hysteresis: 5 points, 2 assessments | as shown | Damps jitter in the CASREP percentile without delaying a genuine migration a full quarter | Too tight ⇒ flapping; too loose ⇒ a real sensor installation waits |
+| **P-4** | Hysteresis: 5 points, 2 assessments | as shown | Damps jitter in the criticality score near a band edge without delaying a genuine migration a full quarter | Too tight ⇒ flapping; too loose ⇒ a real sensor installation waits |
 | **P-5** | Dry-run validity window: 30 days | as shown | Long enough to plan a re-score, short enough that the fleet has not moved | |
 | **P-6** | Unresolved treatment-ref tolerance: 5% | as shown | Above this the treatment mechanism is not adequately recorded | Sets which families are `powered` |
 | **P-7** | Weight truncation: 99th percentile within family × policy | as shown | Standard practice; bounds the variance contribution of a single item | Bias/variance trade; the sensitivity is reported per family |
