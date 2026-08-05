@@ -31,7 +31,7 @@ survive between sessions).
 | `packages/py-sync` | Transactional outbox (partition-key derivation, D5 compaction-key guard), inbox (D2 record-before-processed), `MonotonicSequencer`, epoch fencing both directions (`EpochFence` consumer-side + `BaselineFencedComputation` producer-side), conflict-policy declarations, divergence budgets | 5 passing |
 | `packages/contracts` | The `@operation`/`operation_extra` decorator (`x-substitution`/`x-side-effects`, import-time enforcement) | untested (simple, no test dir yet) |
 | `packages/py-common` | RFC 9457 problem details, correlation-ID middleware, classification middleware, idempotency (see gotcha #2 below), ETag/If-Match, health/readyz/metrics, structured logging, cursor pagination. **This whole package is a corpus gap** — `10-shared-packages.md` explicitly disclaims owning it; it's authored from `09-monorepo-and-conventions.md` §5's prose contract | 6 passing |
-| `services/pdm` | DB models for `prediction` (RLS-bearing), `criticality_assessment`, `calibration_record` (compartment-partitioned), `scoring_run`, `tier_policy`, `prediction_provenance`; a working bulk-ingest endpoint (idempotent, transactional, baseline-fenced, outbox-emitting); get-prediction, get-criticality, expected-consequence reads; a real Alembic migration (`versions/20260805072746_pdm_initial_schema.py`, applied and round-tripped against real Postgres); RLS holdout isolation, verified end to end against a real Postgres container, not just reviewed as DDL | 14 passing, incl. one real HTTP→DB integration test and 10 real-Postgres RLS tests |
+| `services/pdm` | DB models for `prediction` (RLS-bearing), `criticality_assessment`, `calibration_record` (compartment-partitioned), `scoring_run`, `tier_policy`, `prediction_provenance`; a working bulk-ingest endpoint (idempotent, transactional, baseline-fenced, outbox-emitting); get-prediction, get-criticality, expected-consequence reads; a real Alembic migration (`versions/20260805072746_pdm_initial_schema.py`, applied and round-tripped against real Postgres); RLS holdout isolation, verified end to end against a real Postgres container, not just reviewed as DDL; a real `Dockerfile` (builds and runs, `/healthz`/`/readyz` verified against real Postgres) and a complete Helm chart (`helm/`, depends on the new `deploy/helm/_fathom-common` library chart, `helm lint`/`template`/`unittest` all passing) | 14 passing, incl. one real HTTP→DB integration test and 10 real-Postgres RLS tests |
 
 **Total: 36 passing tests**, all newly written this session, all genuinely
 exercised (not just "written and assumed to work" — see the gotchas below,
@@ -39,9 +39,6 @@ several were only caught by actually running them).
 
 ## What's NOT built yet for PdM
 
-- **Dockerfile.** Not written at all yet for `services/pdm`.
-- **Helm chart.** `services/pdm/helm/` directories exist (empty) — no
-  `values.yaml`, no templates.
 - **The actual criticality-scoring / hysteresis algorithm.** We modeled the
   *data* (the `criticality_assessment` table, `tier_is_capped`,
   `migration_requires_rescore` constraints) but not the *computation* —
@@ -195,20 +192,30 @@ shell state doesn't persist between separate tool calls.
 ## Recommended next steps, roughly in priority order
 
 The user has explicitly chosen to finish PdM before moving to service #2,
-in this order: ~~Alembic migration~~ → ~~RLS testing~~ → Dockerfile → Helm
-chart → hysteresis/scoring algorithm → event consumers → Domino Job
-entrypoint/Model Registry binding. The first two are done (see above).
+in this order: ~~Alembic migration~~ → ~~RLS testing~~ → ~~Dockerfile~~ →
+~~Helm chart~~ → hysteresis/scoring algorithm → event consumers → Domino
+Job entrypoint/Model Registry binding. The first four are done (see above).
+Dockerfile and Helm chart were built in parallel across two Sonnet
+subagents (per the user's explicit interest in parallelizing genuinely
+independent PdM work) — both independently re-verified afterward (real
+`docker build` + container run + `/healthz`/`/readyz`, and `helm lint`/
+`helm template`/`helm unittest` rerun from scratch), not just trusted from
+the subagents' own reports. Building `services/pdm/helm` also required
+building `deploy/helm/_fathom-common` (the shared label/naming library
+chart every per-service chart depends on) and the two namespace-wide
+default-deny NetworkPolicy charts (`fathom-sustainment`, `fathom-data`)
+first, since none of that shared Helm infrastructure existed yet — done
+directly rather than delegated, since it's foundational/shared, not PdM's
+own deliverable.
 
-1. **Dockerfile and Helm chart** (tasks #23/#24) are independent of each
-   other and of everything else remaining — genuinely parallelizable across
-   two subagents if picking this up with orchestration available.
-2. **The hysteresis/scoring algorithm** (#25) and **event consumers** (#26)
+1. **The hysteresis/scoring algorithm** (#25) and **event consumers** (#26)
    are more sequential: consumers need the invalidation pattern this
-   session just built (`PredictionRepository.invalidate()` now calls
+   session already built (`PredictionRepository.invalidate()` calls
    `pdm.invalidate_prediction()` by id, not by a pre-loaded object — see bug
    #8 above for why), so build/review that pattern before wiring the ~15
-   consumed event types.
-3. **Domino Job entrypoint + Model Registry binding** (#27) needs the
+   consumed event types (the real list is in
+   `services/pdm/src/fathom_pdm/events/catalog.py`'s `CONSUMES`).
+2. **Domino Job entrypoint + Model Registry binding** (#27) needs the
    user's real Domino project/workspace details — get these regardless of
    sequencing, since every other service will need them too.
 
