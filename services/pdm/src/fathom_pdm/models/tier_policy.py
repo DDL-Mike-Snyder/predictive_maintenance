@@ -15,7 +15,7 @@ _JsonVariant = JSON().with_variant(JSONB(), "postgresql")
 
 class TierPolicy(Base):
     __tablename__ = "tier_policy"
-    __table_args__ = {"schema": "pdm"}
+    __table_args__ = ({"schema": "pdm"},)
 
     policy_version: Mapped[str] = mapped_column(String, primary_key=True)
     weights: Mapped[dict] = mapped_column(_JsonVariant, nullable=False)

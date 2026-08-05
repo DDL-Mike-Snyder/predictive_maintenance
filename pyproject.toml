@@ -5,10 +5,40 @@ target-version = "py312"
 [tool.ruff.lint]
 select = ["E","W","F","I","N","UP","B","A","C4","DTZ","T20","SIM","TCH","PTH","RUF",
           "ASYNC","S","BLE","FBT","ANN","ARG","PL","TRY","ERA"]
-ignore = ["ANN401", "PLR0913"]
+ignore = ["ANN401", "PLR0913", "TC001", "TC002", "TC003", "TRY003"]
 # DTZ is mandatory and not to be relaxed: it is what forbids naive datetimes,
 # which document 03 §4 (RFC 3339 with explicit offset) requires.
 # T20 forbids print(); all output is structlog (09 §4.8).
+# TRY003 (avoid a long message in a raw `raise`, put it inside the
+# exception class instead) is disabled repo-wide: checked all 41 findings
+# by hand before disabling, not just reasoning about the rule in the
+# abstract. 32 of 41 are inside `packages/canonical-schemas` Pydantic
+# validators/serializers, where the descriptive `ValueError`/`TypeError`
+# message IS the correct, idiomatic Pydantic v2 pattern -- Pydantic catches
+# exactly these three built-in types raised inside a validator and uses
+# the message verbatim as the ValidationError detail; there is no "move it
+# into the exception class" refactor available without breaking that
+# contract. The remaining 9 are fail-fast guard clauses (import-time
+# contract checks, dataclass __post_init__ invariants, outbox invariants)
+# raised at exactly one call site each and never caught by type anywhere
+# in this codebase -- inventing a dedicated wrapper exception class purely
+# to move an f-string inside `__init__` is the premature abstraction this
+# project's own conventions already avoid, for no behavioral benefit.
+# TC001-3 (move typing-only imports under `if TYPE_CHECKING:`) is unsafe
+# repo-wide, not just in a few files -- confirmed by actually applying it
+# with `--unsafe-fixes` and running the real test suite, not by reasoning
+# alone. This codebase is built almost entirely on Pydantic (schema
+# validation) and SQLAlchemy declarative models (`Mapped[dt.datetime]`
+# etc.), both of which resolve annotations at runtime via introspection;
+# an import ruff sees as "type-checking only" is frequently a real runtime
+# dependency it can't see. The fix broke 3 of the 4 packages on the first
+# affected class in each (`MappedAnnotationError: Could not resolve
+# Mapped[dt.datetime]` in both SQLAlchemy model files; Pydantic's
+# `FailurePrediction is not fully defined; you should define UUID` in
+# canonical-schemas). One file (services/pdm/src/fathom_pdm/events/
+# consumers.py) already carried a hand-written `# noqa: TC003` with this
+# exact reasoning before this ignore existed -- this makes that repo-wide
+# instead of file-by-file.
 
 [tool.ruff.lint.flake8-bugbear]
 # Every service's main.py/api/* uses FastAPI's own idiomatic
@@ -28,7 +58,7 @@ extend-immutable-calls = [
 # pattern silently never matched anything -- found by actually running
 # ruff against a real per-service tests/ directory during PdM's criticality
 # scoring work.
-"**/tests/*" = ["S101", "ANN", "PLR2004"]        # asserts and magic numbers are fine in tests
+"**/tests/*" = ["S101", "ANN", "PLR2004", "PLC0415"]        # asserts, magic numbers, and locally-scoped test-only imports (e.g. to reset shared state between tests) are fine in tests
 "**/migrations/versions/*" = ["ANN", "ERA", "E501"]
 
 [tool.mypy]

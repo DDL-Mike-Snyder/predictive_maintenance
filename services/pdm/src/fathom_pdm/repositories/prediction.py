@@ -38,7 +38,9 @@ class PredictionRepository:
 
     async def get_by_id(self, session: AsyncSession, prediction_id: uuid.UUID) -> Prediction | None:
         return (
-            await session.execute(select(Prediction).where(Prediction.prediction_id == prediction_id))
+            await session.execute(
+                select(Prediction).where(Prediction.prediction_id == prediction_id)
+            )
         ).scalar_one_or_none()
 
     async def get_active_for_item_horizon(
@@ -78,7 +80,10 @@ class PredictionRepository:
         (`prediction` carries no `model_binding_id` column of its own)."""
         stmt = (
             select(Prediction)
-            .join(PredictionProvenance, Prediction.provenance_id == PredictionProvenance.provenance_id)
+            .join(
+                PredictionProvenance,
+                Prediction.provenance_id == PredictionProvenance.provenance_id,
+            )
             .where(
                 PredictionProvenance.model_binding_id == model_binding_id,
                 Prediction.status == "active",
@@ -86,7 +91,9 @@ class PredictionRepository:
         )
         return list((await session.execute(stmt)).scalars().all())
 
-    async def invalidate(self, session: AsyncSession, prediction_id: uuid.UUID, *, cause: str) -> bool:
+    async def invalidate(
+        self, session: AsyncSession, prediction_id: uuid.UUID, *, cause: str
+    ) -> bool:
         """Invalidates by id, not by a pre-loaded object -- a research_only
         row can never be loaded under `fathom_pdm_serving` to begin with.
         Returns whether a row was actually found and invalidated."""

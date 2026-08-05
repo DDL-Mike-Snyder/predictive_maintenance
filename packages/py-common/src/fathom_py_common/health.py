@@ -15,6 +15,7 @@ class ReadinessCheck(Protocol):
     name: str
 
     async def __call__(self) -> tuple[bool, str | None]: ...
+
     """Returns (healthy, detail)."""
 
 

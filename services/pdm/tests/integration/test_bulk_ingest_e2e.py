@@ -61,7 +61,7 @@ async def app_and_client():
     app = create_app(_settings())
 
     @event.listens_for(app.state.engine.sync_engine, "connect")
-    def _register_least(dbapi_connection, connection_record):  # type: ignore[no-untyped-def]
+    def _register_least(dbapi_connection, _connection_record):  # type: ignore[no-untyped-def]
         dbapi_connection.create_function("LEAST", 2, min)
 
     async with app.state.engine.begin() as conn:
@@ -136,7 +136,9 @@ async def test_bulk_ingest_then_get_prediction(app_and_client) -> None:
 
     asset_id = str(uuid.uuid4())
     installed_item_id = str(uuid.uuid4())
-    payload = {"predictions": [_prediction_payload(asset_id=asset_id, installed_item_id=installed_item_id)]}
+    payload = {
+        "predictions": [_prediction_payload(asset_id=asset_id, installed_item_id=installed_item_id)]
+    }
 
     resp = await client.post(
         f"/api/v1/pdm/scoring-runs/{scoring_run_id}/predictions",

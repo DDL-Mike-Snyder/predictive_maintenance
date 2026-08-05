@@ -73,7 +73,9 @@ class SystemRef(FathomModel):
     eswbs: Eswbs = Field(description="Human reference and external federation only.")
     eic: NonEmptyStr | None = Field(
         default=None,
-        description="Equipment Identification Code, where the system level has one. Never a join key.",
+        description=(
+            "Equipment Identification Code, where the system level has one. Never a join key."
+        ),
     )
 
 

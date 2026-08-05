@@ -48,7 +48,7 @@ async def db_session() -> AsyncIterator[AsyncSession]:
     )
 
     @event.listens_for(engine.sync_engine, "connect")
-    def _register_least(dbapi_connection, connection_record) -> None:  # type: ignore[no-untyped-def]
+    def _register_least(dbapi_connection, _connection_record) -> None:  # type: ignore[no-untyped-def]
         dbapi_connection.create_function("LEAST", 2, min)
 
     async with engine.begin() as conn:

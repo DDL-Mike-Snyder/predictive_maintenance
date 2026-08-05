@@ -10,11 +10,12 @@ between the two permanently suppresses the event." (D2)
 from __future__ import annotations
 
 import datetime as dt
+import time
 from typing import Protocol
 from uuid import UUID
 
 from fathom_schemas import EventEnvelope
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import InboxRow
@@ -36,7 +37,9 @@ class FenceDecision:
         self.required_epoch = required_epoch
 
 
-async def evaluate_fence(fence: EpochFence, session: AsyncSession, envelope: EventEnvelope) -> FenceDecision:
+async def evaluate_fence(
+    fence: EpochFence, session: AsyncSession, envelope: EventEnvelope
+) -> FenceDecision:
     if envelope.baseline_epoch is None:
         return FenceDecision(blocked=False)
     asset_id = envelope.subject.asset_id
@@ -84,8 +87,6 @@ class Inbox:
     async def record_blocked(
         self, session: AsyncSession, envelope: EventEnvelope, *, on_epoch: int
     ) -> None:
-        import time as _time
-
         now = dt.datetime.now(dt.UTC)
         session.add(
             InboxRow(
@@ -101,14 +102,12 @@ class Inbox:
                 sync_quality=envelope.clock.sync_quality.wire_dict(),
                 replay=envelope.replay,
                 blocked_on_epoch=on_epoch,
-                blocked_since_mono=int(_time.monotonic() * 1000),
+                blocked_since_mono=int(time.monotonic() * 1000),
             )
         )
         await session.flush()
 
     async def mark_processed(self, session: AsyncSession, event_id: UUID) -> None:
-        from sqlalchemy import update
-
         await session.execute(
             update(InboxRow)
             .where(InboxRow.event_id == str(event_id))

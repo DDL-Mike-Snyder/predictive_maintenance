@@ -19,12 +19,12 @@ class BaselineReader(Protocol):
     async def current_epoch(self, asset_id: str) -> int: ...
 
 
-class BaselineSuperseded(Exception):
+class BaselineSupersededError(Exception):
     """Raised at publish time when the epoch read at computation start no
     longer matches current configuration for one or more assets in scope."""
 
     def __init__(self, superseded_assets: dict[str, tuple[int, int]]) -> None:
-        # {asset_id: (epoch_at_start, current_epoch)}
+        # superseded_assets maps asset_id -> (epoch_at_start, current_epoch)
         self.superseded_assets = superseded_assets
         super().__init__(f"baseline superseded for {len(superseded_assets)} asset(s)")
 
@@ -41,7 +41,7 @@ class BaselineFencedComputation:
 
     async def assert_still_current(self) -> dict[str, int]:
         """Call immediately before publishing. Returns
-        `epoch_at_publish` per asset on success; raises `BaselineSuperseded`
+        `epoch_at_publish` per asset on success; raises `BaselineSupersededError`
         if any asset's configuration moved underneath the computation."""
         superseded: dict[str, tuple[int, int]] = {}
         epoch_at_publish: dict[str, int] = {}
@@ -51,5 +51,5 @@ class BaselineFencedComputation:
             if current != started_epoch:
                 superseded[asset_id] = (started_epoch, current)
         if superseded:
-            raise BaselineSuperseded(superseded)
+            raise BaselineSupersededError(superseded)
         return epoch_at_publish

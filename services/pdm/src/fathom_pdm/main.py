@@ -6,7 +6,9 @@ checks added -- must not contain re-implementations of anything in
 
 from __future__ import annotations
 
-from fastapi import FastAPI, Request
+from collections.abc import Awaitable, Callable
+
+from fastapi import FastAPI, Request, Response
 from fathom_py_common import (
     assert_operation_annotations,
     configure_logging,
@@ -89,7 +91,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     install_idempotency_middleware(app)  # 4. reads x-side-effects off the matched route
 
     @app.middleware("http")
-    async def _attach_db_session(request: Request, call_next):  # type: ignore[no-untyped-def]
+    async def _attach_db_session(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
         # services/ owns the transaction boundary (09 §4.1) -- this
         # middleware only makes ONE session available per request; whether
         # (and where) a transaction opens is a services/ decision, not this

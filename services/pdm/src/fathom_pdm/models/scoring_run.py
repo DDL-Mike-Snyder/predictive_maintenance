@@ -54,7 +54,9 @@ class ScoringRun(Base):
     baseline_epoch_at_publish: Mapped[dict | None] = mapped_column(_JsonVariant, nullable=True)
     model_bindings: Mapped[list] = mapped_column(_UuidArray, nullable=False, default=list)
     label_set_ids: Mapped[list] = mapped_column(_UuidArray, nullable=False, default=list)
-    feature_definition_time: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    feature_definition_time: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
     domino_execution_ref: Mapped[str] = mapped_column(String, nullable=False)
     predictions_written: Mapped[int | None] = mapped_column(Integer, nullable=True)
     predictions_rejected: Mapped[int | None] = mapped_column(Integer, nullable=True)

@@ -24,6 +24,7 @@ import os
 import uuid
 from typing import TYPE_CHECKING
 
+import confluent_kafka
 import psycopg
 import pytest
 import pytest_asyncio
@@ -37,6 +38,7 @@ from fathom_pdm.events.consumers import (
     handle_configuration_baseline_changed,
     handle_installed_item_removed,
 )
+from fathom_pdm.signer import EnvelopeSigner
 from fathom_schemas import (
     ClassificationLabel,
     ClassificationLevel,
@@ -50,8 +52,10 @@ from fathom_schemas import (
     SyncQuality,
     TimeSource,
 )
+from fathom_sync import InboundConsumer, OutboxRelay, OutboxWriter, UnitOfWork
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from testcontainers.community.kafka import KafkaContainer
 from testcontainers.community.postgres import PostgresContainer
 
 if TYPE_CHECKING:
@@ -72,7 +76,10 @@ _ENV_DEFAULTS = {
 @pytest.fixture(scope="module")
 def pg_container() -> Iterator[PostgresContainer]:
     with PostgresContainer(
-        "postgres:16-alpine", dbname="pdm", username="pdm_owner", password="pdm_owner"  # noqa: S106
+        "postgres:16-alpine",
+        dbname="pdm",
+        username="pdm_owner",
+        password="pdm_owner",  # noqa: S106
     ) as pg:
         yield pg
 
@@ -115,6 +122,33 @@ def serving_async_url(pg_container: PostgresContainer, owner_dsn: str) -> Iterat
     with psycopg.connect(owner_dsn, autocommit=True) as conn, conn.cursor() as cur:
         cur.execute("REVOKE fathom_pdm_serving FROM test_consumer_login")
         cur.execute("DROP ROLE test_consumer_login")
+
+
+@pytest.fixture(scope="module")
+def kafka_container() -> Iterator[KafkaContainer]:
+    with KafkaContainer() as kafka:
+        yield kafka
+
+
+@pytest.fixture(scope="module")
+def relay_async_url(pg_container: PostgresContainer, owner_dsn: str) -> Iterator[str]:
+    """A login role that's a member of `fathom_pdm_relay` -- the role the
+    new migration (20260805170000_pdm_outbox_relay.py) actually grants
+    SELECT/UPDATE on `outbox` to. Connecting as this role, not the
+    migration-owning superuser, is the whole point: every prior grant bug
+    in this corpus (#7, #11, #13, #17 -- see CLAUDE.md) was caught only by
+    running as the real role, never by reading the GRANT statement."""
+    with psycopg.connect(owner_dsn, autocommit=True) as conn, conn.cursor() as cur:
+        cur.execute("CREATE ROLE test_relay_login LOGIN PASSWORD 'relay'")
+        cur.execute("GRANT fathom_pdm_relay TO test_relay_login")
+
+    host = pg_container.get_container_host_ip()
+    port = pg_container.get_exposed_port(5432)
+    yield f"postgresql+asyncpg://test_relay_login:relay@{host}:{port}/pdm"
+
+    with psycopg.connect(owner_dsn, autocommit=True) as conn, conn.cursor() as cur:
+        cur.execute("REVOKE fathom_pdm_relay FROM test_relay_login")
+        cur.execute("DROP ROLE test_relay_login")
 
 
 @pytest_asyncio.fixture
@@ -184,7 +218,6 @@ async def _seed_active_prediction(
     scoring_run_id = uuid.uuid4()
     provenance_id = uuid.uuid4()
     prediction_id = uuid.uuid4()
-
 
     await owner_session.execute(
         text(
@@ -276,7 +309,6 @@ async def test_configuration_baseline_changed_invalidates_every_affected_item(
     await handle_configuration_baseline_changed(session, envelope, payload)
     await session.commit()
 
-
     for pred_id in (pred_a, pred_b):
         result = await owner_session.execute(
             text("SELECT status, invalidation_cause FROM pdm.prediction WHERE prediction_id = :id"),
@@ -337,7 +369,6 @@ async def test_installed_item_removed_invalidates_that_items_predictions(
     await handle_installed_item_removed(session, envelope, payload)
     await session.commit()
 
-
     result = await owner_session.execute(
         text("SELECT status, invalidation_cause FROM pdm.prediction WHERE prediction_id = :id"),
         {"id": pred_id},
@@ -356,3 +387,113 @@ async def test_dispatch_event_raises_for_unwired_event_type(session: AsyncSessio
     )
     with pytest.raises(UnhandledEventTypeError):
         await dispatch_event(session, envelope, {})
+
+
+@pytest.mark.asyncio
+async def test_the_whole_chain_for_real_registry_emit_relay_kafka_consumer_dispatch(
+    owner_session: AsyncSession,
+    relay_async_url: str,
+    serving_async_url: str,
+    kafka_container: KafkaContainer,
+) -> None:
+    """The vertical-slice proof for `packages/py-sync`'s new `relay.py`/
+    `consumer.py`: a real emitted-and-signed outbox row, relayed through a
+    real Kafka broker by a connection authenticated as the new
+    `fathom_pdm_relay` role (not the superuser), consumed by a real
+    `InboundConsumer`, and dispatched into PdM's own real
+    `dispatch_event` -- running as `fathom_pdm_serving`, the role the
+    service actually authenticates as in production.
+
+    `producer_slug="registry"` here is a deliberate test-only shortcut:
+    Registry doesn't exist as running code, so there is no real Registry
+    outbox to relay from. PdM's own outbox table stands in as a convenient
+    surface to get a real, signed row onto a real broker -- clearly scoped
+    to proving the relay/consumer chain, not Registry's own emit path.
+    """
+    item_id = uuid.uuid4()
+    pred_id = await _seed_active_prediction(owner_session, installed_item_id=item_id)
+
+    topic = f"fathom.registry.installed_item.v1.{uuid.uuid4().hex[:8]}"
+    # producer_node_id is deliberately NOT "enterprise" -- this module's
+    # other tests hand-construct envelopes for producer_slug="registry"
+    # under that exact node id via their own Python-side `_monotonic_seq`
+    # counter (never touching the real `producer_sequence` table at all).
+    # This is the only test in the module that goes through the REAL
+    # `MonotonicSequencer`, so a shared node id would allocate seq=1 twice
+    # against the module-scoped Postgres container's `inbox_seq_unique`
+    # constraint -- a real collision between two independent sequence
+    # sources, not a production bug.
+    emitting_outbox = OutboxWriter(
+        producer_slug="registry",
+        producer_version="1.0",
+        producer_node_id="enterprise-relay-proof",
+        signer=EnvelopeSigner(),
+    )
+    now = dt.datetime.now(dt.UTC)
+    uow = UnitOfWork(owner_session)
+    await emitting_outbox.emit(
+        uow,
+        event_type="fathom.registry.installed_item.removed",
+        event_version=1,
+        aggregate="installed_item",
+        aggregate_id=str(item_id),
+        topic=topic,
+        scope=EventScope.INSTALLED_ITEM,
+        subject=EventSubject(installed_item_id=item_id, asset_id=uuid.uuid4()),
+        payload=InstalledItemRemoved(
+            installed_item_id=item_id,
+            removal_date=now,
+            disposition="scrapped",
+            failure_indicator=False,
+        ),
+        classification=ClassificationLabel(level=ClassificationLevel.U),
+        source_time=now,
+        recorded_at=now,
+        occurred_at=now,
+    )
+    await owner_session.commit()
+
+    bootstrap = kafka_container.get_bootstrap_server()
+    relay_engine = create_async_engine(relay_async_url)
+    relay = OutboxRelay(
+        producer=confluent_kafka.Producer({"bootstrap.servers": bootstrap}),
+        signer=EnvelopeSigner(),
+        worker_id="test-relay-worker",
+    )
+    async with async_sessionmaker(relay_engine, expire_on_commit=False)() as relay_session:
+        stats = await relay.run_once(relay_session)
+    await relay_engine.dispose()
+    assert sum(s.published for s in stats) == 1
+    assert sum(s.quarantined for s in stats) == 0
+
+    serving_engine = create_async_engine(serving_async_url)
+    serving_maker = async_sessionmaker(serving_engine, expire_on_commit=False)
+    consumer = confluent_kafka.Consumer(
+        {
+            "bootstrap.servers": bootstrap,
+            "group.id": "test-pdm-consumer-group",
+            "auto.offset.reset": "earliest",
+            "enable.auto.commit": False,
+        }
+    )
+    inbound = InboundConsumer(consumer=consumer, topics=[topic])
+
+    result = None
+    for _ in range(20):
+        result = await inbound.poll_and_dispatch(
+            serving_maker, dispatch_event, timeout=1.0, unhandled_error_type=UnhandledEventTypeError
+        )
+        if result.outcome == "dispatched":
+            break
+    consumer.close()
+    await serving_engine.dispose()
+
+    assert result is not None
+    assert result.outcome == "dispatched"
+
+    result_row = await owner_session.execute(
+        text("SELECT status, invalidation_cause FROM pdm.prediction WHERE prediction_id = :id"),
+        {"id": pred_id},
+    )
+    status, cause = result_row.one()
+    assert (status, cause) == ("invalidated", "item_removed")

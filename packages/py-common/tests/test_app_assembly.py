@@ -201,3 +201,82 @@ async def test_idempotency_key_required_on_state_changing_operation() -> None:
         assert resp3.json() == first_body
 
     await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_idempotency_required_flag_overrides_side_effects_none_default() -> None:
+    """22-pdm.md §10's `POST /scoring-runs`: `x-side-effects: none` alone
+    would make `idempotency_guard` skip enforcement entirely (09 §8.1's
+    general rule only covers state-changing/proposal-only) -- this asserts
+    the `idempotency_required=True` escape hatch (`packages/contracts`)
+    actually forces enforcement anyway, and that a PLAIN `none` operation
+    (no flag) still correctly skips it, so the general rule's own default
+    hasn't regressed."""
+    app = FastAPI()
+    install_correlation_middleware(app)
+    install_problem_handlers(app, slug="pdm")
+    install_idempotency_middleware(app)
+
+    engine = create_async_engine(
+        "sqlite+aiosqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False}
+    )
+    async with engine.begin() as conn:
+        await conn.run_sync(IdempotencyBase.metadata.create_all)
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    maker = async_sessionmaker(engine, expire_on_commit=False)
+
+    @app.middleware("http")
+    async def _attach_session(request, call_next):  # type: ignore[no-untyped-def]
+        async with maker() as session:
+            request.state.db_session = session
+            response = await call_next(request)
+            await session.commit()
+            return response
+
+    @app.post(
+        "/api/v1/pdm/scoring-runs",
+        status_code=201,
+        openapi_extra=operation_extra(
+            operation_id="pdm_create_scoring_run",
+            substitution=Substitution.REQUIRED,
+            side_effects=SideEffects.NONE,
+            summary="On-demand re-score",
+            idempotency_required=True,
+        ),
+    )
+    async def create_scoring_run(request: Request) -> dict[str, str]:
+        body = {"scoring_run_id": "sr-1"}
+        await persist_idempotent_response(request, body, 201)
+        return body
+
+    @app.get(
+        "/api/v1/pdm/predictions",
+        openapi_extra=operation_extra(
+            operation_id="pdm_list_predictions_regression_guard",
+            substitution=Substitution.REQUIRED,
+            side_effects=SideEffects.NONE,
+            summary="A plain none-side-effect operation, no idempotency_required flag",
+        ),
+    )
+    async def list_predictions() -> dict[str, list[object]]:
+        return {"items": []}
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        # Flagged `none` operation: still requires the header.
+        resp = await client.post("/api/v1/pdm/scoring-runs")
+        assert resp.status_code == 400
+        assert resp.json()["type"] == "urn:fathom:problem:common:idempotency-key-required"
+
+        resp2 = await client.post(
+            "/api/v1/pdm/scoring-runs", headers={"Idempotency-Key": "sr-key-1"}
+        )
+        assert resp2.status_code == 201
+
+        # Unflagged `none` operation: the general rule's default is untouched.
+        resp3 = await client.get("/api/v1/pdm/predictions")
+        assert resp3.status_code == 200
+
+    await engine.dispose()

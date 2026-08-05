@@ -12,14 +12,18 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from fathom_pdm.config import Settings
 
 
-def register_checks(settings: Settings, engine: AsyncEngine) -> list[ReadinessCheck]:
+def register_checks(
+    settings: Settings,  # noqa: ARG001 -- unused until the [PLACEHOLDER] checks below are wired
+    engine: AsyncEngine,
+) -> list[ReadinessCheck]:
     async def _database() -> tuple[bool, str | None]:
         try:
             async with engine.connect() as conn:
                 await conn.execute(text("SELECT 1"))
-            return True, None
         except Exception as exc:  # noqa: BLE001 -- readiness check must never raise
             return False, str(exc)
+        else:
+            return True, None
 
     async def _migrations() -> tuple[bool, str | None]:
         # [PLACEHOLDER] Compares the image-baked Alembic head against the

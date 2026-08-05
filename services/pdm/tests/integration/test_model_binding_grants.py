@@ -58,7 +58,10 @@ _ENV_DEFAULTS = {
 @pytest.fixture(scope="module")
 def pg_container() -> Iterator[PostgresContainer]:
     with PostgresContainer(
-        "postgres:16-alpine", dbname="pdm", username="pdm_owner", password="pdm_owner"  # noqa: S106
+        "postgres:16-alpine",
+        dbname="pdm",
+        username="pdm_owner",
+        password="pdm_owner",  # noqa: S106
     ) as pg:
         yield pg
 
@@ -348,7 +351,10 @@ async def test_activation_invalidates_superseded_binding_predictions_via_real_fu
     prediction_repo = PredictionRepository()
     uow = UnitOfWork(session)
     outbox = OutboxWriter(
-        producer_slug="pdm", producer_version="1.0", producer_node_id="enterprise", signer=EnvelopeSigner()
+        producer_slug="pdm",
+        producer_version="1.0",
+        producer_node_id="enterprise",
+        signer=EnvelopeSigner(),
     )
     classification = ClassificationLabel(level=ClassificationLevel.U)
 
@@ -365,7 +371,11 @@ async def test_activation_invalidates_superseded_binding_predictions_via_real_fu
     )
     await session.commit()
     await model_binding_service.activate_binding(
-        uow, outbox, binding_repo, prediction_repo, binding_id=binding_a.binding_id,
+        uow,
+        outbox,
+        binding_repo,
+        prediction_repo,
+        binding_id=binding_a.binding_id,
         classification=classification,
     )
     await session.commit()
@@ -387,13 +397,19 @@ async def test_activation_invalidates_superseded_binding_predictions_via_real_fu
     )
     await session.commit()
     await model_binding_service.activate_binding(
-        uow, outbox, binding_repo, prediction_repo, binding_id=binding_b.binding_id,
+        uow,
+        outbox,
+        binding_repo,
+        prediction_repo,
+        binding_id=binding_b.binding_id,
         classification=classification,
     )
     await session.commit()
 
     superseded = (
-        await owner_session.execute(select(Prediction).where(Prediction.prediction_id == prediction_id))
+        await owner_session.execute(
+            select(Prediction).where(Prediction.prediction_id == prediction_id)
+        )
     ).scalar_one()
     assert superseded.status == "invalidated"
     assert superseded.invalidation_cause == "binding_deactivated"

@@ -57,13 +57,16 @@ _REFUSAL_STATUS_TITLE = {
         operation_id="pdm_create_model_binding",
         substitution=Substitution.INTERNAL,
         side_effects=SideEffects.STATE_CHANGING,
-        summary="Register a Domino registry model version against a (tier, equipment_family, taxonomy_version) triple. Draft, not yet activated.",
+        summary=(
+            "Register a Domino registry model version against a "
+            "(tier, equipment_family, taxonomy_version) triple. Draft, not yet activated."
+        ),
         aggregate="model_binding",
     ),
 )
 async def create_model_binding(
     body: CreateModelBindingRequest,
-    principal: Principal = Depends(current_principal),
+    _principal: Principal = Depends(current_principal),
     uow: UnitOfWork = Depends(get_uow),
 ) -> ModelBindingResponse:
     binding = await model_binding_service.create_binding(
@@ -88,13 +91,16 @@ async def create_model_binding(
         operation_id="pdm_activate_model_binding",
         substitution=Substitution.INTERNAL,
         side_effects=SideEffects.STATE_CHANGING,
-        summary="Activate a model binding. Refuses on unaccepted propensity model, unpowered label set, or absent calibration record (§5.6).",
+        summary=(
+            "Activate a model binding. Refuses on unaccepted propensity model, unpowered "
+            "label set, or absent calibration record (§5.6)."
+        ),
         aggregate="model_binding",
     ),
 )
 async def activate_model_binding(
     binding_id: uuid.UUID,
-    principal: Principal = Depends(current_principal),
+    _principal: Principal = Depends(current_principal),
     uow: UnitOfWork = Depends(get_uow),
     outbox: OutboxWriter = Depends(get_outbox_writer),
 ) -> ModelBindingResponse:
@@ -112,19 +118,19 @@ async def activate_model_binding(
             binding_id=binding_id,
             classification=classification,
         )
-    except model_binding_service.BindingNotFound as exc:
+    except model_binding_service.BindingNotFoundError as exc:
         raise ProblemException(
             type="urn:fathom:problem:pdm:model-binding-not-found",
             title="Model binding not found",
             status=404,
         ) from exc
-    except model_binding_service.BindingAlreadyActivated as exc:
+    except model_binding_service.BindingAlreadyActivatedError as exc:
         raise ProblemException(
             type="urn:fathom:problem:pdm:model-binding-already-activated",
             title="Model binding already activated",
             status=409,
         ) from exc
-    except model_binding_service.BindingRefused as exc:
+    except model_binding_service.BindingRefusedError as exc:
         raise ProblemException(
             type=f"urn:fathom:problem:pdm:model-binding-refused:{exc.reason}",
             title=_REFUSAL_STATUS_TITLE[exc.reason],

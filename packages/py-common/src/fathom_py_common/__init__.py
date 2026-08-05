@@ -18,7 +18,7 @@ from .health import ReadinessCheck, install_health_routes, make_check
 from .httpclient import make_client
 from .idempotency import (
     IdempotencyKeyRow,
-    IdempotentReplay,
+    IdempotentReplayError,
     idempotency_guard,
     install_idempotency_middleware,
     persist_idempotent_response,
@@ -32,7 +32,7 @@ __all__ = [
     "ChangedSinceParams",
     "CursorParams",
     "IdempotencyKeyRow",
-    "IdempotentReplay",
+    "IdempotentReplayError",
     "Page",
     "Principal",
     "ProblemException",

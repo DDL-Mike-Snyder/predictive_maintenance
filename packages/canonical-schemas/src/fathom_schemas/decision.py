@@ -67,20 +67,26 @@ class ConsequenceWeights(FathomModel):
 
 
 class ExpectedConsequence(FathomModel):
-    p_event_horizon: float = Field(description="Probability of the event within the horizon, on a COMMON basis.")
-    p_event_lower: float = Field(description="Epistemic interval, widened by fallback_level and cell size.")
+    p_event_horizon: float = Field(
+        description="Probability of the event within the horizon, on a COMMON basis."
+    )
+    p_event_lower: float = Field(
+        description="Epistemic interval, widened by fallback_level and cell size."
+    )
     p_event_upper: float
     basis: Basis
     consequence_value: float
     expected_consequence: float = Field(description="THE only rankable quantity.")
     timing_basis: TimingBasis
-    timing_p10: float | None = Field(default=None, description="None unless timing_basis is rul_quantiles.")
+    timing_p10: float | None = Field(
+        default=None, description="None unless timing_basis is rul_quantiles."
+    )
     timing_p50: float | None = Field(default=None)
     conversion_version: str
     inputs_digest: str
 
 
-class UncalibratedAndUnrated(ValueError):
+class UncalibratedAndUnratedError(ValueError):
     """Raised only if `p_failure` AND `population_hazard_rate` are BOTH
     absent -- the schema's own `_rul_only_when_item_conditional`/
     `_calibration_gate` validators forbid this combination, so this should
@@ -113,7 +119,7 @@ def expected_consequence(
     `POST /api/v1/pdm/expected-consequence`) -- nine transcriptions would
     produce nine subtly different conversions."""
     if pred.p_failure is None and pred.population_hazard_rate is None:
-        raise UncalibratedAndUnrated(
+        raise UncalibratedAndUnratedError(
             "both p_failure and population_hazard_rate are absent; the schema "
             "should have forbidden this combination already"
         )
@@ -142,7 +148,9 @@ def expected_consequence(
         timing_p50 = 1.0 / pred.population_hazard_rate
         # timing_p10 stays None -- there is no p10 for a class rate. Never synthesize one.
 
-    half_width = _base_half_width(pred.calibration_population) * _FALLBACK_MULTIPLIER[pred.fallback_level]
+    half_width = (
+        _base_half_width(pred.calibration_population) * _FALLBACK_MULTIPLIER[pred.fallback_level]
+    )
     p_event_lower = max(0.0, p_event_horizon - half_width)
     p_event_upper = min(1.0, p_event_horizon + half_width)
 

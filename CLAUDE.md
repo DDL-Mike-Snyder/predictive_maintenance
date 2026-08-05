@@ -628,10 +628,9 @@ that judgment caught.
    ever records what it's given, so this would mainly confirm the real
    value's shape matches what the tests already assume, not exercise new
    code.
-7. **Separate from the PdM checklist**: ~206 untriaged `ruff` findings
-   remain across the whole `services/`/`packages/` tree (see above). The
-   user was asked and explicitly chose to defer this — don't re-raise it
-   unless asked, but it's still there.
+7. ~~Separate from the PdM checklist: ~206 untriaged `ruff` findings
+   remain across the whole `services/`/`packages/` tree~~ — **done,
+   2026-08-05, see "2026-08-05 later still — ruff cleanup" below.**
 
 ## 2026-08-05 follow-up decisions
 
@@ -710,6 +709,236 @@ none of this has been exercised against a real CNPG operator, since none
 was installed anywhere reachable this pass — worth flagging loudly to
 whoever gets a real cluster with the operator installed, same as every
 other "reviewed carefully but never actually run" item in this file.
+
+## 2026-08-05 later still — ruff cleanup
+
+The ~206 (256 by the time this pass actually started -- more code had
+landed since the number was first quoted) untriaged `ruff check` findings
+across `services/`+`packages/` are now **fully triaged: 0 remaining**,
+verified live (`ruff check services/ packages/` → "All checks passed!"),
+not just counted down. Sonnet-only per the user's spend-limit request.
+Full test suite re-run after every batch of fixes, not just once at the
+end — still 68 passing throughout (11 canonical-schemas, 5 py-sync, 6
+py-common, 46 pdm, including the 10 real-Postgres RLS tests and the
+model-binding-grants tests, both requiring the local Docker daemon
+`testcontainers` talks to). `pyproject.toml` gained one new per-file-ignore
+entry (PLC0415 for `**/tests/*`) and three new global `ignore` entries
+(TC001-3, TRY003), each with inline reasoning in the file itself — read
+that before re-enabling any of them.
+
+**The two rule-vs-architecture mismatches, found by testing, not by
+reasoning about the rule in the abstract:**
+- **TC001-3** (move typing-only imports under `if TYPE_CHECKING:`) broke 3
+  of 4 packages the first time it was actually applied with
+  `--unsafe-fixes` and the real test suite run afterward:
+  `sqlalchemy.orm.exc.MappedAnnotationError: Could not resolve ... Mapped
+  [dt.datetime]` in both SQLAlchemy model files, and Pydantic's own
+  `FailurePrediction is not fully defined; you should define UUID` in
+  canonical-schemas. Both frameworks resolve annotations at runtime via
+  introspection; ruff's static check can't see that. One file already had
+  a hand-written `# noqa: TC003` catching this before the global ignore
+  existed — worth noticing prior noqa comments like that as a signal
+  before assuming a rule is safe to bulk-apply.
+- **TRY003** (long message directly in a `raise`, not inside the exception
+  class) fired 41 times; checked all 41 by hand rather than disabling on
+  a hunch. 32 of 41 are inside `canonical-schemas` Pydantic validators/
+  serializers, where the message string IS the validation-error detail
+  Pydantic returns to callers -- there is no "move it into the class"
+  refactor available without breaking that contract. The other 9 are
+  fail-fast guard clauses raised at exactly one call site each, never
+  caught by type anywhere in this codebase -- inventing a wrapper
+  exception class for each, purely to move an f-string inside `__init__`,
+  is the premature abstraction this project's own conventions avoid.
+
+**Real, contained renames, all verified with a full-repo grep for
+leftover references before moving on:** 9 exception classes renamed to end
+in `Error` (N818) -- `ProblemException` deliberately left alone, since it
+mirrors Starlette/FastAPI's own `HTTPException` naming on purpose, not by
+oversight. 6 FastAPI-route `principal: Principal = Depends(...)` params and
+3 SQLAlchemy-event-listener `connection_record` params renamed with a
+leading underscore (ARG001/ARG002) -- both patterns are "required by the
+calling convention's signature, deliberately unused," confirmed safe
+because FastAPI/SQLAlchemy both resolve by position or by their own
+internal name mapping, never by a caller matching this exact parameter
+name. 3 bare-dict `__table_args__ = {"schema": "pdm"}` class attributes
+(RUF012) wrapped in a 1-tuple, matching every sibling model file's own
+already-established tuple convention -- SQLAlchemy accepts both shapes
+identically.
+
+**One real repo-wide gap found while finishing this, explicitly NOT
+folded in:** `uvx ruff format --check .` reports 32 files (11 inside
+`services/`+`packages/`) would be reformatted -- confirmed via `git diff`
+that none of it comes from this pass's own edits, so `ruff format` (the
+formatter, distinct from `ruff check`, the linter) has apparently never
+been run/enforced on this codebase either, the same "never run before"
+shape as `ruff check` itself once was. This is a separate task from what
+"ruff cleanup" has ever meant in this file's own history -- flagged, not
+actioned, so it doesn't quietly get assumed-fixed.
+
+**2026-08-05, immediately after:** the user confirmed `ruff format` is
+purely cosmetic (verified via diff review first, not assumed) and asked
+to apply it -- scoped to `services/`+`packages/`+`tools/` only, explicitly
+excluding `docs/build/*.md`'s embedded Python code fences (formatting
+those would strip the spec authors' own deliberate column-alignment in
+illustrative snippets, a prose-content decision, not a code-cleanliness
+one). `ruff format services/ packages/ tools/` reformatted 12 files;
+`ruff format --check` on those three now reports all files formatted;
+full 68-test suite re-run clean. **Side discovery**: formatting
+`tools/check_event_catalog.py` surfaced that this script has 23 of its
+own `ruff check` findings (bare `import os, re, sys, collections`, six
+`print()`-forbidden T201s, missing type annotations, etc.) -- it was
+never part of the "ruff cleanup" scope (always `services/`+`packages/`
+in this file's own history) and has never been triaged. Formatted, not
+lint-fixed; flagged here rather than actioned, same discipline as the
+`docs/build/*.md` decision above.
+
+## 2026-08-05 later still — POST /scoring-runs implemented
+
+22-pdm.md §10's on-demand re-score creation. New: `schemas/scoring_run.py`
+(`CreateScoringRunRequest` — `stratum` + `scope` only, `trigger` is always
+server-set to `"on_demand"`, matching how `serving_class`/
+`censoring_correction` are already server-set elsewhere), `services/
+scoring.py::create_scoring_run` (mints a `queued` `ScoringRun` row —
+`model_bindings`/`label_set_ids`/`baseline_epoch_at_start` stay empty
+placeholders, same boundary `services/model_binding.py`'s own
+`rescore_run` already documents: this operation does not itself invoke a
+Domino Job), `api/v1/scoring_runs.py` (`POST /scoring-runs`, `agent_eligible
+=True`, `side_effects=NONE`, 201). 4 new e2e tests
+(`test_scoring_run_e2e.py`), full suite now 73 passing (up from 68).
+
+**The real gap this surfaced, found by reading the spec closely rather
+than assuming the shared middleware already covered it:** 22-pdm.md §10
+requires an `Idempotency-Key` on this operation despite `x-side-effects:
+none` ("it computes and does not alter *domain* state" — but it still
+mints a real row, so a blind retry isn't safe). `09-monorepo-and-
+conventions.md` §8.1's own general rule only requires the header on
+`state-changing`/`proposal-only` operations, and `packages/py-common`'s
+`idempotency_guard` enforced exactly that general rule and nothing else —
+this is the **first** operation in the whole corpus where the general
+rule and the operation's own spec disagree. Fixed generally, not with a
+local check in this one route (09 §8.1 explicitly requires going "via the
+shared middleware — not a local implementation"): `packages/contracts`'
+`operation()`/`operation_extra()` gained `idempotency_required: bool =
+False`, emitted as `x-fathom-idempotency-required` in `openapi_extra`;
+`idempotency_guard` now enforces if `x-side-effects` requires it OR that
+flag is set. **Caught a real bug in my own fix while testing it, not by
+review**: the first pass added the parameter to `operation()`'s signature
+and docstring but never actually threaded it into the `OperationDeclaration`
+construction call — every test using the flag silently behaved as if it
+weren't set (401 from `current_principal` running unguarded, same failure
+shape as `idempotency.py`'s own module docstring describes for the
+original `route_class` bug) until the e2e tests caught it. New regression-
+guard test in `packages/py-common/tests/test_app_assembly.py` asserts
+both directions: a flagged `none` operation still requires the key, and
+an unflagged one still doesn't — so this can't silently regress either way.
+
+No new event published (confirmed against 22-pdm.md §11.1's own table —
+this operation isn't there, consistent with `x-side-effects: none`); no
+Helm/values.yaml changes needed (no new settings, no new event
+publishes/consumes). Deliberately excluded from both agent-tool manifests
+per 22-pdm.md §10.1's own text — nothing to wire there.
+
+**Still explicitly out of scope, same boundary as everywhere else in this
+vertical slice**: this operation never triggers a real Domino Job. The
+`queued` row it creates is inert until something else (a human, or real
+orchestration this slice doesn't build) starts a Job against it, which
+then calls `POST /scoring-runs/{id}/predictions` to complete it — exactly
+the gap `models/tier0-historical/entrypoint.py`'s own `--scoring-run-id`
+flag already assumes.
+
+## 2026-08-05 later still — the Kafka consumer-loop infrastructure
+
+11-outbox-sync-library.md §2 (relay) and §3.4/§6 (consume loop) — the last
+item on the deferred list. Scoped deliberately, confirmed with the user
+before starting given the size: **core relay + consumer loop only**,
+single-worker-correct, real and tested against a real Kafka broker
+(testcontainers) and real Postgres, not reviewed as design. Explicitly
+**not** built this pass (all separate, named gaps, not silently folded
+in): multi-worker-safe shard coordination, backfill mode/`X-Backfill`
+suppression (§2.8), pruning/retention (§2.6), the "blocked-row sweeper"
+retry loop for epoch-fenced events (§3.5), and the divergence-budget/edge
+coordinator (§9, already Phase-3 elsewhere in this corpus). Full test
+suite now **77 passing** (up from 73): 3 new relay/consumer tests in
+`packages/py-sync`, 1 new vertical-slice proof in `services/pdm`.
+
+**What's new, in `packages/py-sync` (shared, not PdM-specific):**
+- `relay.py` — `OutboxRelay`. Implements §2.5's claim/publish/mark-
+  published/quarantine algorithm using the schema's OWN already-built
+  columns (`OutboxRow.shard`/`claimed_by`/`claimed_until_mono`) rather than
+  a separate lease table the spec's prose describes but the schema never
+  actually built — the as-built schema is the authoritative contract here,
+  and it's also the more robust design (claim via one atomic UPDATE, do
+  the network publish OUTSIDE any held transaction, small UPDATE to mark
+  published — a crash mid-batch leaves safely-retriable rows, never a
+  stuck open transaction holding a row lock across a network call).
+- `consumer.py` — `InboundConsumer`. The generic message pump only:
+  subscribe, poll, deserialize, open one transaction, call the caller's
+  own `dispatch(session, envelope, payload)`, commit, THEN commit the
+  Kafka offset. Deliberately does NOT call `Inbox`/`EpochFence` itself --
+  `services/pdm/src/fathom_pdm/events/consumers.py::dispatch_event`
+  already owns that (its own docstring already said as much), and
+  duplicating it at the loop level would fight that existing, tested
+  design rather than complete it.
+- `SigningPort` gained `verify()`/`decrypt()` (sign/encrypt's own
+  inverses) -- needed by the relay's `verify_signature(row)` step and the
+  consumer's payload deserialization respectively. Implemented in both
+  `EnvelopeSigner` (services/pdm) and `InsecureTestSigner`.
+- `OutboxQuarantineRow` -- new table, rows that exceed `max_attempts`
+  move here (§2.5) rather than being deleted. New PdM migration
+  (`20260805170000_pdm_outbox_relay.py`) creates it plus a new
+  **`fathom_pdm_relay`** Postgres role (`SELECT, UPDATE` on `outbox`,
+  `INSERT` on `outbox_quarantine`) -- the initial migration's own comment
+  had already named this exact role before it existed: *"the outbox-
+  draining relay (not yet built) is a separate, more-privileged process/
+  role that reads unpublished rows and sets published_at."*
+  `fathom_pdm_serving` keeps its original INSERT-only grant on `outbox`,
+  unchanged -- the API-serving path must never also be the thing that
+  drains it.
+
+**Real bugs/gaps found by building and testing this, not by reviewing
+the spec prose:**
+1. **`EventEnvelope.clock` can't actually be reconstructed from what
+   `OutboxWriter.emit()` has ever stored.** `Clock.sync_quality` and
+   `Clock.ingest_time` are both non-optional in canonical-schemas' own
+   contract, but `emit()` has always hardcoded `sync_quality={}` and
+   `ingest_time=None` -- no producer anywhere in this codebase populates
+   the real attestation §4.6 describes. This was never caught before
+   because nothing ever round-tripped a real envelope back out of stored
+   outbox data until this pass built the first thing that does. Fixed on
+   the consume side: `ingest_time` is stamped fresh by the consumer itself
+   (matching §6's own table -- "stamped by the receiver on acceptance,"
+   never something the producer could have known), and a documented
+   `UNSYNCED`-defaulted placeholder `SyncQuality` fills in for the
+   never-populated attestation. Also caught my own typo in the same
+   pass: `TimeSource.NTP` doesn't exist (`UPSTREAM_NTP` does) -- would have
+   been an `AttributeError` the first time this code path actually ran.
+2. **A real test-isolation bug, not a production one**: the vertical-
+   slice proof test collided with this file's *other* tests over
+   `(producer_slug="registry", producer_node_id="enterprise",
+   monotonic_seq=1)` -- the other tests hand-construct envelopes via a
+   Python-side `itertools.count()`, never touching the real
+   `producer_sequence` table; this new test is the only one that goes
+   through the real `MonotonicSequencer`, and both independently start
+   counting at 1 under the same producer identity in the same module-
+   scoped Postgres container. `inbox_seq_unique` correctly rejected the
+   collision -- exactly its job. Fixed by giving the new test its own
+   distinct `producer_node_id`, not by touching production code.
+3. **The new `fathom_pdm_relay` role's grants were verified against the
+   real role, not the superuser** -- same discipline every prior grant
+   bug in this corpus (#7, #11, #13, #17) was caught by. A new
+   `test_relay_login` role (mirroring `test_serving_login`/
+   `test_consumer_login`'s existing pattern) actually ran the relay in
+   the vertical-slice test; the grants were correct on the first try this
+   time, but they were checked, not assumed.
+
+**Still open, deliberately not solved here**: a real deployment needs a
+*third* DB credential distinct from `database.secretRef`/
+`migrationSecretRef` -- something authenticating as `fathom_pdm_relay` --
+plus an actual place to RUN the relay and consumer loops (a Deployment?
+a sidecar? part of the main API pod via a background task?). No Helm/
+values.yaml changes were made this pass; this is the same shape of gap
+as the migration-secret conflation was before it got its own fix, named
+here so it doesn't get assumed-solved by the code existing.
 
 ## Where to find more context
 

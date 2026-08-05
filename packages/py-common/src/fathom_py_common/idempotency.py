@@ -27,7 +27,7 @@ already the correct, matched route by the time it executes.
 The one thing a plain dependency cannot do is *replace* the response the
 handler would have produced (a dependency can only inject a value into the
 handler or raise); an idempotent replay must skip calling the handler
-entirely and return the ORIGINAL response verbatim. `IdempotentReplay` plus
+entirely and return the ORIGINAL response verbatim. `IdempotentReplayError` plus
 its own dedicated exception handler (registered by the same
 `install_idempotency_middleware` call) is what supplies that: the
 dependency raises it in place of a match, and the handler reconstructs the
@@ -88,7 +88,7 @@ def _request_hash(body: bytes, path: str, query: str) -> str:
     return h.hexdigest()
 
 
-class IdempotentReplay(Exception):
+class IdempotentReplayError(Exception):
     """Raised by `idempotency_guard` when a prior response for this key
     already exists. Caught by its own exception handler, which reconstructs
     the exact original response -- this is not an error."""
@@ -104,11 +104,21 @@ async def idempotency_guard(
 ) -> None:
     """Installed as a GLOBAL dependency (`FastAPI(dependencies=[Depends(...)])`)
     so it runs for every route regardless of router nesting -- see the
-    module docstring for why this replaced a Route-subclass approach."""
+    module docstring for why this replaced a Route-subclass approach.
+
+    09 §8.1's own general rule is `x-side-effects in (proposal-only,
+    state-changing)`; `x-fathom-idempotency-required` (set via
+    `operation(idempotency_required=True)`, `packages/contracts`) is the
+    escape hatch for the rare `side_effects=none` operation whose own spec
+    still calls for a key -- 22-pdm.md §10's `POST /scoring-runs` is the
+    first: `none` because it computes and does not alter *domain* state,
+    but it mints a real row, so a blind retry is not safe."""
     route = request.scope.get("route")
-    side_effects = getattr(route, "openapi_extra", None) or {}
-    side_effects = side_effects.get("x-side-effects")
-    if side_effects not in ("proposal-only", "state-changing"):
+    extra = getattr(route, "openapi_extra", None) or {}
+    side_effects = extra.get("x-side-effects")
+    if side_effects not in ("proposal-only", "state-changing") and not extra.get(
+        "x-fathom-idempotency-required"
+    ):
         return
 
     if idempotency_key is None:
@@ -116,7 +126,11 @@ async def idempotency_guard(
             type="urn:fathom:problem:common:idempotency-key-required",
             title="Idempotency-Key required",
             status=400,
-            detail=f"x-side-effects={side_effects!r} requires an Idempotency-Key header",
+            detail=(
+                f"x-side-effects={side_effects!r}, "
+                f"x-fathom-idempotency-required={extra.get('x-fathom-idempotency-required')!r}; "
+                "this operation requires an Idempotency-Key header"
+            ),
         )
 
     body = await request.body()
@@ -149,10 +163,12 @@ async def idempotency_guard(
             title="Idempotency-Key reuse with a different request",
             status=409,
         )
-    raise IdempotentReplay(status_code=existing.response_status, body=existing.response_body)
+    raise IdempotentReplayError(status_code=existing.response_status, body=existing.response_body)
 
 
-async def persist_idempotent_response(request: Request, response_body: dict[str, Any], status_code: int) -> None:
+async def persist_idempotent_response(
+    request: Request, response_body: dict[str, Any], status_code: int
+) -> None:
     """Called explicitly by a handler (or a thin service-layer wrapper)
     immediately after producing its response, INSIDE the same transaction
     the domain effect committed in -- so the idempotency record and the
@@ -181,7 +197,7 @@ async def persist_idempotent_response(request: Request, response_body: dict[str,
 
 def install_idempotency_middleware(app: FastAPI) -> None:
     """Adds `idempotency_guard` as a dependency on every route (cascades
-    through all router nesting) and registers `IdempotentReplay`'s handler.
+    through all router nesting) and registers `IdempotentReplayError`'s handler.
     Must be called before `app.include_router(...)` so the dependency is
     already in `app.router.dependencies` when routers are attached -- but
     per FastAPI's own dependency-merging, calling it after works too, since
@@ -190,8 +206,8 @@ def install_idempotency_middleware(app: FastAPI) -> None:
     """
     app.router.dependencies.append(Depends(idempotency_guard))
 
-    @app.exception_handler(IdempotentReplay)
-    async def _handle_replay(request: Request, exc: IdempotentReplay) -> Response:
+    @app.exception_handler(IdempotentReplayError)
+    async def _handle_replay(_request: Request, exc: IdempotentReplayError) -> Response:
         return Response(
             content=json.dumps(exc.body).encode(),
             status_code=exc.status_code,

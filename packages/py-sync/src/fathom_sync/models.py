@@ -103,7 +103,9 @@ class OutboxRow(Base):
     )
 
     __table_args__ = (
-        UniqueConstraint("producer_slug", "producer_node_id", "monotonic_seq", name="outbox_seq_unique"),
+        UniqueConstraint(
+            "producer_slug", "producer_node_id", "monotonic_seq", name="outbox_seq_unique"
+        ),
         CheckConstraint(
             "payload_ciphertext IS NOT NULL OR payload_ref IS NOT NULL",
             name="outbox_payload_present",
@@ -133,6 +135,26 @@ class OutboxRow(Base):
         # for every service that imports this table, not just PdM's.
         {"implicit_returning": False},
     )
+
+
+class OutboxQuarantineRow(Base):
+    """Document 11 §2.5: "after `max_attempts` (default 12) the row is
+    moved to `outbox_quarantine`, a metric fires, and the shard proceeds."
+    A permanently stuck row must not stall an entire asset's stream, but
+    quarantining is an incident (a state change exists without its event,
+    03 §15.2's obligation), not routine cleanup -- this table exists so
+    quarantined rows stay queryable/alertable, not just deleted."""
+
+    __tablename__ = "outbox_quarantine"
+
+    outbox_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    event_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    event_type: Mapped[str] = mapped_column(String, nullable=False)
+    topic: Mapped[str] = mapped_column(String, nullable=False)
+    shard: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    last_error: Mapped[str] = mapped_column(String, nullable=False)
+    quarantined_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class InboxRow(Base):

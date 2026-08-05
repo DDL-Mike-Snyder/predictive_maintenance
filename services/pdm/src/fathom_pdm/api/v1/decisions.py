@@ -16,7 +16,7 @@ from fathom_schemas import (
     RiskPosture,
     expected_consequence,
 )
-from fathom_schemas.decision import DEFAULT_OPERATING_FRACTION, UncalibratedAndUnrated
+from fathom_schemas.decision import DEFAULT_OPERATING_FRACTION, UncalibratedAndUnratedError
 
 from fathom_pdm.deps import Principal, current_principal
 
@@ -35,12 +35,13 @@ router = APIRouter()
     ),
 )
 async def compute_expected_consequence(
+    *,
     prediction: FailurePrediction,
     consequence_value: float,
     consequence_band: str,
     risk_posture: RiskPosture = RiskPosture.NEUTRAL,
     operating_fraction: float = DEFAULT_OPERATING_FRACTION,
-    principal: Principal = Depends(current_principal),
+    _principal: Principal = Depends(current_principal),
 ) -> ExpectedConsequence:
     # §4.5.2: refuse a research_only prediction with 422 -- the holdout
     # stratum's whole point is that it is not acted upon. This route only
@@ -52,11 +53,13 @@ async def compute_expected_consequence(
     try:
         return expected_consequence(
             prediction,
-            consequence=ConsequenceWeights(consequence_value=consequence_value, band=consequence_band),
+            consequence=ConsequenceWeights(
+                consequence_value=consequence_value, band=consequence_band
+            ),
             operating_fraction=operating_fraction,
             risk_posture=risk_posture,
         )
-    except UncalibratedAndUnrated as exc:
+    except UncalibratedAndUnratedError as exc:
         raise ProblemException(
             type="urn:fathom:problem:pdm:uncalibrated-and-unrated",
             title="Prediction has neither p_failure nor population_hazard_rate",

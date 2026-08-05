@@ -26,7 +26,8 @@ class PolicyId(StrEnum):
     SERVER_AUTHORITATIVE_QUEUED = "server-authoritative-queued"
     ENTERPRISE_AUTHORITATIVE_PROVISIONAL_EDGE = "enterprise-authoritative-provisional-edge"
     MONOTONIC_MERGE_KEYED = "monotonic-merge-keyed"
-    ENTERPRISE_AUTHORITATIVE_NOT_EDGE_WRITABLE = "enterprise-authoritative-not-edge-writable"  # default
+    # default
+    ENTERPRISE_AUTHORITATIVE_NOT_EDGE_WRITABLE = "enterprise-authoritative-not-edge-writable"
 
 
 class MergeDecision(StrEnum):

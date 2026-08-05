@@ -77,7 +77,9 @@ class Evidence(FathomModel):
 
 
 EXTERNAL_LEGAL_EFFECT_KINDS: frozenset[ProposalKind] = frozenset({ProposalKind.REQUISITION})
-ALWAYS_DUAL_CONTROL_KINDS: frozenset[ProposalKind] = frozenset({ProposalKind.PURGE, ProposalKind.REWRAP})
+ALWAYS_DUAL_CONTROL_KINDS: frozenset[ProposalKind] = frozenset(
+    {ProposalKind.PURGE, ProposalKind.REWRAP}
+)
 COUNTER_SIGNATURE_REQUIRED_KINDS: frozenset[ProposalKind] = frozenset(
     {ProposalKind.PURGE, ProposalKind.REWRAP}
 )
@@ -169,7 +171,9 @@ class Proposal(FathomModel):
             if self.requires_dual_control and (
                 self.second_adjudicator is None or self.second_adjudicated_at is None
             ):
-                raise ValueError("status='approved' under dual control requires a second adjudicator")
+                raise ValueError(
+                    "status='approved' under dual control requires a second adjudicator"
+                )
             if self.requires_dual_control and self.second_adjudicator == self.adjudicated_by:
                 raise ValueError("the second adjudicator must differ from the first")
             if self.requires_counter_signature and (

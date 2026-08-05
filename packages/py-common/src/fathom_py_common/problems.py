@@ -36,7 +36,7 @@ _HTTP_STATUS_PROBLEM_TYPE = {
 }
 
 
-class ProblemException(Exception):
+class ProblemException(Exception):  # noqa: N818 -- deliberately mirrors Starlette/FastAPI's own HTTPException naming, not a naming oversight
     """Raise this for any declared, service-specific problem type.
 
     `type` must be one already declared in the service's own
@@ -48,7 +48,7 @@ class ProblemException(Exception):
     def __init__(
         self,
         *,
-        type: str,
+        type: str,  # noqa: A002 -- RFC 9457's own field name; renaming would ripple across every raise site
         title: str,
         status: int,
         detail: str | None = None,
@@ -67,7 +67,7 @@ class ProblemException(Exception):
 def _problem_response(
     request: Request,
     *,
-    type: str,
+    type: str,  # noqa: A002 -- same RFC 9457 field-name reasoning as ProblemException above
     title: str,
     status_code: int,
     detail: str | None = None,

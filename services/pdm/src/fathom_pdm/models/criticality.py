@@ -43,7 +43,10 @@ class CriticalityAssessment(Base):
             "data_availability_ceiling BETWEEN 0 AND 3", name="criticality_ceiling_range"
         ),
         CheckConstraint("assigned_tier BETWEEN 0 AND 3", name="criticality_assigned_tier_range"),
-        CheckConstraint("previous_tier IS NULL OR previous_tier BETWEEN 0 AND 3", name="criticality_previous_tier_range"),
+        CheckConstraint(
+            "previous_tier IS NULL OR previous_tier BETWEEN 0 AND 3",
+            name="criticality_previous_tier_range",
+        ),
         CheckConstraint(
             "assigned_tier = LEAST(proposed_tier, data_availability_ceiling)",
             name="tier_is_capped",
@@ -62,7 +65,8 @@ class CriticalityAssessment(Base):
     equipment_family: Mapped[str] = mapped_column(String, nullable=False)
     taxonomy_version: Mapped[str] = mapped_column(String, nullable=False)
     system_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
-    class_id: Mapped[str | None] = mapped_column(String, nullable=True)  # NULL = fleet-wide assessment
+    # NULL = fleet-wide assessment
+    class_id: Mapped[str | None] = mapped_column(String, nullable=True)
     input_mission_criticality: Mapped[float] = mapped_column(Numeric(5, 2), nullable=False)
     input_consequence_of_failure: Mapped[float] = mapped_column(Numeric(5, 2), nullable=False)
     input_casrep_history: Mapped[float] = mapped_column(Numeric(5, 2), nullable=False)
@@ -87,5 +91,7 @@ class CriticalityAssessment(Base):
         DateTime(timezone=True), nullable=True
     )  # NULL until §8.3 step 5
     effective_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    superseded_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    superseded_at: Mapped[dt.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     classification: Mapped[dict] = mapped_column(_JsonVariant, nullable=False)

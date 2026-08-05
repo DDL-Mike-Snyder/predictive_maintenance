@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 
 
-class StalenessBoundExceeded(Exception):
+class StalenessBoundExceededError(Exception):
     """Raised by `require_fresh()`. A freshness-dependent computation must
     refuse to run rather than act on stale configuration -- the scheduling
     optimizer is the case named explicitly in document 11."""
@@ -58,6 +58,6 @@ class ReadModelLag:
 
     def require_fresh(self, bound: timedelta, *, computation: str, topic: str) -> None:
         if self.lag(topic) > bound:
-            raise StalenessBoundExceeded(
+            raise StalenessBoundExceededError(
                 f"{computation} refuses to run: {topic} lag {self.lag(topic)} exceeds bound {bound}"
             )

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import base64
 import json
-from typing import Generic, TypeVar
+from typing import TypeVar
 
 from fastapi import Query
 from pydantic import BaseModel
@@ -41,7 +41,7 @@ class CursorParams(BaseModel):
         return cls(limit=limit, cursor=cursor)
 
 
-class Page(BaseModel, Generic[T]):
+class Page[T](BaseModel):
     """No total count on unbounded collections -- document 03 §4."""
 
     items: list[T]

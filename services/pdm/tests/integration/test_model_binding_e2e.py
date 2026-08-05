@@ -63,7 +63,7 @@ async def app_and_client():
     app = create_app(_settings())
 
     @event.listens_for(app.state.engine.sync_engine, "connect")
-    def _register_least(dbapi_connection, connection_record):  # type: ignore[no-untyped-def]
+    def _register_least(dbapi_connection, _connection_record):  # type: ignore[no-untyped-def]
         dbapi_connection.create_function("LEAST", 2, min)
 
     async with app.state.engine.begin() as conn:
@@ -192,10 +192,17 @@ async def _create_binding(
 async def test_activate_refuses_on_unaccepted_propensity_model(app_and_client) -> None:
     app, client = app_and_client
     label_set_id = await _seed_label_set(
-        app, equipment_family="pump-centrifugal", taxonomy_version="tax-1", propensity_accepted=False
+        app,
+        equipment_family="pump-centrifugal",
+        taxonomy_version="tax-1",
+        propensity_accepted=False,
     )
     binding = await _create_binding(
-        client, tier=0, equipment_family="pump-centrifugal", taxonomy_version="tax-1", label_set_id=label_set_id
+        client,
+        tier=0,
+        equipment_family="pump-centrifugal",
+        taxonomy_version="tax-1",
+        label_set_id=label_set_id,
     )
 
     resp = await client.post(
@@ -215,7 +222,11 @@ async def test_activate_refuses_when_label_set_has_no_propensity_model(app_and_c
         app, equipment_family="pump-centrifugal", taxonomy_version="tax-1", propensity_accepted=None
     )
     binding = await _create_binding(
-        client, tier=0, equipment_family="pump-centrifugal", taxonomy_version="tax-1", label_set_id=label_set_id
+        client,
+        tier=0,
+        equipment_family="pump-centrifugal",
+        taxonomy_version="tax-1",
+        label_set_id=label_set_id,
     )
 
     resp = await client.post(
@@ -239,7 +250,11 @@ async def test_activate_refuses_on_unpowered_family(app_and_client) -> None:
         app, tier=0, equipment_family="pump-centrifugal", taxonomy_version="tax-1", powered=False
     )
     binding = await _create_binding(
-        client, tier=0, equipment_family="pump-centrifugal", taxonomy_version="tax-1", label_set_id=label_set_id
+        client,
+        tier=0,
+        equipment_family="pump-centrifugal",
+        taxonomy_version="tax-1",
+        label_set_id=label_set_id,
     )
 
     resp = await client.post(
@@ -264,7 +279,11 @@ async def test_activate_refuses_when_no_calibration_record_for_triple(app_and_cl
         app, tier=0, equipment_family="pump-centrifugal", taxonomy_version="tax-1", powered=True
     )
     binding = await _create_binding(
-        client, tier=1, equipment_family="pump-centrifugal", taxonomy_version="tax-1", label_set_id=label_set_id
+        client,
+        tier=1,
+        equipment_family="pump-centrifugal",
+        taxonomy_version="tax-1",
+        label_set_id=label_set_id,
     )
 
     resp = await client.post(
@@ -286,7 +305,11 @@ async def test_activate_succeeds_and_is_idempotent_against_reactivation(app_and_
         app, tier=0, equipment_family="pump-centrifugal", taxonomy_version="tax-1", powered=True
     )
     binding = await _create_binding(
-        client, tier=0, equipment_family="pump-centrifugal", taxonomy_version="tax-1", label_set_id=label_set_id
+        client,
+        tier=0,
+        equipment_family="pump-centrifugal",
+        taxonomy_version="tax-1",
+        label_set_id=label_set_id,
     )
 
     resp = await client.post(
@@ -322,7 +345,11 @@ async def test_activating_a_new_binding_supersedes_the_old_one(app_and_client) -
     )
 
     binding_a = await _create_binding(
-        client, tier=0, equipment_family="pump-centrifugal", taxonomy_version="tax-1", label_set_id=label_set_id
+        client,
+        tier=0,
+        equipment_family="pump-centrifugal",
+        taxonomy_version="tax-1",
+        label_set_id=label_set_id,
     )
     resp_a = await client.post(
         f"/api/v1/pdm/model-bindings/{binding_a['binding_id']}/activate", headers=_headers()
@@ -330,7 +357,11 @@ async def test_activating_a_new_binding_supersedes_the_old_one(app_and_client) -
     assert resp_a.status_code == 200, resp_a.text
 
     binding_b = await _create_binding(
-        client, tier=0, equipment_family="pump-centrifugal", taxonomy_version="tax-1", label_set_id=label_set_id
+        client,
+        tier=0,
+        equipment_family="pump-centrifugal",
+        taxonomy_version="tax-1",
+        label_set_id=label_set_id,
     )
     resp_b = await client.post(
         f"/api/v1/pdm/model-bindings/{binding_b['binding_id']}/activate", headers=_headers()
@@ -341,13 +372,19 @@ async def test_activating_a_new_binding_supersedes_the_old_one(app_and_client) -
     async with maker() as session:
         refreshed_a = (
             await session.execute(
-                select(ModelBinding).where(ModelBinding.binding_id == uuid.UUID(binding_a["binding_id"]))
+                select(ModelBinding).where(
+                    ModelBinding.binding_id == uuid.UUID(binding_a["binding_id"])
+                )
             )
         ).scalar_one()
         assert refreshed_a.deactivated_at is not None
 
         rescore_runs = (
-            (await session.execute(select(ScoringRun).where(ScoringRun.trigger == "binding_activation")))
+            (
+                await session.execute(
+                    select(ScoringRun).where(ScoringRun.trigger == "binding_activation")
+                )
+            )
             .scalars()
             .all()
         )

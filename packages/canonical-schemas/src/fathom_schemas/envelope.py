@@ -140,9 +140,7 @@ class EventEnvelope(FathomModel):
     def _exactly_one_scope_identifier(self) -> Self:
         if self.scope is EventScope.FLEET:
             populated = [
-                f
-                for f in EventSubject.model_fields
-                if getattr(self.subject, f) is not None
+                f for f in EventSubject.model_fields if getattr(self.subject, f) is not None
             ]
             if populated:
                 raise ValueError(f"scope='fleet' requires an empty subject; got {populated}")
@@ -161,13 +159,11 @@ class EventEnvelope(FathomModel):
         # above returns before reaching here, so `self.scope` is never FLEET
         # (the one key whose value is None) at this point.
         assert field is not None  # noqa: S101
-        populated = [
-            f
-            for f in EventSubject.model_fields
-            if getattr(self.subject, f) is not None
-        ]
+        populated = [f for f in EventSubject.model_fields if getattr(self.subject, f) is not None]
         if populated != [field]:
-            raise ValueError(f"scope={self.scope.value!r} requires exactly `{field}`; got {populated}")
+            raise ValueError(
+                f"scope={self.scope.value!r} requires exactly `{field}`; got {populated}"
+            )
         return self
 
     @model_validator(mode="after")
@@ -177,7 +173,8 @@ class EventEnvelope(FathomModel):
             raise ValueError(f"malformed event_type: {self.event_type!r}")
         if m.group("slug") != self.producer.slug.value:
             raise ValueError(
-                f"event_type slug {m.group('slug')!r} does not match producer {self.producer.slug.value!r}"
+                f"event_type slug {m.group('slug')!r} does not match producer "
+                f"{self.producer.slug.value!r}"
             )
         return self
 

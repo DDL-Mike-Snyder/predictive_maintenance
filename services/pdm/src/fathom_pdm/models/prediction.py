@@ -48,15 +48,14 @@ class Prediction(Base):
         UniqueConstraint("installed_item_id", "horizon_days", "scoring_run_id"),
         CheckConstraint("horizon_days > 0", name="prediction_horizon_positive"),
         CheckConstraint(
-            "p_failure IS NULL OR (p_failure >= 0 AND p_failure <= 1)", name="prediction_p_failure_range"
+            "p_failure IS NULL OR (p_failure >= 0 AND p_failure <= 1)",
+            name="prediction_p_failure_range",
         ),
         CheckConstraint(
             "population_hazard_rate IS NULL OR population_hazard_rate >= 0",
             name="prediction_hazard_rate_nonneg",
         ),
-        CheckConstraint(
-            "confidence >= 0 AND confidence <= 1", name="prediction_confidence_range"
-        ),
+        CheckConstraint("confidence >= 0 AND confidence <= 1", name="prediction_confidence_range"),
         CheckConstraint("fallback_level BETWEEN 0 AND 4", name="prediction_fallback_level_range"),
         CheckConstraint("tier BETWEEN 0 AND 3", name="prediction_tier_range"),
         # [D19] the corrected 03 §7.1 conditionals, enforced in the database.
@@ -100,13 +99,15 @@ class Prediction(Base):
     baseline_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     baseline_epoch: Mapped[int] = mapped_column(Integer, nullable=False)
     horizon_days: Mapped[int] = mapped_column(Integer, nullable=False)
-    p_failure: Mapped[float | None] = mapped_column(Numeric, nullable=True)  # NULLABLE, 03 §7.1 as corrected
+    # NULLABLE, 03 §7.1 as corrected
+    p_failure: Mapped[float | None] = mapped_column(Numeric, nullable=True)
     reference_class: Mapped[str] = mapped_column(String, nullable=False)
     sharpness: Mapped[float] = mapped_column(Numeric, nullable=False)
     calibration_population: Mapped[int] = mapped_column(
         Integer, nullable=False
     )  # PdM always populates it -- see 22-pdm.md §2.5 note
-    rul: Mapped[dict | None] = mapped_column(_JsonVariant, nullable=True)  # {p10,p50,p90,unit} or NULL
+    # holds p10/p50/p90/unit, or NULL
+    rul: Mapped[dict | None] = mapped_column(_JsonVariant, nullable=True)
     population_hazard_rate: Mapped[float | None] = mapped_column(Numeric, nullable=True)
     confidence: Mapped[float] = mapped_column(Numeric, nullable=False)
     fallback_level: Mapped[int] = mapped_column(SmallInteger, nullable=False)
@@ -116,8 +117,11 @@ class Prediction(Base):
     computed_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     # PdM-internal lifecycle and serving control. NOT on the wire contract.
     status: Mapped[str] = mapped_column(String, nullable=False, default="active")
-    serving_class: Mapped[str] = mapped_column(String, nullable=False)  # §4.5. Set by the server, never the caller
-    invalidated_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # §4.5. Set by the server, never the caller
+    serving_class: Mapped[str] = mapped_column(String, nullable=False)
+    invalidated_at: Mapped[dt.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     invalidation_cause: Mapped[str | None] = mapped_column(String, nullable=True)
     superseded_by: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("pdm.prediction.prediction_id"), nullable=True

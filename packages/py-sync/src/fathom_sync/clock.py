@@ -61,7 +61,9 @@ class MonotonicSequencer:
             # First allocation for this key -- seed the row at 1, then retry once.
             session.add(
                 ProducerSequenceRow(
-                    producer_slug=producer_slug, producer_node_id=producer_node_id, next_seq=1 + count
+                    producer_slug=producer_slug,
+                    producer_node_id=producer_node_id,
+                    next_seq=1 + count,
                 )
             )
             await session.flush()
@@ -71,7 +73,9 @@ class MonotonicSequencer:
         return range(first_allocated, new_next)
 
 
-def monotonic_backoff(attempt: int, *, base_ms: int = 100, cap_ms: int = 60_000, jitter: float = 0.2) -> float:
+def monotonic_backoff(
+    attempt: int, *, base_ms: int = 100, cap_ms: int = 60_000, jitter: float = 0.2
+) -> float:
     """Document 11 §2.5. Monotonic, jittered backoff in seconds. Never a
     wall-clock computation."""
     raw_ms = min(cap_ms, base_ms * (2**attempt))

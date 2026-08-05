@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from . import criticality, decisions, model_bindings, predictions
+from . import criticality, decisions, model_bindings, predictions, scoring_runs
 
 
 def build_v1_router() -> APIRouter:
     router = APIRouter()
     router.include_router(predictions.router, tags=["predictions"])
+    router.include_router(scoring_runs.router, tags=["scoring-runs"])
     router.include_router(criticality.router, tags=["criticality"])
     router.include_router(decisions.router, tags=["decisions"])
     router.include_router(model_bindings.router, tags=["model-bindings"])

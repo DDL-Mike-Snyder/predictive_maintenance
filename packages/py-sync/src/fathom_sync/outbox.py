@@ -8,6 +8,7 @@ state+event together or neither.
 
 from __future__ import annotations
 
+import hashlib
 import time
 import uuid
 from dataclasses import dataclass
@@ -40,16 +41,34 @@ _SCOPE_PARTITION_FIELD: dict[EventScope, str | None] = {
 class SigningPort(Protocol):
     """Record signing / envelope encryption is Audit's key-custody domain
     (32-audit.md §5, Vault/HSM). This package defines the seam a service
-    wires into; it does not implement key management itself."""
+    wires into; it does not implement key management itself.
+
+    `verify`/`decrypt` are `sign`/`encrypt`'s own inverses, needed by the
+    relay (§2.5's `verify_signature(row)`, detecting at-rest tampering
+    before publish) and the consumer (§6, turning a stored ciphertext back
+    into the payload dict `dispatch()` needs) respectively -- neither
+    existed until this pair of components needed them for real."""
 
     def sign(self, payload_sha256: bytes) -> tuple[bytes, str]:
         """Returns (record_signature, signing_key_id)."""
+        ...
+
+    def verify(self, payload_sha256: bytes, signature: bytes, signing_key_id: str) -> bool:
+        """The inverse of `sign` -- recomputes the signature over
+        `payload_sha256` under `signing_key_id` and compares. Does NOT
+        recompute `payload_sha256` from the stored payload bytes itself;
+        that half of tamper detection needs no key material, so the relay
+        does it directly with `hashlib.sha256`, not through this port."""
         ...
 
     def encrypt(self, payload_json: bytes) -> tuple[bytes | None, str]:
         """Returns (payload_ciphertext, payload_kek_id). A production
         implementation may instead choose payload_ref for oversized results
         (D27) -- that path is the caller's decision, not this port's."""
+        ...
+
+    def decrypt(self, payload_ciphertext: bytes, kek_id: str) -> bytes:
+        """The inverse of `encrypt` -- returns the payload JSON bytes."""
         ...
 
 
@@ -121,8 +140,7 @@ class OutboxWriter:
         partition_key = self._derive_partition_key(scope, subject)
         if compaction_key is not None and compaction_key == partition_key:
             raise ValueError(
-                "compaction_key must never equal partition_key (D5) -- "
-                f"both were {partition_key!r}"
+                f"compaction_key must never equal partition_key (D5) -- both were {partition_key!r}"
             )
 
         seq_range = await self._sequencer.next(
@@ -192,13 +210,9 @@ class OutboxWriter:
 
 
 def _sha256(data: bytes) -> bytes:
-    import hashlib
-
     return hashlib.sha256(data).digest()
 
 
 def _shard_for(partition_key: str, shard_count: int) -> int:
-    import hashlib
-
     digest = hashlib.blake2b(partition_key.encode("utf-8"), digest_size=8).digest()
     return int.from_bytes(digest, "big") % shard_count

@@ -4,14 +4,15 @@ Revision ID: 17c852f3210f
 Revises: ad1c64fd7fde
 Create Date: 2026-08-05 15:55:14.000000
 """
+
 from __future__ import annotations
 
 from collections.abc import Sequence
 
 from alembic import op
 
-revision: str = '17c852f3210f'
-down_revision: str | None = 'ad1c64fd7fde'
+revision: str = "17c852f3210f"
+down_revision: str | None = "ad1c64fd7fde"
 branch_labels: Sequence[str] | None = None
 depends_on: Sequence[str] | None = None
 

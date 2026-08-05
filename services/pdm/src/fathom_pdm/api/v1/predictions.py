@@ -18,7 +18,7 @@ from fathom_pdm.deps import Principal, current_principal, get_outbox_writer, get
 from fathom_pdm.models import ScoringRun
 from fathom_pdm.repositories.prediction import PredictionRepository
 from fathom_pdm.schemas.prediction import BulkPredictionIngestRequest, BulkPredictionIngestResult
-from fathom_pdm.services.scoring import ScoringRunFencedOut, bulk_ingest_predictions
+from fathom_pdm.services.scoring import ScoringRunFencedOutError, bulk_ingest_predictions
 
 router = APIRouter()
 
@@ -33,15 +33,19 @@ _prediction_repo = PredictionRepository()
         operation_id="pdm_bulk_ingest_predictions",
         substitution=Substitution.REQUIRED,
         side_effects=SideEffects.STATE_CHANGING,
-        summary="Bulk, idempotent, baseline-fenced prediction ingest -- the Domino scoring Job write path.",
+        summary=(
+            "Bulk, idempotent, baseline-fenced prediction ingest -- the Domino scoring "
+            "Job write path."
+        ),
         aggregate="prediction",
     ),
 )
 async def bulk_ingest(
+    *,
     request: Request,
     scoring_run_id: uuid.UUID,
     body: BulkPredictionIngestRequest,
-    principal: Principal = Depends(current_principal),
+    _principal: Principal = Depends(current_principal),
     session: AsyncSession = Depends(get_session),
     uow: UnitOfWork = Depends(get_uow),
     outbox: OutboxWriter = Depends(get_outbox_writer),
@@ -75,7 +79,7 @@ async def bulk_ingest(
             if isinstance(scoring_run.baseline_epoch_at_start, dict)
             else 0,
         )
-    except ScoringRunFencedOut as exc:
+    except ScoringRunFencedOutError as exc:
         scoring_run.status = "fenced_out"
         raise ProblemException(
             type="urn:fathom:problem:pdm:baseline-superseded",
@@ -108,7 +112,7 @@ async def bulk_ingest(
 )
 async def get_prediction(
     prediction_id: uuid.UUID,
-    principal: Principal = Depends(current_principal),
+    _principal: Principal = Depends(current_principal),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, object]:
     row = await _prediction_repo.get_by_id(session, prediction_id)

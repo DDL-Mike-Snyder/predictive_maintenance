@@ -31,15 +31,15 @@ from fathom_pdm.repositories.prediction import PredictionRepository
 _CENSORING_CORRECTION = "ipcw_stabilized"
 
 
-class BindingNotFound(Exception):
+class BindingNotFoundError(Exception):
     pass
 
 
-class BindingAlreadyActivated(Exception):
+class BindingAlreadyActivatedError(Exception):
     pass
 
 
-class BindingRefused(Exception):
+class BindingRefusedError(Exception):
     """§5.6's binding refusal. `reason` is one of `unaccepted_propensity_model`,
     `unpowered_label_set_family`, `no_calibration_record`."""
 
@@ -93,9 +93,9 @@ async def activate_binding(
     session = uow.session
     binding = await binding_repo.get_by_id(session, binding_id)
     if binding is None:
-        raise BindingNotFound(str(binding_id))
+        raise BindingNotFoundError(str(binding_id))
     if binding.activated_at is not None:
-        raise BindingAlreadyActivated(str(binding_id))
+        raise BindingAlreadyActivatedError(str(binding_id))
 
     label_set = await binding_repo.get_label_set(session, binding.label_set_id)
     propensity_model_id = label_set.propensity_model_id if label_set is not None else None
@@ -105,22 +105,27 @@ async def activate_binding(
         else None
     )
     if propensity_model is None or not propensity_model.accepted:
-        raise BindingRefused(
+        raise BindingRefusedError(
             "unaccepted_propensity_model",
-            f"binding {binding_id}'s label set {binding.label_set_id} has no accepted propensity model",
+            f"binding {binding_id}'s label set {binding.label_set_id} has no "
+            "accepted propensity model",
         )
 
-    if not await binding_repo.powered_calibration_exists_for_family(session, binding.equipment_family):
-        raise BindingRefused(
+    if not await binding_repo.powered_calibration_exists_for_family(
+        session, binding.equipment_family
+    ):
+        raise BindingRefusedError(
             "unpowered_label_set_family",
             f"no powered calibration record exists for family {binding.equipment_family!r}",
         )
 
     if not await binding_repo.calibration_exists_for_triple(
-        session, tier=binding.tier, equipment_family=binding.equipment_family,
+        session,
+        tier=binding.tier,
+        equipment_family=binding.equipment_family,
         taxonomy_version=binding.taxonomy_version,
     ):
-        raise BindingRefused(
+        raise BindingRefusedError(
             "no_calibration_record",
             f"no calibration record exists for (tier={binding.tier}, "
             f"equipment_family={binding.equipment_family!r}, "
@@ -130,7 +135,9 @@ async def activate_binding(
     now = dt.datetime.now(dt.UTC)
 
     previous = await binding_repo.get_active_for_triple(
-        session, tier=binding.tier, equipment_family=binding.equipment_family,
+        session,
+        tier=binding.tier,
+        equipment_family=binding.equipment_family,
         taxonomy_version=binding.taxonomy_version,
     )
     if previous is not None:

@@ -36,8 +36,8 @@ this consumer for this vertical slice.
 
 from __future__ import annotations
 
-import datetime as dt  # noqa: TC003 -- needed at runtime: Pydantic resolves model field annotations
-import uuid  # noqa: TC003 -- same as above (ConfigurationBaselineChanged/InstalledItemRemoved fields)
+import datetime as dt
+import uuid
 from typing import TYPE_CHECKING
 
 from fathom_schemas import EventEnvelope, FathomModel

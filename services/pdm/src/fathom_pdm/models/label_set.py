@@ -25,7 +25,9 @@ _JsonVariant = JSON().with_variant(JSONB(), "postgresql")
 class LabelSet(Base):
     __tablename__ = "label_set"
     __table_args__ = (
-        CheckConstraint("stratum IN ('treated','policy_frozen','combined')", name="label_set_stratum"),
+        CheckConstraint(
+            "stratum IN ('treated','policy_frozen','combined')", name="label_set_stratum"
+        ),
         {"schema": "pdm"},
     )
 
@@ -42,8 +44,12 @@ class LabelSet(Base):
         UUID(as_uuid=True), ForeignKey("pdm.propensity_model.propensity_model_id"), nullable=True
     )
     artifact_uri: Mapped[str] = mapped_column(String, nullable=False)
-    feature_definition_time: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    feature_data_time_max: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    feature_definition_time: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    feature_data_time_max: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
     ipcw_summary: Mapped[dict] = mapped_column(_JsonVariant, nullable=False)
     built_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     classification: Mapped[dict] = mapped_column(_JsonVariant, nullable=False)

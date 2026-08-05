@@ -39,7 +39,9 @@ class ModelBindingRepository:
         )
         return (await session.execute(stmt)).scalar_one_or_none()
 
-    async def get_label_set(self, session: AsyncSession, label_set_id: uuid.UUID) -> LabelSet | None:
+    async def get_label_set(
+        self, session: AsyncSession, label_set_id: uuid.UUID
+    ) -> LabelSet | None:
         return (
             await session.execute(select(LabelSet).where(LabelSet.label_set_id == label_set_id))
         ).scalar_one_or_none()

@@ -21,7 +21,9 @@ def _attach_correlation_id(request: httpx.Request) -> None:
         request.headers["X-Correlation-Id"] = correlation_id
 
 
-def make_client(*, base_url: str, workload_token: str | None = None, timeout: float = 10.0) -> httpx.AsyncClient:
+def make_client(
+    *, base_url: str, workload_token: str | None = None, timeout: float = 10.0
+) -> httpx.AsyncClient:
     headers = {}
     if workload_token:
         headers["Authorization"] = f"Bearer {workload_token}"

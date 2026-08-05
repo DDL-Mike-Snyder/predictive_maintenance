@@ -14,8 +14,12 @@ _SLUG_RE = r"[a-z][a-z0-9-]*"
 _AGGREGATE_RE = r"[a-z][a-z0-9_]*"
 _VERB_RE = r"[a-z][a-z0-9_]*"
 
-TOPIC_RE = re.compile(rf"^fathom\.(?P<slug>{_SLUG_RE})\.(?P<aggregate>{_AGGREGATE_RE})\.v(?P<major>\d+)$")
-EVENT_TYPE_RE = re.compile(rf"^fathom\.(?P<slug>{_SLUG_RE})\.(?P<aggregate>{_AGGREGATE_RE})\.(?P<verb>{_VERB_RE})$")
+TOPIC_RE = re.compile(
+    rf"^fathom\.(?P<slug>{_SLUG_RE})\.(?P<aggregate>{_AGGREGATE_RE})\.v(?P<major>\d+)$"
+)
+EVENT_TYPE_RE = re.compile(
+    rf"^fathom\.(?P<slug>{_SLUG_RE})\.(?P<aggregate>{_AGGREGATE_RE})\.(?P<verb>{_VERB_RE})$"
+)
 
 PROPOSAL_TOPIC_PATTERN = "fathom.{slug}.proposal.v{major}"
 

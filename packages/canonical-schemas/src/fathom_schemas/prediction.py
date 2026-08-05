@@ -47,7 +47,8 @@ class Rul(FathomModel):
     def _quantiles_ordered(self) -> Self:
         if not (self.p10 <= self.p50 <= self.p90):
             raise ValueError(
-                f"RUL quantiles must be ordered p10<=p50<=p90; got {self.p10}, {self.p50}, {self.p90}"
+                "RUL quantiles must be ordered p10<=p50<=p90; got "
+                f"{self.p10}, {self.p50}, {self.p90}"
             )
         return self
 
@@ -95,7 +96,9 @@ class FailurePrediction(FathomModel):
         default=None, ge=0.0, description="Emitted INSTEAD OF `rul` for non-item reference classes."
     )
     confidence: float = Field(ge=0.0, le=1.0, description="Sharpness-and-fit confidence only.")
-    fallback_level: int = Field(ge=0, le=4, description="Cold-start depth, NOT folded into confidence.")
+    fallback_level: int = Field(
+        ge=0, le=4, description="Cold-start depth, NOT folded into confidence."
+    )
     tier: int = Field(ge=0, le=3, description="Transparency only. Never branch on this -- FTH006.")
     contributing_factors: tuple[ContributingFactor, ...] = Field(default=())
     model_version: NonEmptyStr
@@ -120,7 +123,8 @@ class FailurePrediction(FathomModel):
                 )
             if self.population_hazard_rate is None:
                 raise ValueError(
-                    f"reference_class={self.reference_class.value!r} REQUIRES `population_hazard_rate`"
+                    f"reference_class={self.reference_class.value!r} REQUIRES "
+                    "`population_hazard_rate`"
                 )
         return self
 
@@ -129,7 +133,10 @@ class FailurePrediction(FathomModel):
         n = self.calibration_population
         if n is None:
             return self
-        if n < CALIBRATION_POPULATION_FLOOR and self.reference_class is not ReferenceClass.CLASS_ESTIMATE:
+        if (
+            n < CALIBRATION_POPULATION_FLOOR
+            and self.reference_class is not ReferenceClass.CLASS_ESTIMATE
+        ):
             raise ValueError(
                 f"calibration_population={n} is below the gate of "
                 f"{CALIBRATION_POPULATION_FLOOR}; reference_class must be 'class_estimate'"

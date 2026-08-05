@@ -4,6 +4,7 @@ Revision ID: ad1c64fd7fde
 Revises: 22ca49ca2ede
 Create Date: 2026-08-05 14:19:53.000000
 """
+
 from __future__ import annotations
 
 from collections.abc import Sequence
@@ -12,8 +13,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-revision: str = 'ad1c64fd7fde'
-down_revision: str | None = '22ca49ca2ede'
+revision: str = "ad1c64fd7fde"
+down_revision: str | None = "22ca49ca2ede"
 branch_labels: Sequence[str] | None = None
 depends_on: Sequence[str] | None = None
 
@@ -21,63 +22,96 @@ depends_on: Sequence[str] | None = None
 def upgrade() -> None:
     # Creation order matters: model_binding.label_set_id FKs to label_set,
     # label_set.propensity_model_id FKs to propensity_model.
-    op.create_table('propensity_model',
-    sa.Column('propensity_model_id', sa.UUID(), nullable=False),
-    sa.Column('spec_version', sa.String(), nullable=False),
-    sa.Column('fitted_on_label_set', sa.UUID(), nullable=True),
-    sa.Column('grid', sa.String(), nullable=False),
-    sa.Column('policy_version_strata', postgresql.ARRAY(sa.String()).with_variant(sa.JSON(), 'sqlite'), nullable=False),
-    sa.Column('fit_artifact_uri', sa.String(), nullable=False),
-    sa.Column('positivity_min_k', sa.Numeric(), nullable=False),
-    sa.Column('ess', sa.Numeric(), nullable=False),
-    sa.Column('max_stabilized_weight', sa.Numeric(), nullable=False),
-    sa.Column('mean_stabilized_weight', sa.Numeric(), nullable=False),
-    sa.Column('calibration_of_propensity', sa.JSON().with_variant(postgresql.JSONB(astext_type=sa.Text()), 'postgresql'), nullable=False),
-    sa.Column('pms_sensitivity', sa.JSON().with_variant(postgresql.JSONB(astext_type=sa.Text()), 'postgresql'), nullable=False),
-    sa.Column('accepted', sa.Boolean(), nullable=False),
-    sa.Column('rejection_reason', sa.String(), nullable=True),
-    sa.Column('fitted_at', sa.DateTime(timezone=True), nullable=False),
-    sa.PrimaryKeyConstraint('propensity_model_id'),
-    schema='pdm'
+    op.create_table(
+        "propensity_model",
+        sa.Column("propensity_model_id", sa.UUID(), nullable=False),
+        sa.Column("spec_version", sa.String(), nullable=False),
+        sa.Column("fitted_on_label_set", sa.UUID(), nullable=True),
+        sa.Column("grid", sa.String(), nullable=False),
+        sa.Column(
+            "policy_version_strata",
+            postgresql.ARRAY(sa.String()).with_variant(sa.JSON(), "sqlite"),
+            nullable=False,
+        ),
+        sa.Column("fit_artifact_uri", sa.String(), nullable=False),
+        sa.Column("positivity_min_k", sa.Numeric(), nullable=False),
+        sa.Column("ess", sa.Numeric(), nullable=False),
+        sa.Column("max_stabilized_weight", sa.Numeric(), nullable=False),
+        sa.Column("mean_stabilized_weight", sa.Numeric(), nullable=False),
+        sa.Column(
+            "calibration_of_propensity",
+            sa.JSON().with_variant(postgresql.JSONB(astext_type=sa.Text()), "postgresql"),
+            nullable=False,
+        ),
+        sa.Column(
+            "pms_sensitivity",
+            sa.JSON().with_variant(postgresql.JSONB(astext_type=sa.Text()), "postgresql"),
+            nullable=False,
+        ),
+        sa.Column("accepted", sa.Boolean(), nullable=False),
+        sa.Column("rejection_reason", sa.String(), nullable=True),
+        sa.Column("fitted_at", sa.DateTime(timezone=True), nullable=False),
+        sa.PrimaryKeyConstraint("propensity_model_id"),
+        schema="pdm",
     )
-    op.create_table('label_set',
-    sa.Column('label_set_id', sa.UUID(), nullable=False),
-    sa.Column('equipment_family', sa.String(), nullable=False),
-    sa.Column('taxonomy_version', sa.String(), nullable=False),
-    sa.Column('window_start', sa.DateTime(timezone=True), nullable=False),
-    sa.Column('window_end', sa.DateTime(timezone=True), nullable=False),
-    sa.Column('grid', sa.String(), nullable=False),
-    sa.Column('stratum', sa.String(), nullable=False),
-    sa.Column('propensity_model_id', sa.UUID(), nullable=True),
-    sa.Column('artifact_uri', sa.String(), nullable=False),
-    sa.Column('feature_definition_time', sa.DateTime(timezone=True), nullable=False),
-    sa.Column('feature_data_time_max', sa.DateTime(timezone=True), nullable=False),
-    sa.Column('ipcw_summary', sa.JSON().with_variant(postgresql.JSONB(astext_type=sa.Text()), 'postgresql'), nullable=False),
-    sa.Column('built_at', sa.DateTime(timezone=True), nullable=False),
-    sa.Column('classification', sa.JSON().with_variant(postgresql.JSONB(astext_type=sa.Text()), 'postgresql'), nullable=False),
-    sa.CheckConstraint("stratum IN ('treated','policy_frozen','combined')", name='label_set_stratum'),
-    sa.ForeignKeyConstraint(['propensity_model_id'], ['pdm.propensity_model.propensity_model_id'], ),
-    sa.PrimaryKeyConstraint('label_set_id'),
-    schema='pdm'
+    op.create_table(
+        "label_set",
+        sa.Column("label_set_id", sa.UUID(), nullable=False),
+        sa.Column("equipment_family", sa.String(), nullable=False),
+        sa.Column("taxonomy_version", sa.String(), nullable=False),
+        sa.Column("window_start", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("window_end", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("grid", sa.String(), nullable=False),
+        sa.Column("stratum", sa.String(), nullable=False),
+        sa.Column("propensity_model_id", sa.UUID(), nullable=True),
+        sa.Column("artifact_uri", sa.String(), nullable=False),
+        sa.Column("feature_definition_time", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("feature_data_time_max", sa.DateTime(timezone=True), nullable=False),
+        sa.Column(
+            "ipcw_summary",
+            sa.JSON().with_variant(postgresql.JSONB(astext_type=sa.Text()), "postgresql"),
+            nullable=False,
+        ),
+        sa.Column("built_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column(
+            "classification",
+            sa.JSON().with_variant(postgresql.JSONB(astext_type=sa.Text()), "postgresql"),
+            nullable=False,
+        ),
+        sa.CheckConstraint(
+            "stratum IN ('treated','policy_frozen','combined')", name="label_set_stratum"
+        ),
+        sa.ForeignKeyConstraint(
+            ["propensity_model_id"],
+            ["pdm.propensity_model.propensity_model_id"],
+        ),
+        sa.PrimaryKeyConstraint("label_set_id"),
+        schema="pdm",
     )
-    op.create_table('model_binding',
-    sa.Column('binding_id', sa.UUID(), nullable=False),
-    sa.Column('tier', sa.SmallInteger(), nullable=False),
-    sa.Column('equipment_family', sa.String(), nullable=False),
-    sa.Column('taxonomy_version', sa.String(), nullable=False),
-    sa.Column('registry_model_version', sa.String(), nullable=False),
-    sa.Column('registry_model_uri', sa.String(), nullable=False),
-    sa.Column('approval_ref', sa.String(), nullable=False),
-    sa.Column('label_set_id', sa.UUID(), nullable=False),
-    sa.Column('censoring_correction', sa.String(), nullable=False),
-    sa.Column('activated_at', sa.DateTime(timezone=True), nullable=True),
-    sa.Column('deactivated_at', sa.DateTime(timezone=True), nullable=True),
-    sa.CheckConstraint("censoring_correction IN ('ipcw_stabilized')", name='model_binding_censoring_correction'),
-    sa.CheckConstraint('tier BETWEEN 0 AND 3', name='model_binding_tier_range'),
-    sa.ForeignKeyConstraint(['label_set_id'], ['pdm.label_set.label_set_id'], ),
-    sa.PrimaryKeyConstraint('binding_id'),
-    sa.UniqueConstraint('tier', 'equipment_family', 'taxonomy_version', 'activated_at'),
-    schema='pdm'
+    op.create_table(
+        "model_binding",
+        sa.Column("binding_id", sa.UUID(), nullable=False),
+        sa.Column("tier", sa.SmallInteger(), nullable=False),
+        sa.Column("equipment_family", sa.String(), nullable=False),
+        sa.Column("taxonomy_version", sa.String(), nullable=False),
+        sa.Column("registry_model_version", sa.String(), nullable=False),
+        sa.Column("registry_model_uri", sa.String(), nullable=False),
+        sa.Column("approval_ref", sa.String(), nullable=False),
+        sa.Column("label_set_id", sa.UUID(), nullable=False),
+        sa.Column("censoring_correction", sa.String(), nullable=False),
+        sa.Column("activated_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("deactivated_at", sa.DateTime(timezone=True), nullable=True),
+        sa.CheckConstraint(
+            "censoring_correction IN ('ipcw_stabilized')", name="model_binding_censoring_correction"
+        ),
+        sa.CheckConstraint("tier BETWEEN 0 AND 3", name="model_binding_tier_range"),
+        sa.ForeignKeyConstraint(
+            ["label_set_id"],
+            ["pdm.label_set.label_set_id"],
+        ),
+        sa.PrimaryKeyConstraint("binding_id"),
+        sa.UniqueConstraint("tier", "equipment_family", "taxonomy_version", "activated_at"),
+        schema="pdm",
     )
 
     # --- Grants, scoped to what the code this migration ships with actually
@@ -125,6 +159,6 @@ def downgrade() -> None:
     op.execute("REVOKE ALL ON pdm.label_set FROM fathom_pdm_serving")
     op.execute("REVOKE ALL ON pdm.propensity_model FROM fathom_pdm_serving")
 
-    op.drop_table('model_binding', schema='pdm')
-    op.drop_table('label_set', schema='pdm')
-    op.drop_table('propensity_model', schema='pdm')
+    op.drop_table("model_binding", schema="pdm")
+    op.drop_table("label_set", schema="pdm")
+    op.drop_table("propensity_model", schema="pdm")

@@ -45,4 +45,6 @@ class ModelBinding(Base):
     )
     censoring_correction: Mapped[str] = mapped_column(String, nullable=False)
     activated_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    deactivated_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    deactivated_at: Mapped[dt.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )

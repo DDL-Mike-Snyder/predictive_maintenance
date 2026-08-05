@@ -26,7 +26,7 @@ _TextArray = ARRAY(String).with_variant(JSON(), "sqlite")
 
 class PropensityModel(Base):
     __tablename__ = "propensity_model"
-    __table_args__ = {"schema": "pdm"}
+    __table_args__ = ({"schema": "pdm"},)
 
     propensity_model_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
@@ -34,7 +34,9 @@ class PropensityModel(Base):
     spec_version: Mapped[str] = mapped_column(String, nullable=False)
     fitted_on_label_set: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     grid: Mapped[str] = mapped_column(String, nullable=False)
-    policy_version_strata: Mapped[list[str]] = mapped_column(_TextArray, nullable=False, default=list)
+    policy_version_strata: Mapped[list[str]] = mapped_column(
+        _TextArray, nullable=False, default=list
+    )
     fit_artifact_uri: Mapped[str] = mapped_column(String, nullable=False)
     # diagnostics that are refusal gates, not reports (§4.4)
     positivity_min_k: Mapped[float] = mapped_column(Numeric, nullable=False)

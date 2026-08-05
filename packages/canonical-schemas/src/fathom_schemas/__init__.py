@@ -20,7 +20,7 @@ from .decision import (
     ExpectedConsequence,
     RiskPosture,
     TimingBasis,
-    UncalibratedAndUnrated,
+    UncalibratedAndUnratedError,
     expected_consequence,
 )
 from .envelope import (
@@ -119,7 +119,7 @@ __all__ = [
     "TimeSource",
     "TimingBasis",
     "Uic",
-    "UncalibratedAndUnrated",
+    "UncalibratedAndUnratedError",
     "UtcDateTime",
     "__schema_major__",
     "__version__",

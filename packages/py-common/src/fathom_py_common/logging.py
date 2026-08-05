@@ -31,7 +31,9 @@ def _redact(_logger: object, _method_name: str, event_dict: dict[str, Any]) -> d
     return event_dict
 
 
-def _bind_correlation_id(_logger: object, _method_name: str, event_dict: dict[str, Any]) -> dict[str, Any]:
+def _bind_correlation_id(
+    _logger: object, _method_name: str, event_dict: dict[str, Any]
+) -> dict[str, Any]:
     event_dict.setdefault("correlation_id", current_correlation_id())
     return event_dict
 

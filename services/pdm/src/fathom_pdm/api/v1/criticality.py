@@ -30,7 +30,7 @@ _criticality_repo = CriticalityRepository()
 )
 async def get_criticality(
     niin: str,
-    principal: Principal = Depends(current_principal),
+    _principal: Principal = Depends(current_principal),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, object]:
     row = await _criticality_repo.get_latest_published_for_niin(session, niin)

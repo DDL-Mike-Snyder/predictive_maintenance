@@ -54,7 +54,10 @@ _ENV_DEFAULTS = {
 @pytest.fixture(scope="module")
 def pg_container() -> Iterator[PostgresContainer]:
     with PostgresContainer(
-        "postgres:16-alpine", dbname="pdm", username="pdm_owner", password="pdm_owner"  # noqa: S106 -- throwaway, ephemeral testcontainer
+        "postgres:16-alpine",
+        dbname="pdm",
+        username="pdm_owner",
+        password="pdm_owner",  # noqa: S106 -- throwaway, ephemeral testcontainer
     ) as pg:
         yield pg
 
@@ -204,7 +207,9 @@ def test_rls_and_force_are_enabled(owner_dsn: str) -> None:
     assert (enabled, forced) == (True, True)
 
 
-def test_serving_role_sees_only_actionable(rls_roles: dict[str, str], seeded: dict[str, uuid.UUID]) -> None:
+def test_serving_role_sees_only_actionable(
+    rls_roles: dict[str, str], seeded: dict[str, uuid.UUID]
+) -> None:
     with psycopg.connect(rls_roles["serving"]) as conn, conn.cursor() as cur:
         cur.execute(
             "SELECT prediction_id FROM pdm.prediction WHERE prediction_id IN (%s, %s)",
@@ -232,15 +237,20 @@ def test_research_role_has_no_write_access(
     """13 §8.6's credential separation: the research role holds no INSERT/
     UPDATE/DELETE on any table, mirrored here as a hard permission-denied,
     not merely an RLS-filtered zero-row outcome."""
-    with psycopg.connect(rls_roles["research"]) as conn, conn.cursor() as cur:
-        with pytest.raises(psycopg.errors.InsufficientPrivilege):
-            cur.execute(
-                "UPDATE pdm.prediction SET status = 'invalidated' WHERE prediction_id = %s",
-                (seeded["research"],),
-            )
+    with (
+        psycopg.connect(rls_roles["research"]) as conn,
+        conn.cursor() as cur,
+        pytest.raises(psycopg.errors.InsufficientPrivilege),
+    ):
+        cur.execute(
+            "UPDATE pdm.prediction SET status = 'invalidated' WHERE prediction_id = %s",
+            (seeded["research"],),
+        )
 
 
-def test_serving_insert_rejects_disallowed_serving_class(owner_dsn: str, rls_roles: dict[str, str]) -> None:
+def test_serving_insert_rejects_disallowed_serving_class(
+    owner_dsn: str, rls_roles: dict[str, str]
+) -> None:
     """`serving_insert`'s WITH CHECK -- the row must be one of the two
     values `serving_insert` allows, not whatever a caller supplies."""
     with psycopg.connect(owner_dsn) as conn:
@@ -272,39 +282,44 @@ def test_serving_insert_rejects_disallowed_serving_class(owner_dsn: str, rls_rol
         conn.commit()
 
     try:
-        with psycopg.connect(rls_roles["serving"]) as conn, conn.cursor() as cur:
-            with pytest.raises(psycopg.errors.InsufficientPrivilege):
-                cur.execute(
-                    """
-                    INSERT INTO pdm.prediction (
-                        prediction_id, scoring_run_id, asset_id, installed_item_id, position_id,
-                        niin, equipment_family, baseline_id, baseline_epoch, horizon_days,
-                        p_failure, reference_class, sharpness, calibration_population,
-                        population_hazard_rate, confidence, fallback_level, tier,
-                        contributing_factors, model_version, computed_at, status,
-                        serving_class, provenance_id, classification
-                    ) VALUES (
-                        %s, %s, %s, %s, %s,
-                        '000000000', 'test-family', %s, 1, 30,
-                        0.1, 'class_estimate', 0.5, 100,
-                        0.01, 0.8, 0, 1,
-                        '[]', 'test-model-v1', now(), 'published',
-                        'holdout_bypass_attempt', %s, '{}'
-                    )
-                    """,
-                    (
-                        uuid.uuid4(),
-                        scoring_run_id,
-                        uuid.uuid4(),
-                        uuid.uuid4(),
-                        uuid.uuid4(),
-                        uuid.uuid4(),
-                        provenance_id,
-                    ),
+        with (
+            psycopg.connect(rls_roles["serving"]) as conn,
+            conn.cursor() as cur,
+            pytest.raises(psycopg.errors.InsufficientPrivilege),
+        ):
+            cur.execute(
+                """
+                INSERT INTO pdm.prediction (
+                    prediction_id, scoring_run_id, asset_id, installed_item_id, position_id,
+                    niin, equipment_family, baseline_id, baseline_epoch, horizon_days,
+                    p_failure, reference_class, sharpness, calibration_population,
+                    population_hazard_rate, confidence, fallback_level, tier,
+                    contributing_factors, model_version, computed_at, status,
+                    serving_class, provenance_id, classification
+                ) VALUES (
+                    %s, %s, %s, %s, %s,
+                    '000000000', 'test-family', %s, 1, 30,
+                    0.1, 'class_estimate', 0.5, 100,
+                    0.01, 0.8, 0, 1,
+                    '[]', 'test-model-v1', now(), 'published',
+                    'holdout_bypass_attempt', %s, '{}'
                 )
+                """,
+                (
+                    uuid.uuid4(),
+                    scoring_run_id,
+                    uuid.uuid4(),
+                    uuid.uuid4(),
+                    uuid.uuid4(),
+                    uuid.uuid4(),
+                    provenance_id,
+                ),
+            )
     finally:
         with psycopg.connect(owner_dsn) as conn, conn.cursor() as cur:
-            cur.execute("DELETE FROM pdm.prediction_provenance WHERE provenance_id = %s", (provenance_id,))
+            cur.execute(
+                "DELETE FROM pdm.prediction_provenance WHERE provenance_id = %s", (provenance_id,)
+            )
             cur.execute("DELETE FROM pdm.scoring_run WHERE scoring_run_id = %s", (scoring_run_id,))
             conn.commit()
 
@@ -321,12 +336,15 @@ def test_serving_role_has_no_direct_update_grant(
     empirically, and the reason this role now holds no UPDATE grant on the
     table at all. Even an actionable row -- one this role CAN see -- must be
     unreachable by a plain UPDATE, since the grant itself is gone."""
-    with psycopg.connect(rls_roles["serving"]) as conn, conn.cursor() as cur:
-        with pytest.raises(psycopg.errors.InsufficientPrivilege):
-            cur.execute(
-                "UPDATE pdm.prediction SET status = 'invalidated' WHERE prediction_id = %s",
-                (seeded["actionable"],),
-            )
+    with (
+        psycopg.connect(rls_roles["serving"]) as conn,
+        conn.cursor() as cur,
+        pytest.raises(psycopg.errors.InsufficientPrivilege),
+    ):
+        cur.execute(
+            "UPDATE pdm.prediction SET status = 'invalidated' WHERE prediction_id = %s",
+            (seeded["actionable"],),
+        )
 
 
 def test_invalidate_prediction_reaches_research_only_rows(
@@ -369,7 +387,9 @@ def test_invalidate_prediction_reaches_actionable_rows_too(
     assert found is True
 
     with psycopg.connect(owner_dsn) as conn, conn.cursor() as cur:
-        cur.execute("SELECT status FROM pdm.prediction WHERE prediction_id = %s", (seeded["actionable"],))
+        cur.execute(
+            "SELECT status FROM pdm.prediction WHERE prediction_id = %s", (seeded["actionable"],)
+        )
         (status,) = cur.fetchone()
     assert status == "invalidated"
 
@@ -387,6 +407,9 @@ def test_research_role_cannot_call_invalidate_prediction(
     """EXECUTE is granted to `fathom_pdm_serving` only -- the research role,
     which holds no write access anywhere, must not be able to invoke this
     either, even though the function itself bypasses RLS once inside."""
-    with psycopg.connect(rls_roles["research"]) as conn, conn.cursor() as cur:
-        with pytest.raises(psycopg.errors.InsufficientPrivilege):
-            cur.execute("SELECT pdm.invalidate_prediction(%s, 'test')", (seeded["research"],))
+    with (
+        psycopg.connect(rls_roles["research"]) as conn,
+        conn.cursor() as cur,
+        pytest.raises(psycopg.errors.InsufficientPrivilege),
+    ):
+        cur.execute("SELECT pdm.invalidate_prediction(%s, 'test')", (seeded["research"],))

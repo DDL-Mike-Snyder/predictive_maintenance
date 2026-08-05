@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import uuid
 
 from fathom_schemas import ClassificationLabel, EventScope, EventSubject, FathomModel
@@ -43,8 +44,8 @@ async def publish_model_binding_activated(
     label_set_id: uuid.UUID,
     propensity_model_id: uuid.UUID | None,
     classification: ClassificationLabel,
-    occurred_at,
-    recorded_at,
+    occurred_at: dt.datetime,
+    recorded_at: dt.datetime,
 ) -> EventId:
     payload = ModelBindingActivated(
         binding_id=binding_id,
@@ -107,8 +108,8 @@ async def publish_prediction_updated(
     predictions_written: int,
     reference_class_summary: tuple[str, ...],
     classification: ClassificationLabel,
-    occurred_at,
-    recorded_at,
+    occurred_at: dt.datetime,
+    recorded_at: dt.datetime,
 ) -> EventId:
     payload = PredictionUpdated(
         scoring_run_id=scoring_run_id,

@@ -25,7 +25,7 @@ _JsonVariant = JSON(none_as_null=True).with_variant(JSONB(none_as_null=True), "p
 
 class PredictionProvenance(Base):
     __tablename__ = "prediction_provenance"
-    __table_args__ = {"schema": "pdm"}
+    __table_args__ = ({"schema": "pdm"},)
 
     provenance_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
@@ -34,10 +34,14 @@ class PredictionProvenance(Base):
     model_binding_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     label_set_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     propensity_model_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
-    calibration_record_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    calibration_record_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
     gate_decision: Mapped[dict] = mapped_column(_JsonVariant, nullable=False)
     feature_observations: Mapped[dict] = mapped_column(_JsonVariant, nullable=False)
-    feature_definition_time: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    feature_definition_time: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
     fallback_path: Mapped[dict] = mapped_column(_JsonVariant, nullable=False)
     attribution_method: Mapped[str | None] = mapped_column(String, nullable=True)
     stability_threshold_applied: Mapped[float | None] = mapped_column(Numeric, nullable=True)

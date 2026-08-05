@@ -117,7 +117,8 @@ def test_expected_consequence_class_rate_never_synthesizes_p10() -> None:
     assert result.basis is Basis.CLASS_RATE_CONVERTED
     assert result.timing_p10 is None
     assert result.timing_p50 == pytest.approx(1 / 0.002)
-    # AVERSE uses the upper bound, so expected consequence must be >= the point estimate's contribution
+    # AVERSE uses the upper bound, so expected consequence must be >= the
+    # point estimate's contribution
     assert result.expected_consequence >= result.p_event_horizon * 1000.0
 
 

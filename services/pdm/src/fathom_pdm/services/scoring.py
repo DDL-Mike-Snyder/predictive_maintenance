@@ -13,7 +13,7 @@ from __future__ import annotations
 import datetime as dt
 import uuid
 
-from fathom_schemas import ClassificationLabel, FailurePrediction
+from fathom_schemas import CALIBRATION_POPULATION_FLOOR, ClassificationLabel, FailurePrediction
 from fathom_sync import OutboxWriter, UnitOfWork
 
 from fathom_pdm.events.publishers import publish_prediction_updated
@@ -21,14 +21,53 @@ from fathom_pdm.models import Prediction, PredictionProvenance, ScoringRun
 from fathom_pdm.repositories.prediction import PredictionRepository
 
 
-class ScoringRunNotFound(Exception):
+class ScoringRunNotFoundError(Exception):
     pass
 
 
-class ScoringRunFencedOut(Exception):
+class ScoringRunFencedOutError(Exception):
     """D3: the baseline moved underneath the run. The result is correctly
     refused at publication -- `fenced_out` is a first-class terminal status,
     not a failure."""
+
+
+async def create_scoring_run(
+    uow: UnitOfWork,
+    *,
+    stratum: str,
+    scope: dict[str, object],
+    classification: ClassificationLabel,
+) -> ScoringRun:
+    """22-pdm.md §10's on-demand re-score (`POST /scoring-runs`). Mints a
+    `queued` row for whatever later triggers the real Domino Job -- this
+    operation does not itself invoke Domino; that orchestration is out of
+    scope for this vertical slice, the same boundary
+    `services/model_binding.py`'s own `rescore_run` already documents.
+    `model_bindings`/`label_set_ids` stay empty: which bindings actually
+    serve this run is resolved by the scoring process itself once a real
+    Job runs against this row, not knowable at request time.
+    """
+    now = dt.datetime.now(dt.UTC)
+    scoring_run = ScoringRun(
+        stratum=stratum,
+        trigger="on_demand",
+        scope=scope,
+        # [PLACEHOLDER] same boundary as every other queued scoring_run in
+        # this vertical slice (see services/model_binding.py's own
+        # rescore_run) -- real baseline/read-model-lag snapshots come from
+        # configuration/read-model infrastructure this slice doesn't build.
+        baseline_epoch_at_start={},
+        model_bindings=[],
+        label_set_ids=[],
+        feature_definition_time=now,
+        domino_execution_ref="queued",
+        read_model_lag_at_start={},
+        status="queued",
+        classification=classification.wire_dict(),
+    )
+    uow.session.add(scoring_run)
+    await uow.session.flush()
+    return scoring_run
 
 
 _SERVING_CLASS_BY_STRATUM = {
@@ -59,7 +98,7 @@ async def bulk_ingest_predictions(
     # D3: baseline fencing. A prediction computed against a baseline_epoch
     # behind the current one is fenced out at ingest, not silently accepted.
     if any(p.baseline_epoch < current_baseline_epoch for p in predictions):
-        raise ScoringRunFencedOut(
+        raise ScoringRunFencedOutError(
             f"scoring_run {scoring_run.scoring_run_id} computed against a baseline "
             f"epoch behind the current one ({current_baseline_epoch})"
         )
@@ -89,7 +128,7 @@ async def bulk_ingest_predictions(
                     "reference_class": pred.reference_class.value,
                 },
                 "n": pred.calibration_population,
-                "gate_passed": (pred.calibration_population or 0) >= 50,
+                "gate_passed": (pred.calibration_population or 0) >= CALIBRATION_POPULATION_FLOOR,
             },
             feature_observations={},
             feature_definition_time=pred.computed_at,

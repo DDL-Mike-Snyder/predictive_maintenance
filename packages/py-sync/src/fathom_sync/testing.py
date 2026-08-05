@@ -22,10 +22,23 @@ class InsecureTestSigner(SigningPort):
     def sign(self, payload_sha256: bytes) -> tuple[bytes, str]:
         return hmac.new(self._key, payload_sha256, hashlib.sha256).digest(), "test-signing-key"
 
+    def verify(
+        self,
+        payload_sha256: bytes,
+        signature: bytes,
+        signing_key_id: str,  # noqa: ARG002
+    ) -> bool:
+        # Single fixed key today -- nothing for signing_key_id to select yet.
+        expected, _ = self.sign(payload_sha256)
+        return hmac.compare_digest(expected, signature)
+
     def encrypt(self, payload_json: bytes) -> tuple[bytes | None, str]:
         # No real encryption in the test double -- ciphertext == plaintext,
         # clearly marked so nobody mistakes this for a security boundary.
         return payload_json, "test-kek"
+
+    def decrypt(self, payload_ciphertext: bytes, kek_id: str) -> bytes:  # noqa: ARG002 -- see encrypt()
+        return payload_ciphertext
 
 
 class FixedEpochFence:
@@ -35,5 +48,7 @@ class FixedEpochFence:
     def __init__(self, epoch: int = 0) -> None:
         self._epoch = epoch
 
-    async def current_epoch(self, session: AsyncSession, asset_id: str) -> int:
+    async def current_epoch(self, _session: AsyncSession, _asset_id: str) -> int:
+        """Signature matches `EpochFence` (inbox.py) -- both params are
+        required for Protocol conformance and deliberately unused here."""
         return self._epoch

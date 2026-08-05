@@ -53,7 +53,8 @@ class CalibrationRecord(Base):
             "method IN ('isotonic','beta','identity_suppressed')", name="calibration_method"
         ),
         CheckConstraint(
-            "drift_state IN ('stable','warning','drifting','withdrawn')", name="calibration_drift_state"
+            "drift_state IN ('stable','warning','drifting','withdrawn')",
+            name="calibration_drift_state",
         ),
         {"schema": "pdm"},
     )

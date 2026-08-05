@@ -174,7 +174,7 @@ async def test_inbox_suppresses_only_after_processed_at_set(session: AsyncSessio
         replay=False,
         clock=Clock(
             monotonic_seq=1,
-            hlc=HybridLogicalClockShim(),
+            hlc=hybrid_logical_clock_shim(),
             source_time=now,
             ingest_time=now,
             sync_quality=SyncQuality(
@@ -202,7 +202,7 @@ async def test_inbox_suppresses_only_after_processed_at_set(session: AsyncSessio
         assert await inbox.already_applied(session, envelope.event_id)
 
 
-def HybridLogicalClockShim():
+def hybrid_logical_clock_shim():
     from fathom_schemas import HybridLogicalClock
 
     return HybridLogicalClock(physical=1, logical=0, node_id="enterprise")

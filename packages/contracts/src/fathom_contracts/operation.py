@@ -47,6 +47,7 @@ class OperationDeclaration:
     source: str  # "file.py:lineno", for error messages
     aggregate: str | None = None  # for the §4 changed_since completeness check
     singleton_carveout: str | None = None  # §4 naming carve-out justification
+    idempotency_required: bool = False  # see `operation()`'s own docstring
 
 
 REGISTRY: dict[str, OperationDeclaration] = {}
@@ -62,10 +63,22 @@ def operation(
     agent_eligible: bool = False,
     aggregate: str | None = None,
     singleton_carveout: str | None = None,
+    idempotency_required: bool = False,
 ) -> Callable[[F], F]:
     """Declare an operation's contract annotations. Document 03 §4.1, §8.1.
 
     `agent_eligible=True` with `side_effects=STATE_CHANGING` raises at import.
+
+    `idempotency_required` is the escape hatch for 09 §8.1's own general
+    rule ("required on every `state-changing` and `proposal-only`
+    operation") -- `packages/py-common`'s `idempotency_guard` enforces that
+    rule automatically from `x-side-effects` alone, so this flag only needs
+    setting on the rare `side_effects=none` operation whose own spec calls
+    for an Idempotency-Key anyway (22-pdm.md §10's `POST /scoring-runs`:
+    `none` because it computes and does not alter *domain* state, but it
+    still mints a real row, so blind retries are not safe). Do not set this
+    on a normal `none` operation -- that would silently make retries of an
+    ordinary read-only-ish endpoint require a header no caller expects.
     """
     if agent_eligible and not side_effects.agent_eligible_permitted:
         raise ValueError(
@@ -89,6 +102,7 @@ def operation(
         source=f"{frame.filename}:{frame.lineno}",
         aggregate=aggregate,
         singleton_carveout=singleton_carveout,
+        idempotency_required=idempotency_required,
     )
     REGISTRY[operation_id] = declaration
 
@@ -114,4 +128,6 @@ def operation_extra(**kwargs: Any) -> dict[str, Any]:
         extra["x-fathom-aggregate"] = declaration.aggregate
     if declaration.singleton_carveout:
         extra["x-fathom-singleton-carveout"] = declaration.singleton_carveout
+    if declaration.idempotency_required:
+        extra["x-fathom-idempotency-required"] = True
     return extra

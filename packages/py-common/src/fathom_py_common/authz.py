@@ -50,7 +50,9 @@ def current_principal(
     return principal
 
 
-def require_clearance(principal: Principal, label_level: str, label_compartments: tuple[str, ...]) -> None:
+def require_clearance(
+    principal: Principal, label_level: str, label_compartments: tuple[str, ...]
+) -> None:
     """[PLACEHOLDER] A minimal ABAC check a service calls explicitly from
     its own service-layer code (03 §4, obligation 7: enforced in THIS
     service, never the gateway). A full implementation belongs to
