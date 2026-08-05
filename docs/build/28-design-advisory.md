@@ -327,12 +327,33 @@ ALTER TABLE design_advisory.test_record
 
 -- The ONLY sanctioned read for scoring, costing, and dossier assembly.
 -- Direct SELECT from test_record inside services/ is a lint failure (§13).
+--
+-- `expected_test` first expands every profile row to the NIIN(s) it actually
+-- applies to. A niin-scoped profile applies to exactly the one NIIN it names.
+-- An equipment_family-scoped profile has `niin IS NULL` (`exactly_one_scope`,
+-- §3.2.1(b)), so joining test_record directly on `tr.niin = p.niin` -- as a
+-- single-level view over `test_coverage_profile` would -- compares every
+-- family-scoped row against NULL, which never matches. Every family-scoped
+-- expectation would then read as `absent_unknown` forever, regardless of how
+-- much test evidence actually exists for the family's NIINs, making gate G4
+-- (§5.3) structurally unsatisfiable for any program using a family-scoped
+-- profile. Expanding through `part_ref.equipment_family` here is what lets a
+-- family-scoped expectation resolve against the real test records of every
+-- NIIN in that family, exactly as a niin-scoped one resolves against its own.
 CREATE VIEW design_advisory.test_coverage_v AS
-SELECT p.scope_kind,
-       coalesce(p.niin, tr.niin)              AS niin,
-       p.test_kind_code,
-       p.expectation,
-       p.basis                                AS expectation_basis,
+WITH expected_test AS (
+    SELECT p.profile_id, p.scope_kind, p.test_kind_code, p.expectation, p.basis,
+           pr.niin
+      FROM design_advisory.test_coverage_profile p
+      JOIN design_advisory.part_ref pr
+        ON (p.scope_kind = 'niin'             AND pr.niin = p.niin)
+        OR (p.scope_kind = 'equipment_family' AND pr.equipment_family = p.equipment_family)
+)
+SELECT e.scope_kind,
+       e.niin,
+       e.test_kind_code,
+       e.expectation,
+       e.basis                                AS expectation_basis,
        coalesce(tr.record_status, 'absent_unknown'::design_advisory.test_record_status)
                                               AS record_status,
        tr.outcome,
@@ -342,10 +363,10 @@ SELECT p.scope_kind,
        tr.test_record_id,
        tr.test_performed_at,
        tr.report_ref
-  FROM design_advisory.test_coverage_profile p
+  FROM expected_test e
   LEFT JOIN design_advisory.test_record tr
-         ON tr.niin           = p.niin
-        AND tr.test_kind_code = p.test_kind_code
+         ON tr.niin           = e.niin
+        AND tr.test_kind_code = e.test_kind_code
         AND tr.superseded_by IS NULL;
 ```
 
@@ -696,9 +717,13 @@ Document 07 §5.6 documents the Navy's existing priority corrective-action proce
 
 `priority_components` records each of the six scaled attribute values plus the PdM tier as a seventh input, and `priority_score` is their vector magnitude. **Using the Navy's own scaling and combination rule rather than inventing a weighted sum is deliberate** — 07 §5.6 notes this process is *"the closest existing analogue"* to the platform's own scoring, and a figure computed the Navy's way is a figure a Navy reviewer can check.
 
+**[AMENDMENT — real security defect, found in adversarial review and closed here.]** "Three sigma equals 1.0" was originally read as a **live** standard deviation recomputed against the current fleet population for each of the six attributes. That is the same defect class `22-pdm.md` §5.5 and `23-pma.md` §3.3 already found and fixed: a compartmented hull's CASREP burst or man-hour spike shifts the fleet-wide σ for that attribute, rescaling every visible NIIN's component and moving `priority_score` — and, since `priority_score ≥ PRIORITY_FLOOR` is gate G2, potentially flipping a visible NIIN's gate outcome with no compartment boundary crossed explicitly and no test catching it. This is a cross-population *normalization*, not ordinary arithmetic on one NIIN's own six inputs, so it is not the same case as Supply's shared `on_hand_qty` inventory pool (excluded elsewhere in this review as inherent to real shared physical inventory) — a fleet-wide σ is a platform-computed statistic, not a physical quantity multiple NIINs draw from.
+
+**Fixed the same way as the other two: σ is a fixed, pre-calibrated constant per attribute**, set once from a historical baseline at Phase 3 SME validation (the same mechanism `22-pdm.md` §5.5 and `23-pma.md` §3.3 use), versioned alongside `priority_method`, and never recomputed against the live fleet population. This is also the more faithful reading of 07 §5.6's Navy analogue: the existing corrective-action process scales against an established historical σ, not one that shifts under the current book of open CASREPs, so fixing the leak also corrects a drift from the source methodology. A NIIN's `priority_score` is then a pure function of its own six attribute values and the fixed scaling constants — it cannot move because a different NIIN, compartmented or not, changed.
+
 **What is NOT resolved:** whether the PdM tier enters as a seventh vector component, as a multiplier, or as a filter. Marked **OD-4 (§15), placeholder pending Phase 3 SME validation.** The interim implementation treats it as a seventh component and records `priority_method = 'tmi-vector-v0-placeholder'` so that every score carries the fact that its formulation is provisional.
 
-### 3.6 `RedesignCase` — with `dependency_completeness` as a required, structured field
+### 3.6 `RedesignCase` — with `dependency_completeness` as a conditionally-required, structured field
 
 ```sql
 CREATE TABLE design_advisory.redesign_case (
@@ -719,7 +744,7 @@ CREATE TABLE design_advisory.redesign_case (
 
     scope_description text,
 
-    -- --- 04 §10's key decision, as a REQUIRED structured field -------------
+    -- --- 04 §10's key decision, as a conditionally-required structured field ---
     -- "dependency completeness is itself reported so a reader knows how much of
     --  the impact is known."  Required once assembled -- see assembled_is_complete below.
     dependency_completeness jsonb,
@@ -728,6 +753,17 @@ CREATE TABLE design_advisory.redesign_case (
     -- Test-evidence completeness, reported for the same reason
     test_coverage_summary   jsonb,
     test_attribution_ambiguity jsonb,   -- §3.2.4
+
+    -- The configuration baseline this case's evidence (the impact traversal and
+    -- the affected population it costs) was assembled against -- the same
+    -- "computed-against" pattern `design_scenario.computed_against_baseline_epoch`
+    -- uses for a NIIN-scoped artefact (§7.1), so `redesign_case.published` can be
+    -- antecedent-fenced downstream (03 §5.4) rather than carrying an envelope
+    -- field with nothing on the aggregate to source it from. Populated at
+    -- /assemble alongside the other fields this AMENDMENT made nullable-until-
+    -- assembled; §6.5's publish handler reads it as `case.baseline_epoch`.
+    baseline_id       uuid,
+    baseline_epoch    bigint,
 
     cost_estimate_id  uuid REFERENCES design_advisory.cost_estimate(estimate_id),
     projected_benefit jsonb,
@@ -758,8 +794,9 @@ CREATE TABLE design_advisory.redesign_case (
             AND jsonb_array_length(recommendation_evidence_gaps) > 0)
     ),
     -- [AMENDMENT] The fields /assemble (§6.1 step 9) itself populates -- niin,
-    -- scope_description, dependency_completeness, impact_snapshot_id, and the two
-    -- test-evidence summaries -- are required from 'assembled' onward, the same status
+    -- scope_description, dependency_completeness, impact_snapshot_id, the two
+    -- test-evidence summaries, and the baseline the evidence was assembled
+    -- against -- are required from 'assembled' onward, the same status
     -- assembled_is_complete above already gates on.
     CONSTRAINT assembly_inputs_complete CHECK (
         case_status NOT IN ('assembled','published')
@@ -768,7 +805,9 @@ CREATE TABLE design_advisory.redesign_case (
             AND dependency_completeness IS NOT NULL
             AND impact_snapshot_id IS NOT NULL
             AND test_coverage_summary IS NOT NULL
-            AND test_attribution_ambiguity IS NOT NULL)
+            AND test_attribution_ambiguity IS NOT NULL
+            AND baseline_id IS NOT NULL
+            AND baseline_epoch IS NOT NULL)
     ),
     -- E2: 'published' is reachable ONLY as the effect of an adjudicated proposal.
     CONSTRAINT published_requires_adjudicated_proposal CHECK (
@@ -783,7 +822,7 @@ CREATE TABLE design_advisory.redesign_case (
 ```json
 {
   "computed_at": "2026-08-04T14:02:11.000000+00:00",
-  "graph_snapshot_id": "…",
+  "impact_snapshot_id": "…",
   "max_depth_requested": 3,
   "edges_touched": 47,
   "edges_verified": 29,
@@ -798,6 +837,8 @@ CREATE TABLE design_advisory.redesign_case (
   "is_bounded_below": true
 }
 ```
+
+**[AMENDMENT — corrected.]** This example previously named the snapshot-identity key `graph_snapshot_id`, a name `design_advisory.impact()` (§4.2) never produces: the function's own `dependency_completeness` object (built inside the same statement as the traversal, before any row is persisted) has no such field, because the id does not exist yet at that point — it is assigned by `impact_snapshot`'s `gen_random_uuid()` default only when `persist=true` inserts the row (§4.5). Renamed to `impact_snapshot_id`, matching the column name used everywhere this value is actually stored (`redesign_case.impact_snapshot_id`, `cost_estimate.impact_snapshot_id`, `gate_decision.impact_snapshot_id`), and it is stamped into this jsonb object by the caller **after** persistence — when the case is assembled (§6.1 step 9) from a `persist=true` traversal — not authored by `impact()` itself.
 
 Three properties are load-bearing:
 
@@ -1070,18 +1111,28 @@ SELECT jsonb_build_object(
                     'edge_count',  count(DISTINCT w.edge_id))
                   FROM walk w WHERE w.to_kind = 'part' GROUP BY w.to_niin) t(x)),
 
+    -- Same two-level shape as 'impacted_parts' above, and for the same reason:
+    -- `min(w.depth)` is an aggregate over the per-artifact/per-relation GROUP BY,
+    -- so it is computed in an INNER query and only the pre-built objects are
+    -- aggregated in the outer jsonb_agg. Nesting min() directly inside the
+    -- jsonb_agg/jsonb_build_object call, with the GROUP BY on this same SELECT,
+    -- is invalid twice over: Postgres rejects a nested aggregate call, and even
+    -- if it did not, the GROUP BY would make this scalar sub-select — used as a
+    -- single value inside the surrounding jsonb_build_object above — return one
+    -- row per (artifact, relation) instead of the single row a scalar position
+    -- requires.
     'impacted_artifacts', (
-        SELECT coalesce(jsonb_agg(jsonb_build_object(
+        SELECT coalesce(jsonb_agg(x ORDER BY x->>'artifact_kind', x->>'external_ref'), '[]'::jsonb)
+          FROM (SELECT jsonb_build_object(
                     'artifact_id',  a.artifact_id,
                     'artifact_kind',a.artifact_kind,
                     'external_ref', a.external_ref,
                     'via_relation', w.relation,
-                    'min_depth',    min(w.depth))
-                 ORDER BY a.artifact_kind, a.external_ref), '[]'::jsonb)
-          FROM walk w
-          JOIN design_advisory.dependency_artifact a ON a.artifact_id = w.to_artifact_id
-         WHERE w.to_kind = 'artifact'
-         GROUP BY a.artifact_id, a.artifact_kind, a.external_ref, w.relation),
+                    'min_depth',    min(w.depth)) AS x
+                  FROM walk w
+                  JOIN design_advisory.dependency_artifact a ON a.artifact_id = w.to_artifact_id
+                 WHERE w.to_kind = 'artifact'
+                 GROUP BY a.artifact_id, a.artifact_kind, a.external_ref, w.relation) t),
 
     'truncated_at_depth', (SELECT coalesce(jsonb_agg(to_niin ORDER BY to_niin), '[]'::jsonb) FROM frontier),
 
@@ -1228,7 +1279,8 @@ GATE_PASS(candidate c, dossier d, snapshot s, parametric p)  ⇔
   (G5)  ( |{ f ∈ d.field_failures : f.failure_indicator }|  ≥  FIELD_FAILURE_FLOOR )
         ∨ ( |{ x ∈ d.causal_citations : x.posture = 'supporting'
                                       ∧ x.adjudication_state = 'published' }|  ≥  1 )
-  (G6)  c.status ∈ { 'identified', 'qualifying' }   ∧   c.dossier_id = d.dossier_id
+  (G6)  c.status ∈ { 'identified', 'qualifying', 'gate_passed', 'gate_failed' }
+                                                     ∧   c.dossier_id = d.dossier_id
 ```
 
 Each condition, and why it is that condition:
@@ -1240,7 +1292,7 @@ Each condition, and why it is that condition:
 | **G3** | Dependency completeness meets a floor | **A dependency roll-up over a graph that is mostly unverified produces a number with false precision.** Below the floor, the correct next action is to *populate the graph*, not to cost it. The gate failure names this as the remedy in `condition_results` |
 | **G4** | **Test coverage has been *assessed*** — zero `absent_unknown` rows | Note carefully what this does **not** require: it does not require that tests exist, that they passed, or that coverage is complete. Legacy components frequently have no qualification data and that must not bar analysis (04 §10). It requires only that every expected test kind has been **looked at** and its status established — `present`, `absent_not_performed`, `absent_not_located`, or `absent_not_required`. `absent_unknown` means nobody has checked, and a business case whose test section says "we have not looked" is not defensible |
 | **G5** | An evidentiary floor, **disjunctive** | Some evidence must exist, or stage 2 is costing a hypothesis. Either enough corrective field failures, or at least one *published* supporting causal citation |
-| **G6** | State and dossier consistency | Prevents gating a candidate against a dossier that is not its own |
+| **G6** | State and dossier consistency | Prevents gating a candidate against a dossier that is not its own. **[AMENDMENT — corrected.]** Originally restricted `c.status` to `{'identified', 'qualifying'}` only — the two pre-gate states. But §6.3 moves `redesign_candidate.status` to `gate_passed` / `gate_failed` as the effect of the *first* evaluation, and §5.2 says new evidence "re-evaluates the gate and writes a new row." Read literally, every re-evaluation after the first would find `c.status` already outside `{'identified', 'qualifying'}` and fail G6 unconditionally — permanently blocking stage-2 costing for any candidate that had ever been gated once. `gate_passed` and `gate_failed` are added to the allowed set so a candidate can be re-gated on new evidence; only `case_drafted` (a case has already been built from this candidate) and `withdrawn` (terminal) are excluded, because those are the states past which re-gating no longer applies |
 
 **G5 deliberately does not threshold on evidence strength, and this is the most important design decision in the gate.** It would be easy to write `∧ strength ≥ MODERATE`. That would be wrong for two reasons. First, it would require this sub-application to *rank* Failure Intelligence's strength values, which is precisely the authoring of a local strength judgment that §8 forbids. Second, **whether a given evidence strength justifies a redesign is a design-authority judgment, not a cost-efficiency judgment.** The gate exists to decide where to spend estimation effort. Smuggling an evidentiary sufficiency test into it would move a decision that belongs to a human into a configuration constant. A weak-but-published finding on an expensive, high-priority, widely-depended-upon component may well warrant a detailed estimate — and the resulting case will carry that weak strength verbatim into the design authority's hands, which is the correct outcome.
 
@@ -1811,7 +1863,7 @@ Topics: `fathom.design-advisory.<aggregate>.v1`. Partition key is the scope iden
 
 `redesign_case.published` carries `dependency_completeness` in full, not a scalar. A consumer receiving a case's cost estimate without the completeness of the graph it was rolled up over has the number and not its qualification, and `fleet-status` in particular must be able to present a redesign-driven readiness figure with its uncertainty intact.
 
-**Envelope.** Full 03 §5.4 envelope on every event, including the complete `clock` block with all six `sync_quality` sub-fields. `producer = "design-advisory"` with version; **`producer_node = "enterprise"` always** (§0.1). `replay: true` handled idempotently with no operator-visible alert.
+**Envelope.** Full 03 §5.4 envelope on every event, including the complete `clock` block with all five `sync_quality` sub-fields (`time_source`, `offset_ms`, `dispersion_ms`, `seconds_since_sync`, `step_occurred` — 03 §5.4). `producer = "design-advisory"` with version; **`producer_node = "enterprise"` always** (§0.1). `replay: true` handled idempotently with no operator-visible alert.
 
 ### 10.2 Consumed — enumerated, no wildcards
 
@@ -1825,6 +1877,7 @@ Exactly 03 §6's declared set for `design-advisory`:
 | `installed_item.removed` | `registry` | Removals with failure indicator and disposition |
 | `prediction.updated` | `pdm` | **Population and consequence context only.** Never evidence for a causal claim (DO-NOT-DA-6) |
 | `prediction.invalidated` | `pdm` | Marks context stale; drops scenario-tainted rows (§7.5) |
+| `criticality_tier.assigned` | `pdm` | **[AMENDMENT — added; three sections of this document already depend on it and it was absent from this enumeration.]** Read model `rm_criticality` (§11); consumed, never recomputed, into `pdm_criticality_tier` as a priority-scoring input (§3.5.1, DA-14) |
 | `part_availability.changed` | `supply` | Cost inputs: `unit_price_cents` **[AMENDMENT — 03 §6 never carried this field until now; every cost estimate was silently costing on an absent input]**, `lead_time`, `condition_code`, interchangeable group (`[D6, D24]`) |
 
 `src/fathom_design_advisory/events/catalog.py`'s `PUBLISHES`/`CONSUMES` frozensets must **equal** `helm/values.yaml`'s `events.publishes`/`events.consumes` and **equal** 03 §6's rows for this slug. `python tools/check_event_catalog.py` exits 0 (09 §8.6).
@@ -1926,7 +1979,7 @@ Everything in 09 §8.5 applies. Below are the tests specific to this sub-applica
 | **T-COMPLETE-5** | Cycle safety. A→B→C→A returns finite results; the same NIIN reachable by two distinct paths appears with both, and neither path is dropped | §4.3 property 5 |
 | **T-COMPLETE-6** | Artifacts are leaves. Two unrelated NIINs sharing a `technical_publication`: traversing from one does **not** reach the other | §4.3 property 4 |
 | **T-COMPLETE-7** | `completeness_ratio` is `NULL`, not `1.0`, when `edges_touched = 0`; the API renders an isolated NIIN as an explicit empty impact set with `edges_touched: 0`, never a successful-looking total | §4.2 |
-| **T-COMPLETE-8** | A `RedesignCase` cannot be inserted with a `dependency_completeness` whose `edges_touched` disagrees with its `impact_snapshot_id`; and cannot be inserted with a NULL completeness at all | §3.6 |
+| **T-COMPLETE-8** | A `RedesignCase` cannot be inserted with a `dependency_completeness` whose `edges_touched` disagrees with its `impact_snapshot_id`; and — **[AMENDMENT — corrected to match `assembly_inputs_complete` (§3.6, DA1)]** — cannot be transitioned to `assembled` or `published` with a NULL completeness, though a NULL is permitted (and expected) on the `draft` row `POST /redesign-cases` creates, before `/assemble` has run | §3.6 |
 | **T-COMPLETE-9** | `is_lower_bound` on a `dependency_rollup` estimate is `true` iff `coverage_ratio < 1.0`, enforced by the constraint, tested from both sides | §3.7 |
 
 ### 13.3 Test-data absence
@@ -2009,8 +2062,8 @@ No empty test section, no `outcome` on an absence row, no qualification credit f
 **DA-6 — Do not use a prediction as evidence for a causal claim, and do not close the D21 loop here.**
 `prediction.updated` is consumed for population and consequence context only. This mirrors 04 §9's restriction on Failure Intelligence — *"It is never used as evidence for a causal finding"* — and matters more here, because a business case citing a model's own output as evidence for the phenomenon the model was trained on is circular in a way that survives casual review. **05 D21**; §1.3, §7.5.
 
-**DA-7 — Do not report dependency completeness as total, and do not omit it.**
-`dependency_completeness` is `NOT NULL` on every case; `is_bounded_below` is set whenever the ratio is below 1.0 **or** the traversal truncated; a `dependency_rollup` estimate over an incomplete graph is recorded as a **lower bound**. 04 §10: *"dependency completeness is itself reported so a reader knows how much of the impact is known."* §3.6, §3.7, §4.4.
+**DA-7 — Do not report dependency completeness as total, and do not omit it once assembled.**
+**[AMENDMENT — corrected to match DA1, §3.6.]** `dependency_completeness` is `NOT NULL` on every `assembled` or `published` case, via `assembly_inputs_complete` — not, as originally stated here, on every case unconditionally: the `draft` row `POST /redesign-cases` creates has no dependency traversal to report yet (E2), so it is nullable until `/assemble` runs and required from that point on. `is_bounded_below` is set whenever the ratio is below 1.0 **or** the traversal truncated; a `dependency_rollup` estimate over an incomplete graph is recorded as a **lower bound**. 04 §10: *"dependency completeness is itself reported so a reader knows how much of the impact is known."* §3.6, §3.7, §4.4.
 
 **DA-8 — Do not improve completeness by asserting confidence.**
 `inferred_cooccurrence` and `unverified_import` can never count as verified, whatever `verified_by` says. A statistical co-replacement pattern is a hypothesis about a dependency, not a dependency. §3.4.2; T-COMPLETE-2.
@@ -2105,7 +2158,7 @@ Each is a defect or gap in the cited document, not a decision of this one.
 - [ ] Per-path cycle detection; artifacts terminal; depth capped at 6. *(T-COMPLETE-5, -6)*
 - [ ] `is_bounded_below` set on truncation even at ratio 1.0. *(T-COMPLETE-4)*
 - [ ] Unverifiable source kinds can never count as verified. *(T-COMPLETE-2)*
-- [ ] `dependency_completeness` `NOT NULL` on every case and consistent with its snapshot. *(T-COMPLETE-8)*
+- [ ] `dependency_completeness` `NOT NULL` from `assembled` onward (via `assembly_inputs_complete`, DA1) and consistent with its snapshot; nullable only on a pre-`/assemble` `draft`. *(T-COMPLETE-8)*
 - [ ] `dependency_rollup` over an incomplete graph is recorded as a lower bound. *(T-COMPLETE-9)*
 
 ### 17.4 Two-stage costing
