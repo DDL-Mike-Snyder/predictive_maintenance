@@ -498,7 +498,11 @@ CREATE TABLE ts.sample (
   batch_id           uuid        NOT NULL,
   mapping_version    integer     NOT NULL,
   known_at_seq       bigint      NOT NULL,
-  PRIMARY KEY (channel_key, asset_id, data_time, batch_id)
+  PRIMARY KEY (channel_key, asset_id, position_id, data_time, batch_id)
+  -- [AMENDMENT] position_id added -- without it, two transducers of the same
+  -- canonical channel on one hull (a real, common case: two vibration sensors
+  -- at different positions both reporting "vibration_rms") collide on this
+  -- key within the same batch and data_time, silently dropping one sample.
 );
 SELECT create_hypertable('ts.sample', 'data_time', chunk_time_interval => INTERVAL '1 day');
 SELECT add_dimension('ts.sample', 'asset_id', number_partitions => 16);
