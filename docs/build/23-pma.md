@@ -175,6 +175,9 @@ CREATE TABLE pma.anomaly_candidate (
     producer_node         text NOT NULL,
     version               bigint NOT NULL DEFAULT 1,
     classification        jsonb NOT NULL,
+    compartments          text[] NOT NULL DEFAULT '{}',   -- denormalised from classification for
+                                                            -- query use (§5.6 AMENDMENT); the
+                                                            -- admission-control partition key
 
     -- ── WITHHELD (I3). Never selected by any reviewer-facing repository method. ──
     origin                pma.candidate_origin NOT NULL,
@@ -621,13 +624,17 @@ class RankWeights:
 
 | Component | Definition | Why it is informative |
 |---|---|---|
-`detector_confidence` | The detector's score, **normalised within `detector_version`** using that version's observed score distribution over the trailing window | A raw score is not comparable across detector versions or across the edge/enterprise split. Normalising within version is what stops a detector re-release from silently reordering every review |
+`detector_confidence` | The detector's score, **normalised within `detector_version` against a fixed, pre-calibrated score-distribution snapshot** `[AMENDMENT — was "that version's observed score distribution over the trailing window"; see note below]` | A raw score is not comparable across detector versions or across the edge/enterprise split. Normalising within version is what stops a detector re-release from silently reordering every review |
 `ensemble_disagreement` | Spread across the detectors that scored the window, plus disagreement with PdM's cached prediction for the item | A candidate on which the machinery already agrees teaches little; a candidate on which it disagrees resolves a disagreement, which is the highest-value use of 45 seconds of human attention |
-`label_scarcity` | `1 / (1 + n)` where `n` is the count of confirmed tags for `(equipment_family, signature_key)` at the pinned taxonomy version | Directly serves the calibration-population gate: 06 §3 suppresses `p_failure` below `calibration_population = 50`, so labels in thin cells are worth strictly more than labels in full ones |
+`label_scarcity` | `1 / (1 + n)` where `n` is the count of confirmed tags for `(equipment_family, signature_key, compartments)` at the pinned taxonomy version `[AMENDMENT — compartments added; see note below]` | Directly serves the calibration-population gate: 06 §3 suppresses `p_failure` below `calibration_population = 50`, so labels in thin cells are worth strictly more than labels in full ones |
 `maintenance_corroboration` | A `maintenance_action.recorded` on the same `installed_item_id` within the window plus a configured lag | 04 §8: "the single most useful context a reviewer can have." Corroborated candidates are faster **and** more reliably labelled — the one component that improves both halves of the throughput/quality trade |
 `novelty` | The candidate's channel signature crosswalks to no entry at the pinned version | Feeds the novel-signature proposal path (§4.4), which is how the vocabulary grows |
 `consequence` | Max `consequence_class` severity over the candidate's crosswalked modes, times PdM criticality tier | Operationally obvious, and **deliberately the smallest weight of the substantive components** |
 `evidence_completeness` | Telemetry's completeness record for the window | A window with a data gap cannot be reviewed well. This component is a mild preference; a hard failure is handled at stage 9, not here |
+
+**[AMENDMENT — real security defect, found in adversarial review and closed here.]** Both `detector_confidence` and `label_scarcity`, as originally specified, were the same defect class `22-pdm.md` §5.5 already found and fixed in the criticality formula's two inputs, one level removed: a live, fleet-wide statistic recomputed against the current population, moving a *visible* candidate's rank score when a *compartmented* hull's data changes, with no compartment boundary named anywhere in this document. `detector_confidence`'s "observed score distribution over the trailing window" is exactly `27-fleet-status.md` §3.6's ruled-out pattern (*"Fleet-wide percentile normalization... The reference distribution is built over the full fleet contributor population, which includes compartmented contributors on other hulls"*) — a compartmented hull's detector activity shifts the trailing-window distribution, and therefore every visible candidate's normalised score and rank position, with nothing to point at as the cause. `label_scarcity`'s `n` is a direct, undisguised count across every contributing hull for `(equipment_family, signature_key)` — the same shape as `22-pdm.md`'s just-fixed `calibration_population`, and in fact it feeds that exact gate, so leaving it unpartitioned while `calibration_population` is compartment-scoped would make the two counts disagree, which is itself a tell.
+
+**Fixed the same way both times, mirroring `22-pdm.md`'s two already-corrected patterns.** `detector_confidence` normalises against a **fixed, pre-calibrated score-distribution snapshot** per `detector_version` — set once at model validation (the same Phase 3 SME mechanism that sets the criticality curves), versioned, and never recomputed against the live trailing window. A detector's normalisation constants change only on a deliberate re-validation, exactly as `22-pdm.md` §5.5 fixed mission-criticality and consequence-of-failure. `label_scarcity`'s `n` is scoped to `(equipment_family, signature_key, compartments)`, mirroring `22-pdm.md` §6.1's compartment-partitioned calibration cell: a confirmed tag on a compartmented hull increments the count only within its own compartment's partition, never the general pool an uncompartmented candidate's rank draws on. A visible candidate's `rank_score` is then a pure function of its own detector output, its own compartment's tag count, and a fixed snapshot — it cannot move because a different candidate, compartmented or not, was scored or labelled.
 
 **Why `consequence` is capped, stated explicitly because it is counter-intuitive.** Ranking by consequence maximises operational relevance and *biases the label set toward severe modes*. A training corpus assembled from consequence-ranked reviews under-represents the benign and the early-precursor cases, which are exactly what a P-F-interval model needs (MIL-STD-3034A 3.9.3's "definable and measurable condition that indicates a functional failure is imminent", 12 §5.1). The weight is bounded, the resulting severity distribution of confirmed tags is reported in the quality metrics of §5.5, and a drift toward severity is a monitored condition rather than a discovery made during model training.
 
@@ -1122,16 +1129,18 @@ class AdmissionState:
     throughput: int
     throughput_basis: Literal["observed", "planned_warmup"]
     scope_node: str
+    compartments: tuple[str, ...]          # [AMENDMENT] see note below
     engaged_since: datetime | None
     override: OverrideRecord | None
 
 
-def evaluate(session, scope_node: str, now_mono: float) -> AdmissionState:
+def evaluate(session, scope_node: str, compartments: tuple[str, ...], now_mono: float) -> AdmissionState:
     backlog = session.scalar(
         """SELECT count(*) FROM pma.anomaly_candidate
             WHERE producer_node = :node
+              AND compartments = :compartments               -- [AMENDMENT] see note below
               AND state IN ('queued_unadmitted', 'admitted')""",
-        {"node": scope_node},
+        {"node": scope_node, "compartments": compartments},
     )
 
     if _node_uptime(scope_node) < WARMUP_PERIOD:
@@ -1147,13 +1156,17 @@ Every term is defined, because each has a wrong reading that produces a broken g
 
 | Term | Definition | The wrong reading it forecloses |
 |---|---|---|
-| **backlog** | Candidates in `queued_unadmitted` or `admitted` for this scope node. Includes canaries; excludes `held_on_antecedent`, `held_no_evidence`, and `grouped_duplicate` | Counting only admitted candidates hides the real queue: the events keep arriving whether or not reviews open |
+| **backlog** | Candidates in `queued_unadmitted` or `admitted` for this scope node **and this compartment set** `[AMENDMENT — real security defect, found in adversarial review and closed here; see note below]`. Includes canaries; excludes `held_on_antecedent`, `held_no_evidence`, and `grouped_duplicate` | Counting only admitted candidates hides the real queue: the events keep arriving whether or not reviews open |
 | **throughput** | Distinct adjudications — confirmations plus rejections — with `recorded_at` in the trailing 30 days, for this scope node | Counting *reviews* rather than adjudications makes the threshold insensitive to a cap change |
 | **inherited adjudications excluded** | A reconnect-time enterprise duplicate that inherits an edge adjudication (§7.5) is **not** counted | Counting them inflates throughput after every reconnect, raising the threshold precisely when the queue is largest |
 | **warmup** | For the first 30 days of a scope node's life, throughput is 06 §6's planned 840/month | Observed throughput starts at zero, so a literal reading halts generation on day one, before anyone has reviewed anything |
 | **zero throughput is not a special case** | After warmup, if observed throughput is 0 then the threshold is 0 and any backlog engages the gate | This is *correct*: nobody is reviewing, so nothing should be queuing. Adding a floor here would defeat the entire control — a permanent floor means a pipeline with no reviewers never halts and the dashboard never says so |
-| **scope node** | `enterprise` or `edge:<asset_id>`, evaluated independently (§7.6) | A shore backlog must not halt a submarine's afloat reviews, and a hull's patrol backlog must not halt the fleet |
+| **scope node** | `enterprise` or `edge:<asset_id>`, evaluated independently (§7.6) — **internally**. `[AMENDMENT — real security defect, found in adversarial review and closed here.]` §5.4's amendment requires `scope_node` to be "a coarse, pre-declared cohort identifier... never a specific hull," precisely because it is a Prometheus label on metrics that a broader audience than `GET /admission-control`'s ABAC-restricted role can scrape. `edge:<asset_id>` is literally a specific hull, and `fathom_pma_admission_control_engaged`, `fathom_pma_admission_backlog_ratio`, and `fathom_pma_admission_control_override_active` (§13) would otherwise carry it as a label, re-opening the exact existence oracle §5.4 closed one metric set over — a hull's admission-control state (engaged/clear) is itself a signal correlated with that hull's candidate volume. **The internal evaluation, the backlog query, and `GET /admission-control?scope_node=` (already ABAC-restricted, §8.1) keep the true per-hull `edge:<asset_id>` granularity — that precision is operationally required, since a shore backlog must not halt a submarine's afloat reviews. Only the three Prometheus labels are remapped through the same coarse, pre-declared cohort mapping §5.4 already defines**, so the alarm and dashboard surfaces are coarse while the gate itself stays exact | A shore backlog must not halt a submarine's afloat reviews, and a hull's patrol backlog must not halt the fleet |
 | **hysteresis** | Engaged at `backlog > 3 × throughput`; clears at `backlog ≤ 2 × throughput` sustained for one monotonic hour | Clearing at the engage threshold flaps: each admitted review changes the backlog by one and the gate oscillates, producing an alert storm that gets silenced |
+
+**[AMENDMENT — real security defect, found in adversarial review and closed here.]** The backlog query as originally specified counted every candidate for `scope_node = 'enterprise'` regardless of compartment, and the gate it feeds — `mission.completed` no longer opening a `MissionReview` (layer 3, §5.6.2) — halts uniformly for every caller in that scope. A compartmented hull's candidate volume spiking pushes the shared enterprise backlog over `threshold`, and every uncleared reviewer submitting to the same enterprise queue sees their own reviews stop opening with no visible cause — the same shape as `03 §7.3`'s D13, one level removed from a rollup: not a number that moves, but a **gate** whose crossing is a function of a population the observer cannot see.
+
+**Fixed by partitioning admission control by compartment, exactly as `22-pdm.md` §6.1 partitions calibration cells and `23-pma.md` §3.3 (above) partitions `label_scarcity`.** `evaluate()` takes `compartments` as an explicit parameter and the backlog query is scoped to it; there is one `AdmissionState` per `(scope_node, compartments)` pair rather than one per `scope_node` alone. A compartmented hull's candidates accumulate against, and can only halt, that compartment's own admission-control instance — never the general (`compartments = '{}'`) enterprise gate an uncompartmented reviewer's work depends on. The accepted cost, symmetric with every other fix in this class, is that a compartment with low candidate volume gets its own, independently-sized throughput/threshold pair rather than sharing the fleet's larger reviewer pool — a consequence of the compartment boundary being real, not a defect in the gate.
 
 #### 5.6.2 What "halts" means, operationally
 
