@@ -1,6 +1,21 @@
 # syntax=docker/dockerfile:1.10
+# [CORRECTION, found deploying to a real amd64 EKS cluster for the first
+# time -- every earlier `docker build`/run of this Dockerfile happened on
+# an arm64 (Apple Silicon) dev machine, which never surfaced this.] The
+# digest below was previously pinned to the ARM64-SPECIFIC sub-manifest of
+# python:3.12-slim-bookworm, not the multi-arch index -- a digest pin
+# fixes the exact image regardless of `--platform`, so `docker build
+# --platform linux/amd64` silently built and ran an arm64 binary anyway
+# (a warning is printed, easy to miss: "image platform (linux/arm64/v8)
+# does not match the expected platform (linux/amd64)"). The container
+# started, but every process exec failed with "exec format error" the
+# instant it actually ran on a real amd64 node. Now pinned to the actual
+# multi-arch INDEX digest (`docker manifest inspect python:3.12-slim-
+# bookworm` against the Docker Hub v2 API's `Docker-Content-Digest`
+# header, not the pretty-printed body some tools show), which correctly
+# resolves per-platform on both arm64 dev machines and amd64 CI/prod.
 # ---------- stage 1: build ----------
-FROM python:3.12-slim-bookworm@sha256:3f9c7f75b916e8279e24136d7a57769aba9e193715be52570417698c52d6eed0 AS builder
+FROM python:3.12-slim-bookworm@sha256:4766d8b510c428e595d74b9cc5bbb2fae8e26316fffb4adc89908d79aacd58a2 AS builder
 
 ARG PIP_INDEX_URL                      # private index; no public PyPI at build time in air-gapped builds
 ENV UV_LINK_MODE=copy \
@@ -62,7 +77,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 #     regardless of the cross-stage-path issue.
 
 # ---------- stage 2: runtime ----------
-FROM python:3.12-slim-bookworm@sha256:3f9c7f75b916e8279e24136d7a57769aba9e193715be52570417698c52d6eed0 AS runtime
+FROM python:3.12-slim-bookworm@sha256:4766d8b510c428e595d74b9cc5bbb2fae8e26316fffb4adc89908d79aacd58a2 AS runtime
 
 # Non-root, fixed numeric UID so the PodSecurityContext can assert it.
 RUN groupadd --gid 65532 nonroot && \

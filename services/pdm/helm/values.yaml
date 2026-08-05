@@ -66,6 +66,13 @@ migrations:
   enabled: true                        # rendered as a pre-install,pre-upgrade Helm hook Job, 01 §11
   backoffLimit: 0                      # fail the release rather than retry a partial migration
 
+# Escape hatches for an environment missing the corresponding operator's
+# CRDs -- both default true; every real environment has them.
+externalSecret:
+  enabled: true
+serviceMonitor:
+  enabled: true
+
 # ---- event bus --------------------------------------------------------------
 # publishes/consumes MUST equal src/fathom_pdm/events/catalog.py's
 # PUBLISHES/CONSUMES exactly (09 §4.2, §8.2) -- not the doc's illustrative

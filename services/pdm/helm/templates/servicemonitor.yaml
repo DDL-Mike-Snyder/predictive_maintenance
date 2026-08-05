@@ -3,7 +3,13 @@ Prometheus Operator ServiceMonitor. Scrape is additionally gated at the
 network layer by networkPolicy.ingress.allowPrometheusScrape
 (networkpolicy.yaml); this resource is what actually configures Prometheus
 to reach it. /metrics is wired from py_common per 09 §4.2's api/v1/health.py.
+
+serviceMonitor.enabled defaults true (every real environment has the
+Prometheus Operator's CRDs installed) -- false is an escape hatch for an
+environment that doesn't (e.g. a smoke-test sandbox), not a real
+deployment's normal path.
 */}}
+{{- if .Values.serviceMonitor.enabled }}
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
@@ -16,3 +22,4 @@ spec:
     - port: http
       path: /metrics
       interval: 30s
+{{- end }}

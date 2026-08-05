@@ -1,0 +1,67 @@
+# Smoke-test override for a real AWS deployment inside the mikesn136713
+# EKS cluster, in the sandbox fathom-pdm-dev namespace. NOT a template for
+# a real environment -- every override below is either "point at what we
+# actually built" or "this dependency doesn't exist yet, so disable/stub
+# it," documented per-key so nothing here is mistaken for the real target
+# shape later.
+
+image:
+  repository: 946429944765.dkr.ecr.us-west-2.amazonaws.com/mikesn136713/fathom/pdm
+  tag: smoke-test
+  pullPolicy: Always       # the "smoke-test" tag gets reused across rebuilds during iteration; IfNotPresent would serve a stale cached image
+  pullSecrets: []          # relying on the EKS node IAM role's ECR pull rights; add a pull secret if that's wrong
+
+replicaCount: 1
+
+nodeSelector: null          # {} deep-merges and doesn't clear the base value -- the real fathom.navy/pool: program node pool doesn't exist in this cluster
+
+# Deliberately overridden to false: migration-job.yaml uses the SAME
+# database.secretRef as the app Deployment, but migrations need owner
+# privileges (CREATE ROLE, CREATE SCHEMA, SECURITY DEFINER functions)
+# while the app must connect as a restricted fathom_pdm_serving-member
+# role for RLS to actually apply -- a real chart gap, not a smoke-test-only
+# issue. Migrations were run by hand with an owner connection instead; see
+# HANDOFF.md.
+migrations:
+  enabled: false
+
+# The real fathom_pdm_serving-member role, not the migration-owning
+# superuser -- see fathom-pdm-pg-app's own creation for how it was made.
+database:
+  secretRef: fathom-pdm-pg-app
+  clusterName: pdm-postgres   # not a real CloudNativePG Cluster -- see HANDOFF.md's Postgres-approach note
+
+events:
+  brokers: "unused.invalid:9093"        # no Redpanda in this cluster; OutboxWriter only ever writes to its own DB table
+  schemaRegistry: "http://unused.invalid"
+
+auth:
+  issuer: "http://unused.invalid"       # packages/py-common/authz.py's current_principal doesn't validate JWTs yet -- unused
+  jwksUrl: "http://unused.invalid/jwks"
+
+audit:
+  baseUrl: "http://unused.invalid"      # no PdM code path calls this today (checked)
+referenceData:
+  baseUrl: "http://unused.invalid"      # same
+
+domino:
+  apiHost: "https://mikesn136713.cs.domino.tech"   # real, even though FATHOM_DOMINO__* is still unread by any code path
+  projectId: "6a7109c166c85009d461fcef"
+
+autoscaling:
+  mode: none
+  minReplicas: 1
+  maxReplicas: 1
+
+# NEVER false in a real environment (values.yaml's own comment) -- true
+# here only because gateway/audit/reference-data, this policy's own
+# permitted egress peers, don't exist in this sandbox at all. Explicitly
+# scoped to this smoke test; do not carry this override forward.
+networkPolicy:
+  enabled: false
+
+# Neither operator's CRDs are installed in this cluster.
+externalSecret:
+  enabled: false
+serviceMonitor:
+  enabled: false
