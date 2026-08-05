@@ -907,11 +907,21 @@ Scheduling                                                    Supply
               before any further work.        ← this is the release handle. §4.5.4 R2
 
 4. corroborate:  reservation_set.confirmed  ◀── fathom.supply.reservation_set.v1
+   → monotonic_deadline = now_monotonic() + reservationTtlSeconds   [AMENDMENT -- recomputed
+       here from the 48h approval TTL (§12.1), not left at step 3's 30s reserve-attempt
+       value; without this every reservation expired 30s after being granted, before a
+       planner could ever act. reservation_set.confirmed's own expires_at (26 §7.x)
+       corroborates the same window Supply actually granted.]
    → saga_state = RESERVED
    → publish work_package.proposed  (carries reservation_set reference, per 03 §6)
 
 5. POST /api/v1/maintenance/work-packages/{id}/approve      (planner, If-Match, authority
-   ── requires saga_state == RESERVED and monotonic_deadline not elapsed            = planner)
+   ── requires saga_state == APPROVAL_PENDING and monotonic_deadline    = planner)
+      not elapsed             [AMENDMENT -- was RESERVED, which step 4's own
+      publish of work_package.proposed already exits per §4.5.3's own state
+      table (RESERVED -> APPROVAL_PENDING "on publish of work_package.proposed").
+      By the time a planner could ever call this, the state is always
+      APPROVAL_PENDING -- checking RESERVED made every approve 409]
    → saga_state = APPROVED
    → publish work_package.approved            ← ONLY here. 03 §6: "published only after
    → open WorkOrders, publish work_order.opened  reservation confirmation" [D6]
