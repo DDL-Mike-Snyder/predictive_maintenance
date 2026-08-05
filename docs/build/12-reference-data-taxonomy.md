@@ -148,7 +148,7 @@ FailureModeEntry {
 }
 ```
 
-As a concrete schema, with the two array fields normalised into child tables (§2.4, §2.5):
+As a concrete schema, with the two array fields normalised into child tables (§2.5, §2.6):
 
 ```sql
 CREATE TYPE reference_data.consequence_class AS ENUM
@@ -217,7 +217,28 @@ Four notes carry real design weight:
 
 **`extension_codes_are_namespaced` is the fabrication guard.** ISO 14224 failure-mode codes are exactly three uppercase letters. A hyphenated prefixed form cannot collide with any present or future ISO code. The constraint makes it structurally impossible to insert an invented three-letter code without also asserting `code_authority` in `('iso-14224-verified','iso-14224-transcribed')`, which the seed loader and the review checklist both gate on. See §5.4 and DO-NOT-3.
 
-### 2.4 `failure_mode_cause_candidate` — `cause_candidates[]`
+### 2.4 Navy 3-M code sets
+
+**[AMENDMENT]** Moved ahead of `failure_mode_cause_candidate` (now §2.5): that table's composite foreign key targets `navy_3m_code`'s primary key, and a forward reference to a type and table not yet created at that point in the document is a defect in a schema document read top-to-bottom, not a stylistic choice. Creating the type and table here, before anything references them, resolves it without deferred-constraint machinery.
+
+```sql
+CREATE TYPE reference_data.m3_code_set AS ENUM
+    ('CAUSE', 'WHEN_DISCOVERED', 'ACTION_TAKEN_FIRST', 'ACTION_TAKEN_MODIFIER');
+
+CREATE TABLE reference_data.navy_3m_code (
+    code_set          reference_data.m3_code_set NOT NULL,
+    code              char(1) NOT NULL,
+    taxonomy_version  text NOT NULL REFERENCES reference_data.taxonomy_version(version),
+    label             text NOT NULL,          -- transcribed from the manual
+    source_revision   text NOT NULL,          -- 'NAVSEAINST 4790.8B (2003-11-13)'
+    set_is_complete   boolean NOT NULL,       -- false where the transcription is partial
+    PRIMARY KEY (code_set, code, taxonomy_version)
+);
+```
+
+`set_is_complete` is required by the source. Document 08 §2.5 gives CAUSE and WHEN DISCOVERED as complete enumerations but gives ACTION TAKEN's first character as *"`1` … `2` … `3` … `4` cancelled · **and others**"*, with the second character *"TYCOM-specified."* Seeding ACTION_TAKEN_FIRST with `set_is_complete = false` is the only honest representation, and it is what makes §5.3's gap visible to a consumer rather than silently absent.
+
+### 2.5 `failure_mode_cause_candidate` — `cause_candidates[]`
 
 ```sql
 CREATE TABLE reference_data.failure_mode_cause_candidate (
@@ -226,12 +247,13 @@ CREATE TABLE reference_data.failure_mode_cause_candidate (
     iso_cause_code    text,          -- ISO 14224 cause code. UNVERIFIED source; see §5.4
     iso_cause_label   text,
     -- [AMENDMENT] `navy_3m_code_stub` was never created (it was always a stub name for an
-    -- unwritten mechanism, per §2.6's own comment) and could not have been a plain FK target
+    -- unwritten mechanism, per §2.4's own comment) and could not have been a plain FK target
     -- regardless: `code` alone is not unique on navy_3m_code (its real key is
     -- (code_set, code, taxonomy_version)), and a partial "CAUSE-only" index cannot be an FK
     -- target in PostgreSQL (only a full unique constraint can). Denormalizing code_set here,
     -- pinned to 'CAUSE' by CHECK, makes the composite FK against navy_3m_code's real PK
-    -- express exactly the same restriction declaratively.
+    -- (§2.4, defined above -- no forward reference) express exactly the same restriction
+    -- declaratively.
     m3_cause_code_set reference_data.m3_code_set,   -- always 'CAUSE'; see the CHECK below
     m3_cause_code     char(1),                       -- crosswalk to 3-M CAUSE 1-8, 0
     confidence        numeric(3,2) CHECK (confidence > 0 AND confidence <= 1),
@@ -250,7 +272,7 @@ CREATE TABLE reference_data.failure_mode_cause_candidate (
 
 Document 08 §2.8 specifies `cause_candidates[]` as *"ISO 14224 cause codes, crosswalked to 3-M CAUSE 1–8,0."* The array is plural in the source and is modelled plural here: a single failure mode has several candidate causes and the correspondence to a nine-value 3-M cause code is not injective. **The ISO 14224 cause code list is behind the same paywall as Annex B and is UNVERIFIED (§5.4);** rows may therefore be seeded with `m3_cause_code` populated and `iso_cause_code` null until the standard is acquired.
 
-### 2.5 `failure_mode_detection_method` — `detection_methods[]`
+### 2.6 `failure_mode_detection_method` — `detection_methods[]`
 
 ```sql
 CREATE TABLE reference_data.failure_mode_detection_method (
@@ -264,30 +286,6 @@ CREATE TABLE reference_data.failure_mode_detection_method (
 ```
 
 The ISO 14224 detection-method list is likewise unverified. `method_authority` carries the same three-value discipline as `code_authority` so a program-authored method string can never be read as standard content.
-
-### 2.6 Navy 3-M code sets
-
-```sql
-CREATE TYPE reference_data.m3_code_set AS ENUM
-    ('CAUSE', 'WHEN_DISCOVERED', 'ACTION_TAKEN_FIRST', 'ACTION_TAKEN_MODIFIER');
-
-CREATE TABLE reference_data.navy_3m_code (
-    code_set          reference_data.m3_code_set NOT NULL,
-    code              char(1) NOT NULL,
-    taxonomy_version  text NOT NULL REFERENCES reference_data.taxonomy_version(version),
-    label             text NOT NULL,          -- transcribed from the manual
-    source_revision   text NOT NULL,          -- 'NAVSEAINST 4790.8B (2003-11-13)'
-    set_is_complete   boolean NOT NULL,       -- false where the transcription is partial
-    PRIMARY KEY (code_set, code, taxonomy_version)
-);
-
--- [AMENDMENT] §2.4's failure_mode_cause_candidate FK against this table is now the real,
--- composite (code_set, code, taxonomy_version) FK against this table's own PK below,
--- restricted to the CAUSE set by a CHECK constraint there -- not a "navy_3m_code_stub"
--- view or partial index, neither of which PostgreSQL permits as an FK target.
-```
-
-`set_is_complete` is required by the source. Document 08 §2.5 gives CAUSE and WHEN DISCOVERED as complete enumerations but gives ACTION TAKEN's first character as *"`1` … `2` … `3` … `4` cancelled · **and others**"*, with the second character *"TYCOM-specified."* Seeding ACTION_TAKEN_FIRST with `set_is_complete = false` is the only honest representation, and it is what makes §5.3's gap visible to a consumer rather than silently absent.
 
 ### 2.7 `equipment_family` — finding D35
 
@@ -336,7 +334,7 @@ CREATE UNIQUE INDEX part_family_assignment_partid_version
 
 `equipment_family` shares the taxonomy's version register rather than carrying an independent version line. A model binding pinned to `taxonomy_version` then pins its reference class too, which is what PdM's tier bindings require (03 §14: *"PdM owns which registry version serves which tier and family"*).
 
-`part_family_assignment` makes the NIIN→family binding — and, **[AMENDMENT]** since the table's widening above, the `part_id`→family binding for a `cage_part_number` part — a served reference dataset with a partial-unique-index guarantee of exactly one family per part per version — that is what "required attribute of every part" means operationally, and the conformance test in §8.2 asserts total coverage of the demo part set (NIIN-bearing and `part_id`-only both), not just the NIIN subset. **Whether Reference Data owns the assignment or only the family definition is Open Decision OD-5 (§11).** Document 03 says only *"defined and served by Reference Data"*; this build reads the assignment as reference data because the alternative is Supply and Registry each deciding, which is finding C8 in a different costume.
+`part_family_assignment` makes the NIIN→family binding — and, **[AMENDMENT]** since the table's widening above, the `part_id`→family binding for a `cage_part_number` part — a served reference dataset with a partial-unique-index guarantee of exactly one family per part per version — that is what "required attribute of every part" means operationally, and the conformance test `tax-proj-pdm` (§8.1 — not §8.2, which is non-destructive revision testing and contains no part-coverage assertion) asserts total coverage of the demo part set (NIIN-bearing and `part_id`-only both), not just the NIIN subset. **Whether Reference Data owns the assignment or only the family definition is Open Decision OD-5 (§11).** Document 03 says only *"defined and served by Reference Data"*; this build reads the assignment as reference data because the alternative is Supply and Registry each deciding, which is finding C8 in a different costume.
 
 ### 2.8 `crosswalk_pma_signature` — the PMA projection
 
@@ -460,7 +458,12 @@ CREATE TYPE reference_data.proposal_kind AS ENUM (
 );
 
 CREATE TYPE reference_data.proposal_status AS ENUM
-    ('proposed', 'claimed', 'approved', 'rejected', 'superseded', 'expired');
+    ('proposed', 'claimed', 'pending_second_approval', 'approved', 'rejected', 'superseded', 'expired');
+
+-- [AMENDMENT] Was a bare `text` column with the candidate values only in a comment. Declared
+-- as a real enum so an invalid blast-radius value is a schema-level rejection, not a silent
+-- string.
+CREATE TYPE reference_data.blast_radius_class AS ENUM ('item', 'asset', 'class', 'fleet');
 
 CREATE TABLE reference_data.taxonomy_proposal (
     proposal_id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -477,7 +480,7 @@ CREATE TABLE reference_data.taxonomy_proposal (
     llm_version          text,
     trace_ref            text,
     authority_class      text NOT NULL,
-    blast_radius         text NOT NULL,        -- item | asset | class | fleet
+    blast_radius         reference_data.blast_radius_class NOT NULL,
     requires_dual_control boolean NOT NULL,
     valid_until          timestamptz,
     status               reference_data.proposal_status NOT NULL DEFAULT 'proposed',
@@ -486,17 +489,39 @@ CREATE TABLE reference_data.taxonomy_proposal (
     adjudicated_by       text,
     adjudicated_at       timestamptz,
     adjudication_note    text,
+    -- [AMENDMENT] `requires_dual_control` was a flag nothing read: one adjudicator, one
+    -- `adjudicated_by`, no second-approval mechanism anywhere. A second, independent
+    -- Failure Intelligence identity is now a first-class column, and `dual_control_before_approval`
+    -- below makes `status = 'approved'` unreachable without it whenever the flag is set.
+    second_adjudicated_by   text,
+    second_adjudicated_at   timestamptz,
     resulting_version    text REFERENCES reference_data.taxonomy_version(version),
     classification       jsonb NOT NULL,
 
-    CONSTRAINT evidence_non_empty CHECK (jsonb_array_length(evidence) > 0),
+    CONSTRAINT evidence_non_empty CHECK (
+        jsonb_typeof(evidence) = 'array' AND jsonb_array_length(evidence) > 0
+    ),
     CONSTRAINT approver_is_authorised CHECK (
         status <> 'approved' OR adjudicated_by LIKE 'failure-intel:%'
+    ),
+    CONSTRAINT second_approver_is_authorised CHECK (
+        second_adjudicated_by IS NULL OR second_adjudicated_by LIKE 'failure-intel:%'
+    ),
+    CONSTRAINT second_approver_is_independent
+        CHECK (second_adjudicated_by IS NULL OR second_adjudicated_by <> adjudicated_by),
+    CONSTRAINT pending_second_requires_first
+        CHECK (status <> 'pending_second_approval' OR adjudicated_by IS NOT NULL),
+    CONSTRAINT dual_control_before_approval CHECK (
+        status <> 'approved'
+        OR NOT requires_dual_control
+        OR (second_adjudicated_by IS NOT NULL AND second_adjudicated_at IS NOT NULL)
     )
 );
 ```
 
 `approver_is_authorised` encodes document 03 §14 and document 08 §2.8 as a database constraint: Failure Intelligence is *"the sole authority to extend the vocabulary."* The identity-prefix form is a placeholder for the ABAC attribute check performed at the API boundary (§3.3); the constraint is a defence in depth, not the primary control.
+
+**Dual control is a two-adjudicator gate, not a flag.** Where `requires_dual_control` is true, `adjudicate` sets `adjudicated_by`/`adjudicated_at` and moves `status` to `pending_second_approval` rather than `approved`; a second, distinct Failure Intelligence identity must adjudicate again — `second_approver_is_independent` rejects a second call from the same identity — before `dual_control_before_approval` permits `status = 'approved'`. Where `requires_dual_control` is false, the first `adjudicate` call sets `status = 'approved'` directly. `tax-gov-dual-control` (§8.4) tests this against the live constraint, not a mock.
 
 ### 2.12 API model
 
@@ -524,7 +549,7 @@ The wire model is the schema with the two child tables re-inlined as arrays, so 
   "detection_methods": [ { "detection_method": "…", "method_authority": "…" } ],
   "potential_failure_def": "…",
   "definition_text": "breakdown",
-  "superseded_by": null,
+  "superseded_by_entry_id": null,
   "classification": { "level": "U", "cui_categories": [], "dissemination": [] }
 }
 ```
@@ -540,21 +565,21 @@ Base path `/api/v1/reference-data/…` per document 03 §4. Every operation decl
 | Operation | Purpose | `x-substitution` | `x-side-effects` | `x-agent-eligible` |
 |---|---|---|---|---|
 | `GET /taxonomy?version=&equipment_class=&code=&changed_since=&limit=&cursor=` | The full vocabulary at a version. Default `version` is the current published one. `changed_since` is the rebuild path | `required` | `none` | yes |
-| `GET /taxonomy/entries/{code}?version=&equipment_class=` | One entry, resolved forward through supersession if the requested version is superseded (§6.4) | `required` | `none` | yes |
+| `GET /taxonomy/entries/{code}?version=&equipment_class=&subdivision=` | One entry, resolved forward through supersession if the requested version is superseded (§6.4). `entry_unique_per_version` (§2.3) is keyed on `(code, equipment_class, subdivision_key, taxonomy_version)` — `equipment_class` alone does not disambiguate a subdivision-level entry from its class-level sibling, so `subdivision` is a required disambiguator, not optional; omitted, it matches the class-level row (`subdivision IS NULL`) only | `required` | `none` | yes |
 | `GET /taxonomy/versions` | The version register: every version, status, anchors, `m3_manual_revision`, release note | `required` | `none` | yes |
 | `GET /taxonomy/definitions?version=` | The nine MIL-STD-3034A terms with clause references and verbatim text | `required` | `none` | yes |
 | `GET /taxonomy/projections/pma?version=&equipment_class=` | The **coarsened PMA subset**: signatures including the novel escape. The projection PMA renders | `required` | `none` | yes |
 | `GET /taxonomy/projections/3m?version=` | The 3-M code sets with `set_is_complete` and `source_revision`. The projection Scheduling renders | `required` | `none` | yes |
 | `GET /equipment-families?version=&changed_since=&limit=&cursor=` | Family definitions | `required` | `none` | yes |
 | `GET /equipment-families/{family_id}?version=` | One family | `required` | `none` | yes |
-| `GET /part-families?niin=&version=&changed_since=&cursor=` | NIIN→family assignments (§2.7, subject to OD-5) | `required` | `none` | yes |
+| `GET /part-families?niin=&part_id=&version=&changed_since=&cursor=` | NIIN/`part_id`→family assignments, `part_id` covering the `cage_part_number` parts a NIIN cannot address (§2.7, subject to OD-5) | `required` | `none` | yes |
 | `GET /crosswalk/pma-signatures?version=&signature_key=&code=&changed_since=&cursor=` | Signature↔code crosswalk, both directions | `required` | `none` | yes |
 | `GET /crosswalk/3m-codes?version=&cause=&when_discovered=&action_taken=&eic=&changed_since=&cursor=` | `{CAUSE, WND, ACTION TAKEN, EIC}` → `candidate_modes[]` with confidence. **Always returns the full candidate set** | `required` | `none` | yes |
 | `POST /taxonomy/resolve` | Bulk forward-resolution of held `(code, taxonomy_version)` references to a target version. Computational; no state change | `required` | `none` | yes |
 | `POST /taxonomy/proposals` | Submit a novel signature or a vocabulary extension. Open to `pma`, `failure-intel`, `maintenance` | `required` | `proposal-only` | yes |
 | `GET /taxonomy/proposals?status=&proposer=&cursor=` | Proposal queue | `required` | `none` | yes |
 | `POST /taxonomy/proposals/{id}/claim` | Adjudication lease, per 03 §7.2. `If-Match` required | `required` | `state-changing` | no |
-| `POST /taxonomy/proposals/{id}/adjudicate` | Approve or reject. **`failure-intel` authority only** (§7.1) | `required` | `state-changing` | no |
+| `POST /taxonomy/proposals/{id}/adjudicate` | Approve or reject. **`failure-intel` authority only** (§7.1). Called twice, by two distinct identities, under dual control (§2.11) | `required` | `state-changing` | no |
 | `GET /taxonomy/export/data-dictionary?version=&format=` | The published data dictionary — the DoDI 8320.02 publication artifact (§7.3) | `required` | `none` | yes |
 | `GET /taxonomy/export/geia-0007c?version=` | LSA-050 / LSA-058 export projection (08 §2.2) | `required` | `none` | yes |
 | `POST /taxonomy/versions` | Open a draft version | `internal` | `state-changing` | no |
@@ -582,7 +607,7 @@ Two consequences worth recording:
 | `pdm`, `design-advisory`, `fleet-status`, others | All read operations | No | No |
 | Agents | Read operations and `POST /taxonomy/proposals` under delegated authority (03 §8.3) | Yes, as proposals | **Never** |
 
-Approval is enforced at the API boundary against ABAC attributes per obligation 7 (03 §15) — never delegated to the gateway alone — and again by the `approver_is_authorised` constraint (§2.11). `blast_radius` for a vocabulary change is `class` or `fleet` by nature, so `requires_dual_control` is true for essentially every approval per document 03 §7.2.
+Approval is enforced at the API boundary against ABAC attributes per obligation 7 (03 §15) — never delegated to the gateway alone — and again by the `approver_is_authorised` constraint (§2.11). `blast_radius` for a vocabulary change is `class` or `fleet` by nature, so `requires_dual_control` is true for essentially every approval per document 03 §7.2 — meaning a second, independent `failure-intel` identity must adjudicate before `status` can reach `'approved'` (`dual_control_before_approval`, §2.11).
 
 ### 3.4 Events
 
@@ -682,7 +707,7 @@ Document 08 §2.4: *"Failure modes are three-letter codes. Verified examples: �
 | **6 — equipment class** | ESWBS / EIC | `failure_mode_entry.equipment_class`. Class code, never a join key |
 | **7 — subunit** | Equipment subdivision | `failure_mode_entry.subdivision` |
 | **8 — maintainable item** | `InstalledItem`, identified by IUID | `failure_mode_entry.maintainable_item` (item type — see §2.3 note and OD-4) |
-| **9 — part** | NIIN | `PartRef.niin`, and the `part_family_assignment` key |
+| **9 — part** | NIIN, or `part_id` for a `cage_part_number` part with no NIIN | `PartRef.niin` / `part_id`, and the `part_family_assignment` key (§2.7 — widened to accept either) |
 
 ### 5.3 Navy 3-M code sets (08 §2.5)
 
@@ -761,7 +786,7 @@ The cost of (b) alone is that no conformance or interoperability claim against I
 
 **No external standard supplies an equipment-family enumeration.** Document 03 §3.3 defines the concept and its ownership; nothing in documents 01, 03, or 08 enumerates values. The seed is therefore **program-defined content**, and is marked as such — it is not standard content and must never be presented as such.
 
-Phase 3 derives the family list from the demonstration part set in the Asset & Configuration Registry — NIIN-bearing and `part_id`-only (`cage_part_number`) parts both, per §5.x's widened `part_family_assignment` — under the constraint that a family must be a valid partition for model binding and calibration (03 §14: PdM binds tier and family). Naming convention: lowercase kebab-case slugs. No specific families are asserted in this document, because inventing them here would be exactly the fabrication this document prohibits elsewhere. The §8.2 conformance test asserts total coverage of that part set once the list exists — which is what makes *"required attribute of every part"* enforceable rather than aspirational, `cage_part_number` parts included rather than structurally excluded.
+Phase 3 derives the family list from the demonstration part set in the Asset & Configuration Registry — NIIN-bearing and `part_id`-only (`cage_part_number`) parts both, per §2.7's widened `part_family_assignment` — under the constraint that a family must be a valid partition for model binding and calibration (03 §14: PdM binds tier and family). Naming convention: lowercase kebab-case slugs. No specific families are asserted in this document, because inventing them here would be exactly the fabrication this document prohibits elsewhere. `tax-proj-pdm` (§8.1 — not §8.2) asserts total coverage of that part set once the list exists — which is what makes *"required attribute of every part"* enforceable rather than aspirational, `cage_part_number` parts included rather than structurally excluded.
 
 ### 5.6 Crosswalk seed
 
@@ -799,6 +824,13 @@ BEGIN
       FROM reference_data.taxonomy_version WHERE version = OLD.taxonomy_version;
 
     IF v_status = 'draft' THEN
+        -- [AMENDMENT] A prior draft returned NEW unconditionally here. NEW is always NULL in a
+        -- BEFORE DELETE trigger, so RETURN NEW silently cancelled every draft delete with no
+        -- error. A BEFORE DELETE trigger has only OLD available; RETURN OLD is what allows the
+        -- delete to proceed.
+        IF TG_OP = 'DELETE' THEN
+            RETURN OLD;                       -- drafts are freely deletable
+        END IF;
         RETURN NEW;                          -- drafts are freely editable
     END IF;
 
@@ -813,15 +845,21 @@ BEGIN
             RAISE EXCEPTION 'entry % is already superseded; supersession is write-once',
                 OLD.entry_id;
         END IF;
-        IF (NEW.code, NEW.equipment_class, NEW.subdivision, NEW.maintainable_item,
-            NEW.functional_failure_ref, NEW.failure_effect, NEW.consequence_class,
-            NEW.evident_or_hidden, NEW.is_dominant, NEW.observable_signature,
-            NEW.potential_failure_def, NEW.definition_text, NEW.taxonomy_version)
+        -- [AMENDMENT] `lineage_id`, `code_authority`, and `classification` were missing from
+        -- this tuple. `lineage_id` is the resolution key itself (§2.3) -- omitting it let a
+        -- published row's own identity be changed after publication, which every consumer
+        -- holding a stable `lineage_id` reference (§6.2) depends on never happening.
+        IF (NEW.lineage_id, NEW.code, NEW.code_authority, NEW.equipment_class, NEW.subdivision,
+            NEW.maintainable_item, NEW.functional_failure_ref, NEW.failure_effect,
+            NEW.consequence_class, NEW.evident_or_hidden, NEW.is_dominant,
+            NEW.observable_signature, NEW.potential_failure_def, NEW.definition_text,
+            NEW.taxonomy_version, NEW.classification)
          IS DISTINCT FROM
-           (OLD.code, OLD.equipment_class, OLD.subdivision, OLD.maintainable_item,
-            OLD.functional_failure_ref, OLD.failure_effect, OLD.consequence_class,
-            OLD.evident_or_hidden, OLD.is_dominant, OLD.observable_signature,
-            OLD.potential_failure_def, OLD.definition_text, OLD.taxonomy_version)
+           (OLD.lineage_id, OLD.code, OLD.code_authority, OLD.equipment_class, OLD.subdivision,
+            OLD.maintainable_item, OLD.functional_failure_ref, OLD.failure_effect,
+            OLD.consequence_class, OLD.evident_or_hidden, OLD.is_dominant,
+            OLD.observable_signature, OLD.potential_failure_def, OLD.definition_text,
+            OLD.taxonomy_version, OLD.classification)
         THEN
             RAISE EXCEPTION
               'semantic columns of a published taxonomy entry are immutable (entry %); '
@@ -838,33 +876,145 @@ CREATE TRIGGER fme_published_immutable
     FOR EACH ROW EXECUTE FUNCTION reference_data.forbid_published_mutation();
 ```
 
-Equivalent triggers apply to `milstd_3034a_term`, `navy_3m_code`, `crosswalk_pma_signature`, `crosswalk_3m`, `pma_signature`, and `equipment_family`. Crosswalk and code-set rows admit **no** permitted mutation at all: they are insert-only within a draft and frozen at publication.
+**Equivalent triggers, not the same trigger.** `forbid_published_mutation()` above hard-codes `entry_id` and `superseded_by_entry_id` — columns that exist only on `failure_mode_entry`. None of `milstd_3034a_term`, `navy_3m_code`, `crosswalk_pma_signature`, `crosswalk_3m`, or `pma_signature` has an `entry_id` or a `superseded_by_entry_id` column, and `equipment_family` names its version column `version`, not `taxonomy_version`. Attaching `forbid_published_mutation()` unmodified to any of the six would fail on the first attempted `UPDATE` or `DELETE` with "record ... has no field ...". Two narrower, correctly-scoped functions cover them instead:
+
+```sql
+-- milstd_3034a_term, navy_3m_code, crosswalk_pma_signature, crosswalk_3m, and pma_signature admit
+-- NO permitted mutation at all once published -- insert-only within a draft, frozen at
+-- publication (unlike failure_mode_entry, none of the five carries a supersession-marker
+-- column, so there is no write-once exception to carve out). All five have their own
+-- taxonomy_version column, which is the only column this function touches, so one shared
+-- function is correct for all five.
+CREATE OR REPLACE FUNCTION reference_data.forbid_published_mutation_strict()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+    v_status reference_data.version_status;
+BEGIN
+    SELECT status INTO v_status
+      FROM reference_data.taxonomy_version WHERE version = OLD.taxonomy_version;
+
+    IF v_status = 'draft' THEN
+        IF TG_OP = 'DELETE' THEN
+            RETURN OLD;
+        END IF;
+        RETURN NEW;
+    END IF;
+
+    RAISE EXCEPTION
+      'rows in a published taxonomy version are insert-only and frozen (table %, taxonomy_version %)',
+      TG_TABLE_NAME, OLD.taxonomy_version;
+END;
+$$;
+
+CREATE TRIGGER milstd_3034a_term_published_frozen
+    BEFORE UPDATE OR DELETE ON reference_data.milstd_3034a_term
+    FOR EACH ROW EXECUTE FUNCTION reference_data.forbid_published_mutation_strict();
+CREATE TRIGGER navy_3m_code_published_frozen
+    BEFORE UPDATE OR DELETE ON reference_data.navy_3m_code
+    FOR EACH ROW EXECUTE FUNCTION reference_data.forbid_published_mutation_strict();
+CREATE TRIGGER crosswalk_pma_signature_published_frozen
+    BEFORE UPDATE OR DELETE ON reference_data.crosswalk_pma_signature
+    FOR EACH ROW EXECUTE FUNCTION reference_data.forbid_published_mutation_strict();
+CREATE TRIGGER crosswalk_3m_published_frozen
+    BEFORE UPDATE OR DELETE ON reference_data.crosswalk_3m
+    FOR EACH ROW EXECUTE FUNCTION reference_data.forbid_published_mutation_strict();
+CREATE TRIGGER pma_signature_published_frozen
+    BEFORE UPDATE OR DELETE ON reference_data.pma_signature
+    FOR EACH ROW EXECUTE FUNCTION reference_data.forbid_published_mutation_strict();
+
+-- equipment_family DOES carry a write-once supersession marker (superseded_by_family_id /
+-- superseded_at, §2.7) and so gets its own analogue of forbid_published_mutation() above,
+-- keyed on its own column names rather than failure_mode_entry's.
+CREATE OR REPLACE FUNCTION reference_data.forbid_published_family_mutation()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+    v_status reference_data.version_status;
+BEGIN
+    SELECT status INTO v_status
+      FROM reference_data.taxonomy_version WHERE version = OLD.version;
+
+    IF v_status = 'draft' THEN
+        IF TG_OP = 'DELETE' THEN
+            RETURN OLD;
+        END IF;
+        RETURN NEW;
+    END IF;
+
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION 'equipment families in a published version cannot be deleted (family %)',
+            OLD.family_id;
+    END IF;
+
+    IF ROW(NEW.*) IS DISTINCT FROM ROW(OLD.*) THEN
+        IF OLD.superseded_by_family_id IS NOT NULL THEN
+            RAISE EXCEPTION 'family % is already superseded; supersession is write-once', OLD.family_id;
+        END IF;
+        IF (NEW.name, NEW.description, NEW.version) IS DISTINCT FROM (OLD.name, OLD.description, OLD.version)
+        THEN
+            RAISE EXCEPTION
+              'semantic columns of a published equipment family are immutable (family %)', OLD.family_id;
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER equipment_family_published_immutable
+    BEFORE UPDATE OR DELETE ON reference_data.equipment_family
+    FOR EACH ROW EXECUTE FUNCTION reference_data.forbid_published_family_mutation();
+```
 
 A database-level guarantee matters here because the failure mode is a well-intentioned `UPDATE` that fixes a typo in a definition — after which every label assigned under that version means something slightly different than it did, undetectably. The trigger turns that into an error at the point of the attempt.
 
 ### 6.4 Forward resolution
 
+**[AMENDMENT]** `resolve_forward()` is invoked in §9.1 but was never defined anywhere in this document, and the resolution logic below previously keyed its base case on `code` — inconsistent with §2.3's own statement that `lineage_id`, not `code`, is the resolution key. The recursive core below now keys on `lineage_id` throughout, exactly as its callers in §9.1 already assume; `code` is only ever a *lookup into* `lineage_id`, one step outside the recursion, for the one operation (`GET /taxonomy/entries/{code}` and the `code`-keyed shape of `POST /taxonomy/resolve`) whose public parameter is a code rather than a lineage ID.
+
 ```sql
--- Resolve a held (code, taxonomy_version) reference to its representation at a target version.
-WITH RECURSIVE forward AS (
-    SELECT e.lineage_id, 0 AS hops
+-- The recursive resolution core. Keyed on lineage_id -- the resolution key (§2.3) -- never on
+-- code, since a rename or split is precisely what may change a code across a version bump.
+-- Returns candidate lineage_ids at the target version plus their hop count; callers join to
+-- failure_mode_entry themselves for whatever columns they need. This is the one implementation
+-- behind the API, the package helper, and the §9.1 reconciliation query.
+CREATE OR REPLACE FUNCTION reference_data.resolve_forward(
+    p_lineage_id   uuid,
+    p_from_version text,
+    p_to_version   text
+) RETURNS TABLE (lineage_id uuid, hops int) LANGUAGE sql STABLE AS $$
+    WITH RECURSIVE forward AS (
+        SELECT p_lineage_id AS lineage_id, 0 AS hops
+      UNION ALL
+        SELECT s.superseding_lineage_id, f.hops + 1
+          FROM forward f
+          JOIN reference_data.taxonomy_supersession s
+            ON s.superseded_lineage_id = f.lineage_id
+         WHERE s.superseding_lineage_id IS NOT NULL
+           AND f.hops < 32                       -- cycle guard
+    )
+    SELECT DISTINCT f.lineage_id, f.hops
+      FROM forward f
+      JOIN reference_data.failure_mode_entry e
+        ON e.lineage_id = f.lineage_id
+       AND e.taxonomy_version = p_to_version;
+$$;
+
+-- POST /taxonomy/resolve: bulk forward-resolution of a held (code, taxonomy_version)
+-- reference to its representation at a target version. `code` -> `lineage_id` is a lookup at
+-- the held version; resolve_forward() does the actual (lineage_id-keyed) walk; the final join
+-- fetches the full entry at the target version.
+WITH held AS (
+    SELECT e.lineage_id
       FROM reference_data.failure_mode_entry e
      WHERE e.code = :held_code
        AND e.taxonomy_version = :held_version
-  UNION ALL
-    SELECT s.superseding_lineage_id, f.hops + 1
-      FROM forward f
-      JOIN reference_data.taxonomy_supersession s
-        ON s.superseded_lineage_id = f.lineage_id
-     WHERE s.superseding_lineage_id IS NOT NULL
-       AND f.hops < 32                       -- cycle guard
 )
-SELECT DISTINCT e.*, f.hops
-  FROM forward f
+SELECT DISTINCT e.*, r.hops
+  FROM held h
+  JOIN reference_data.resolve_forward(h.lineage_id, :held_version, :target_version) r ON true
   JOIN reference_data.failure_mode_entry e
-    ON e.lineage_id = f.lineage_id
+    ON e.lineage_id = r.lineage_id
    AND e.taxonomy_version = :target_version
- ORDER BY f.hops;
+ ORDER BY r.hops;
 ```
 
 Three properties of this query are the contract, exposed as `POST /taxonomy/resolve`:
@@ -883,7 +1033,8 @@ Three properties of this query are the contract, exposed as `POST /taxonomy/reso
 |---|---|---|
 | Propose | `pma` (novel signatures from review), `failure-intel` (new modes, crosswalk revisions), `maintenance` (crosswalk revisions), or an agent under delegated authority | `POST /taxonomy/proposals` — `x-side-effects: proposal-only`, evidence required and non-empty with `source_trust` (03 §7.2) |
 | Claim | Failure Intelligence adjudicator | `POST /taxonomy/proposals/{id}/claim`, lease-based, `If-Match` on the claimed ETag. Without the claim, an eventually-consistent queue permits two approvals (03 §7.2) |
-| Approve or reject | **Failure Intelligence only** | `POST /taxonomy/proposals/{id}/adjudicate`. Dual control required at `class` and `fleet` blast radius, which is nearly all vocabulary change |
+| Approve or reject | **Failure Intelligence only** | `POST /taxonomy/proposals/{id}/adjudicate`. Where `requires_dual_control` is false, this call alone sets `status = 'approved'`; where true (`class`/`fleet` blast radius — nearly all vocabulary change), it sets `adjudicated_by` and moves `status` to `pending_second_approval` |
+| Second approve (dual control) | A **second, independent** Failure Intelligence identity | Same endpoint, called again while `status = 'pending_second_approval'`. Must be a distinct identity from the first (`second_approver_is_independent`, §2.11); only this call sets `status = 'approved'` |
 | Author | Reference Data, into an open draft | Approval does not publish. It authorises authoring |
 | Publish | Reference Data | `POST /taxonomy/versions/{version}/publish` |
 
@@ -930,7 +1081,7 @@ One test per consumer, contributed by that consumer per document 03 §10's consu
 | `tax-proj-pma` | `GET /taxonomy/projections/pma` returns a non-empty coarsened signature set for every `equipment_class` in the reference dataset, including exactly one `is_novel_escape` row; every signature resolves to ≥1 entry via `GET /crosswalk/pma-signatures`; the response echoes `taxonomy_version` |
 | `tax-proj-3m` | `GET /taxonomy/projections/3m` returns all nine CAUSE values, all ten WHEN DISCOVERED values, and the ACTION TAKEN first-character and modifier sets with `set_is_complete = false` and `source_revision` present on every row |
 | `tax-proj-fi` | `GET /taxonomy` returns the full vocabulary with all fourteen `FailureModeEntry` fields present on every entry (arrays may be empty, keys may not be absent); `GET /taxonomy/definitions` returns all nine MIL-STD-3034A terms with clause references |
-| `tax-proj-pdm` | `GET /equipment-families` and `GET /part-families` cover every NIIN in the reference dataset — no part lacks a family (finding D35) |
+| `tax-proj-pdm` | `GET /equipment-families` and `GET /part-families` cover every part in the reference dataset — NIIN-bearing and `part_id`-only (`cage_part_number`) alike — no part lacks a family (finding D35). This is the part-coverage test; §7's and §5.5's citations of "the conformance test" for total part coverage refer to this one |
 | `tax-single-source` | **The C8 guard.** A static check over the monorepo asserting no sub-application package contains a taxonomy literal — no hard-coded failure-mode code list, 3-M code list, signature list, or family list outside `packages/reference-data-taxonomy` and this service. Fails the build on violation |
 
 ### 8.2 Non-destructive revision
@@ -966,6 +1117,7 @@ One test per consumer, contributed by that consumer per document 03 §10's consu
 | `tax-gov-approval-authority` | A proposal approval attempted by `pma` or `maintenance` identity is rejected at the API boundary **and** by the database constraint. Both layers tested independently |
 | `tax-gov-evidence-required` | A proposal with empty `evidence` is rejected at the API boundary (03 §7.2) |
 | `tax-gov-claim-required` | Adjudication without a held claim, or with a stale ETag, returns 412 |
+| `tax-gov-dual-control` | A `requires_dual_control` proposal cannot reach `status = 'approved'` after a single adjudication (it lands at `pending_second_approval`); a second `adjudicate` call by the **same** identity is rejected by `second_approver_is_independent`; a second call by a **distinct** `failure-intel` identity succeeds and flips `status` to `'approved'`. Tested at the database constraint and the API boundary |
 
 ### 8.5 Platform obligations
 
@@ -994,7 +1146,7 @@ pma_side AS (
       FROM reference_data.crosswalk_pma_signature x
       JOIN reference_data.resolve_forward(x.entry_lineage_id,
                                           :pma_tag_version,
-                                          (SELECT v FROM target)) AS r(lineage_id) ON true
+                                          (SELECT v FROM target)) AS r(lineage_id, hops) ON true
      WHERE x.signature_key     = :pma_signature_key
        AND x.taxonomy_version  = :pma_tag_version
 ),
@@ -1011,7 +1163,7 @@ m3_side AS (
       FROM reference_data.crosswalk_3m c
       JOIN reference_data.resolve_forward(c.candidate_entry_lineage,
                                           :finding_version,
-                                          (SELECT v FROM target)) AS r(lineage_id) ON true
+                                          (SELECT v FROM target)) AS r(lineage_id, hops) ON true
      WHERE c.taxonomy_version = :finding_version
        AND (c.cause_code           IS NULL OR c.cause_code           = :cas)
        AND (c.when_discovered_code IS NULL OR c.when_discovered_code = :wnd)
