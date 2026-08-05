@@ -203,6 +203,22 @@ CREATE TABLE supply.allowance_position (
 ### 2.5 `Requisition`
 
 ```sql
+-- [AMENDMENT — real defect, found in adversarial review: both types were used
+-- in the table below and never created anywhere in this document, so the
+-- migration that creates supply.requisition fails outright.]
+CREATE TYPE supply.requisition_driver AS ENUM (
+    'prediction', 'casualty', 'allowance', 'pms', 'manual'
+);
+-- A coarse, API-facing lifecycle bucket over the document's actual DIC
+-- (current_dic, stored verbatim below) — never a substitute for it. 07's
+-- individual DIC transaction codes are the source of truth; this is the
+-- five-stage bucket `?status=` filters on and requisition.status_changed
+-- publishes, generic enough not to assert an undocumented DIC-to-status
+-- mapping (09 DO-NOT 32, S20's same discipline applied to this field).
+CREATE TYPE supply.requisition_state AS ENUM (
+    'submitted', 'in_process', 'shipped', 'received', 'cancelled'
+);
+
 CREATE TABLE supply.requisition (
     document_number   char(14) PRIMARY KEY,   -- 07 §4.4, exact. Construction in §4.1
     niin              text NOT NULL,
@@ -318,6 +334,12 @@ In-transit quantity contributes to `due_in_qty` at `to_location_id` and to **not
 ### 2.8 `DemandForecast` and `CarcassObligation`
 
 ```sql
+-- [AMENDMENT — real defect: used below and never created, per §5.2's own table]
+CREATE TYPE supply.forecast_basis AS ENUM (
+    'forecastable_stocked', 'nha_redirect', 'kit_driven',
+    'material_or_component', 'low_history_high_value'
+);
+
 CREATE TABLE supply.demand_forecast (
     run_id            uuid NOT NULL,
     niin              text NOT NULL,
