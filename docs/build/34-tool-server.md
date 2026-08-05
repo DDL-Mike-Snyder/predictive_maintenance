@@ -264,7 +264,7 @@ Every invocation passes all nine gates, in this order, and any failure ends the 
 | 3 | `agent_id` derived from the token resolves to a binding | `403` `no-manifest-binding` | §2.3 |
 | 4 | The requested tool `name` is present in **this agent's** binding, and the binding's `(manifest name, version)` and `(slug, api_major)` match the descriptor's `x_fathom_manifest` and `x_fathom_target` | `403` `tool-not-in-pinned-manifest`, `409` `manifest-pin-superseded`, `409` `api-major-pin-unsatisfiable` | 03 §8.4 |
 | 5 | The live spec cache for `(slug, api_major)` is present and within its freshness bound | `503` `spec-cache-stale` | §2.5 |
-| 6 | **`assess(live_spec, operation_id)` returns eligible**, and the live declared class **equals** `x_fathom_side_effects` | `409` `side-effects-mismatch`, `403` `operation-not-agent-eligible`, `409` `operation-absent-from-live-spec`, `403` `side-effects-forbids-invocation` | 03 §8.1, §4.1; 10 §7.3 |
+| 6 | The operation is present in the live spec (gate 6a — `assess`'s sole `Ineligibility.ABSENT` verdict), the live declared class **equals** `x_fathom_side_effects` (gate 6b), and **`assess(live_spec, operation_id)` returns eligible** (gate 6c) | `409` `operation-absent-from-live-spec`, `409` `side-effects-mismatch`, `403` `operation-not-agent-eligible`, `403` `side-effects-forbids-invocation`, `409` `operation-lacks-description` | 03 §8.1, §4.1; 10 §7.3 |
 | 7 | The caller's `fathom.agent.authority` permits the live class; `accountable_autonomous` requires a resolvable accountable owner | `403` `agent-authority-insufficient`, `403` `accountable-owner-missing` | 03 §8.3 |
 | 8 | Arguments validate against the **live** operation's parameter and request-body schemas, not only against the descriptor's `inputSchema`; `Idempotency-Key` present where the live class is `proposal-only` | `422` `input-schema-drift`, `400` `idempotency-key-required` | 03 §4, §4.1; 09 §8.1 |
 | 9 | The pre-invocation audit record is durably accepted by `audit` | `503` `audit-record-incomplete` | 03 §8.5 |
@@ -274,6 +274,8 @@ Every invocation passes all nine gates, in this order, and any failure ends the 
 This is the gate that a stale cached claim would otherwise defeat, so it is specified exhaustively.
 
 **The rule is called with the same function the generator calls.** `fathom_agent_tooling.eligibility.assess(spec, operation_id)` (document 10 §7.3) is imported and invoked against the **live** document. It returns an `EligibilityVerdict` whose `reason` is one of `ABSENT`, `NOT_ELIGIBLE`, `STATE_CHANGING`, `NO_DESCRIPTION`, and the service maps those four onto problem types one-to-one. Document 10 §7.3 calls that module *"the ONLY place in the package that decides whether an operation may be selected"*; this service does not become a second place. A locally written re-check would be a copy that must be kept in step with a module owned by another package and another wave, and the observable direction of that drift is permissive — a local copy silently keeps allowing what an updated rule has started to forbid.
+
+`assess` is called at two points inside gate 6, not one, and this is deliberate rather than an inconsistency: gate 6a calls it only after `side_effects_of` has already reported that the operation is gone from the live spec, purely to obtain the properly-formatted `Ineligibility.ABSENT` verdict (§4.8); gate 6c calls it unconditionally, once the operation is known to exist and gate 6b's comparison has passed, for the remaining three reasons. Either call site produces the verdict through the same function, so the four-reason-to-four-problem-type mapping stays one-to-one regardless of which call site is the one that fires for a given request.
 
 Note what `assess` gives for free by construction: it **never looks at the HTTP method**. Findings C1 and D11 are that a method check makes `pdm-whatif` unbuildable, since every operation it needs is a `POST`. Reusing `assess` means the call-time gate cannot reintroduce that defect even by accident.
 
@@ -356,7 +358,7 @@ Ordering and failure semantics only. The types come from `packages/agent-tooling
 # SHORT-CIRCUIT.  [03 §8.1, §8.3, §8.4, §8.5]
 #
 # Nothing is proxied, and no audit record is completed, until every gate passes.
-# The most important line in this function is the `!=` in gate 6: the descriptor
+# The most important line in this function is the `!=` in gate 6b: the descriptor
 # was generated against a specification that may no longer be the specification
 # the target is serving, and a cached `x-side-effects: none` on an operation that
 # has since become state-changing is the one way this service could let an agent
@@ -371,15 +373,31 @@ async def invoke(req: ToolCall, principal: Principal) -> ToolResult:
 
     live = await spec_cache.get_fresh(descriptor.x_fathom_target) # gate 5  (raises SpecCacheStale)
 
-    # [AMENDMENT] 6b now runs BEFORE 6a. Originally 6a ran first and called assess() against
-    # the LIVE class; if a target had escalated to state-changing, assess() returned
-    # ineligible and rejected with a generic ineligibility error before 6b's comparison ever
-    # ran -- so the "target escalated after the descriptor was pinned" case, THE CENTRAL TEST
-    # OF THIS SERVICE (§4.4), returned 403, never the documented 409 side-effects-mismatch.
-    # Checking the drift first means a stale descriptor is always reported as stale, and
-    # eligibility is only evaluated once descriptor and live agree.
-    live_class = live.side_effects_of(descriptor.x_fathom_operation_id)
-    if live_class != descriptor.x_fathom_side_effects:            # gate 6a — the comparison assess() cannot make
+    # [AMENDMENT] Gate 6 is three checks, run in this order: 6a, 6b, 6c.
+    #
+    # 6b (the drift comparison) runs BEFORE 6c (the full assess() call), and this
+    # is unchanged from the prior amendment. Calling assess() first would flag an
+    # escalated-but-still-present operation ineligible before 6b's comparison ever
+    # ran, because a release that escalates `x-side-effects` also drops
+    # `x-agent-eligible` in the same release -- so the "target escalated after the
+    # descriptor was pinned" case, THE CENTRAL TEST OF THIS SERVICE (§4.4), would
+    # return a generic 403 ineligibility error, never the documented 409
+    # side-effects-mismatch.
+    #
+    # 6a runs before 6b, and this is the corrected part: `side_effects_of` has
+    # nothing to compare once the operation is gone from the live spec entirely
+    # (an `operationId` removed at the same API major), so that case is detected
+    # BEFORE the drift comparison, not folded into it.  6a does not re-run the
+    # bug above, because it only calls assess() once `side_effects_of` has
+    # already reported the operation missing -- it never touches an operation
+    # that still exists, so an escalated-but-present operation still reaches 6b
+    # first, exactly as before.
+    live_class = live.side_effects_of(descriptor.x_fathom_operation_id)  # None if operationId is absent from the live document
+    if live_class is None:
+        verdict = assess(live.document, descriptor.x_fathom_operation_id)  # gate 6a — the sole producer of Ineligibility.ABSENT (10 §7.3)
+        raise Rejected(_PROBLEM_FOR[verdict.reason], verdict.detail)
+
+    if live_class != descriptor.x_fathom_side_effects:            # gate 6b — the comparison assess() cannot make
         raise Rejected(
             "side-effects-mismatch",
             f"descriptor recorded {descriptor.x_fathom_side_effects!r}; "
@@ -389,7 +407,7 @@ async def invoke(req: ToolCall, principal: Principal) -> ToolResult:
             "that is no longer the one being served.  Regenerate; do not proceed.",
         )
 
-    verdict = assess(live.document, descriptor.x_fathom_operation_id)   # gate 6b — THE SAME FUNCTION CI USES
+    verdict = assess(live.document, descriptor.x_fathom_operation_id)   # gate 6c — THE SAME FUNCTION CI USES
     if not verdict.eligible:
         raise Rejected(_PROBLEM_FOR[verdict.reason], verdict.detail)
 
@@ -556,10 +574,10 @@ Base path `/api/v1/tool-server/` per document 03 §4 and finding C25. Every oper
 | `api-major-pin-unsatisfiable` | 409 | Gate 4 |
 | `spec-cache-stale` | 503 | Gate 5 (§2.5) |
 | `operation-absent-from-live-spec` | 409 | Gate 6a — `Ineligibility.ABSENT` |
-| `operation-not-agent-eligible` | 403 | Gate 6a — `Ineligibility.NOT_ELIGIBLE` |
-| `side-effects-forbids-invocation` | 403 | Gate 6a — `Ineligibility.STATE_CHANGING` |
-| `operation-lacks-description` | 409 | Gate 6a — `Ineligibility.NO_DESCRIPTION` |
 | `side-effects-mismatch` | 409 | **Gate 6b — §4.3** |
+| `operation-not-agent-eligible` | 403 | Gate 6c — `Ineligibility.NOT_ELIGIBLE` |
+| `side-effects-forbids-invocation` | 403 | Gate 6c — `Ineligibility.STATE_CHANGING` |
+| `operation-lacks-description` | 409 | Gate 6c — `Ineligibility.NO_DESCRIPTION` |
 | `authority-class-insufficient` | 403 | Gate 7 |
 | `accountable-owner-missing` | 403 | Gate 7 |
 | `input-schema-drift` | 422 | Gate 8 (§4.4) |
@@ -639,10 +657,10 @@ Document 09 §4.7's layering applies. Beyond it, the tests below exist because e
 | Variant | Mutation | Test asserts |
 |---|---|---|
 | `target-good` | none | Every gate passes; the call proxies; both audit records written |
-| `target-escalated` | `x-side-effects` flips `none` → `state-changing`; `x-agent-eligible` dropped | `409 side-effects-mismatch`; **and no outbound request to the target** |
+| `target-escalated` | `x-side-effects` flips `none` → `state-changing`; `x-agent-eligible` dropped | `409 side-effects-mismatch` (gate 6b, before gate 6c's `assess()` call ever sees the dropped `x-agent-eligible`); **and no outbound request to the target** |
 | `target-relaxed` | `proposal-only` → `none` | `409 side-effects-mismatch`. Relaxation is a rejection too (§4.3) |
-| `target-eligibility-dropped` | class unchanged, `x-agent-eligible` removed | `403 operation-not-agent-eligible` |
-| `target-operation-removed` | `operationId` removed at the same major | `409 operation-absent-from-live-spec` |
+| `target-eligibility-dropped` | class unchanged, `x-agent-eligible` removed | `403 operation-not-agent-eligible` (gate 6c) |
+| `target-operation-removed` | `operationId` removed at the same major | `409 operation-absent-from-live-spec` (gate 6a, before gate 6b's comparison — a distinct problem type from `target-escalated`'s, not the same case) |
 | `target-path-moved` | path changes, `operationId` unchanged | **Succeeds.** `operationId` resolution survives a path change (§5.2) |
 | `target-param-narrowed` | a parameter type narrows | `422 input-schema-drift`; the argument is not silently dropped |
 | `target-response-reshaped` | a projected field removed from the response **schema** | `409 result-projection-schema-drift` |
@@ -876,8 +894,9 @@ This **extends** the shared Definition of Done in [`09-monorepo-and-conventions.
 ### 16.3 Invocation-time enforcement
 
 - [ ] All nine gates of §4.2 implemented **in order**, each with a positive and a negative test.
-- [ ] Gate 6a calls `fathom_agent_tooling.eligibility.assess` against the **live** document; `import-linter` forbids importing the generator, and `test_eligibility_is_not_reimplemented` passes.
+- [ ] Gate 6a detects an operation missing from the live spec (`operationId` removed at the same API major) and reports it `409 operation-absent-from-live-spec` via `assess`'s `Ineligibility.ABSENT` — the sole producer of that verdict — **before** gate 6b's comparison runs, so a removed operation never falls through to a 500 or a misattributed mismatch.
 - [ ] Gate 6b rejects a class mismatch **in either direction**, with `409 side-effects-mismatch`, and the target is not contacted.
+- [ ] Gate 6c calls `fathom_agent_tooling.eligibility.assess` against the **live** document for the remaining checks (`NOT_ELIGIBLE`, `STATE_CHANGING`, `NO_DESCRIPTION`); `import-linter` forbids importing the generator, and `test_eligibility_is_not_reimplemented` passes.
 - [ ] `test_superseded_manifest_pin_is_rejected_at_call_time` and `test_side_effects_changed_since_generation_is_rejected` pass, on both surfaces, with all five assertions of the latter.
 - [ ] All ten fake-target variants of §11.1 exist and produce their stated outcome — including `target-optional-absent` **succeeding** (the **D19** case) and `target-path-moved` **succeeding**.
 - [ ] The live-spec cache measures age monotonically, fetches through the gateway with `If-None-Match`, fails closed past its bound, and never falls back to the descriptor's recorded class.
