@@ -225,12 +225,25 @@ CREATE TABLE reference_data.failure_mode_cause_candidate (
     taxonomy_version  text NOT NULL REFERENCES reference_data.taxonomy_version(version),
     iso_cause_code    text,          -- ISO 14224 cause code. UNVERIFIED source; see §5.4
     iso_cause_label   text,
-    m3_cause_code     char(1)        -- crosswalk to 3-M CAUSE 1-8, 0
-        REFERENCES reference_data.navy_3m_code_stub(code),   -- see §2.6
+    -- [AMENDMENT] `navy_3m_code_stub` was never created (it was always a stub name for an
+    -- unwritten mechanism, per §2.6's own comment) and could not have been a plain FK target
+    -- regardless: `code` alone is not unique on navy_3m_code (its real key is
+    -- (code_set, code, taxonomy_version)), and a partial "CAUSE-only" index cannot be an FK
+    -- target in PostgreSQL (only a full unique constraint can). Denormalizing code_set here,
+    -- pinned to 'CAUSE' by CHECK, makes the composite FK against navy_3m_code's real PK
+    -- express exactly the same restriction declaratively.
+    m3_cause_code_set reference_data.m3_code_set,   -- always 'CAUSE'; see the CHECK below
+    m3_cause_code     char(1),                       -- crosswalk to 3-M CAUSE 1-8, 0
     confidence        numeric(3,2) CHECK (confidence > 0 AND confidence <= 1),
     basis             text NOT NULL, -- how this correspondence was established
     ordinal           int NOT NULL,
     PRIMARY KEY (entry_id, ordinal),
+    FOREIGN KEY (m3_cause_code_set, m3_cause_code, taxonomy_version)
+        REFERENCES reference_data.navy_3m_code(code_set, code, taxonomy_version),
+    CONSTRAINT m3_cause_is_cause_set
+        CHECK (m3_cause_code_set IS NULL OR m3_cause_code_set = 'CAUSE'),
+    CONSTRAINT m3_cause_set_and_code_paired
+        CHECK ((m3_cause_code_set IS NULL) = (m3_cause_code IS NULL)),
     CONSTRAINT at_least_one_cause_side CHECK (iso_cause_code IS NOT NULL OR m3_cause_code IS NOT NULL)
 );
 ```
@@ -268,10 +281,10 @@ CREATE TABLE reference_data.navy_3m_code (
     PRIMARY KEY (code_set, code, taxonomy_version)
 );
 
--- Referenced by §2.4 as navy_3m_code_stub: a view restricting to the CAUSE set of the
--- current published version, so the FK in failure_mode_cause_candidate cannot point at a
--- WHEN DISCOVERED code. Implemented as a CAUSE-only unique index plus a composite FK in
--- the migration; presented as a stub here for readability.
+-- [AMENDMENT] §2.4's failure_mode_cause_candidate FK against this table is now the real,
+-- composite (code_set, code, taxonomy_version) FK against this table's own PK below,
+-- restricted to the CAUSE set by a CHECK constraint there -- not a "navy_3m_code_stub"
+-- view or partial index, neither of which PostgreSQL permits as an FK target.
 ```
 
 `set_is_complete` is required by the source. Document 08 §2.5 gives CAUSE and WHEN DISCOVERED as complete enumerations but gives ACTION TAKEN's first character as *"`1` … `2` … `3` … `4` cancelled · **and others**"*, with the second character *"TYCOM-specified."* Seeding ACTION_TAKEN_FIRST with `set_is_complete = false` is the only honest representation, and it is what makes §5.3's gap visible to a consumer rather than silently absent.
@@ -409,6 +422,13 @@ CREATE TYPE reference_data.supersession_relation AS ENUM
     ('renamed', 'split', 'merged', 'narrowed', 'broadened', 'deprecated');
 
 CREATE TABLE reference_data.taxonomy_supersession (
+    supersession_id         uuid NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+    -- [AMENDMENT] The prior natural PRIMARY KEY included superseding_lineage_id, which is
+    -- nullable ("NULL only for 'deprecated' with no successor") -- but PostgreSQL forces
+    -- every PRIMARY KEY column NOT NULL, silently contradicting deprecated_may_lack_successor
+    -- below and rejecting the exact row that CHECK exists to permit. Surrogate key instead;
+    -- the natural composite is preserved as a plain UNIQUE constraint, whose NULL-distinct
+    -- semantics are the correct behavior here (each no-successor deprecation is its own row).
     superseded_lineage_id   uuid NOT NULL,
     superseding_lineage_id  uuid,           -- NULL only for 'deprecated' with no successor
     from_version            text NOT NULL REFERENCES reference_data.taxonomy_version(version),
@@ -418,7 +438,7 @@ CREATE TABLE reference_data.taxonomy_supersession (
     rationale               text NOT NULL,
     adjudicated_by          text NOT NULL,
     recorded_at             timestamptz NOT NULL DEFAULT now(),
-    PRIMARY KEY (superseded_lineage_id, superseding_lineage_id, to_version),
+    UNIQUE (superseded_lineage_id, superseding_lineage_id, to_version),
     CONSTRAINT deprecated_may_lack_successor
         CHECK (superseding_lineage_id IS NOT NULL OR relation = 'deprecated'),
     CONSTRAINT no_self_reference CHECK (superseded_lineage_id <> superseding_lineage_id)
