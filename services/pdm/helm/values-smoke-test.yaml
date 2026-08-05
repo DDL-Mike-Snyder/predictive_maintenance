@@ -15,21 +15,29 @@ replicaCount: 1
 
 nodeSelector: null          # {} deep-merges and doesn't clear the base value -- the real fathom.navy/pool: program node pool doesn't exist in this cluster
 
-# Deliberately overridden to false: migration-job.yaml uses the SAME
-# database.secretRef as the app Deployment, but migrations need owner
-# privileges (CREATE ROLE, CREATE SCHEMA, SECURITY DEFINER functions)
-# while the app must connect as a restricted fathom_pdm_serving-member
-# role for RLS to actually apply -- a real chart gap, not a smoke-test-only
-# issue. Migrations were run by hand with an owner connection instead; see
-# HANDOFF.md.
+# Deliberately overridden to false: at the time of this smoke test,
+# migration-job.yaml used the SAME database.secretRef as the app
+# Deployment, but migrations need owner privileges (CREATE ROLE, CREATE
+# SCHEMA, SECURITY DEFINER functions) while the app must connect as a
+# restricted fathom_pdm_serving-member role for RLS to actually apply --
+# migrations were run by hand with an owner connection instead. **This gap
+# is now fixed in the chart itself** (database.migrationSecretRef, a
+# distinct Secret from database.secretRef -- see migration-job.yaml) --
+# left as `false` here only because this override is a historical record
+# of what the smoke test actually did, not a live environment to update.
 migrations:
   enabled: false
 
 # The real fathom_pdm_serving-member role, not the migration-owning
 # superuser -- see fathom-pdm-pg-app's own creation for how it was made.
+# provisionCluster: false because the CNPG operator's CRDs were never
+# installed in this sandbox cluster (checked) -- a hand-rolled
+# single-instance Postgres Deployment stood in for it instead, outside
+# this chart entirely. See postgres-cluster.yaml for the real mechanism.
 database:
   secretRef: fathom-pdm-pg-app
-  clusterName: pdm-postgres   # not a real CloudNativePG Cluster -- see HANDOFF.md's Postgres-approach note
+  clusterName: pdm-postgres   # not a real CloudNativePG Cluster -- see CLAUDE.md's Postgres-approach note
+  provisionCluster: false
 
 events:
   brokers: "unused.invalid:9093"        # no Redpanda in this cluster; OutboxWriter only ever writes to its own DB table

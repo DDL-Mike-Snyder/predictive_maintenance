@@ -1,0 +1,96 @@
+{{/*
+09-monorepo-and-conventions.md §4.4.1/§4.4.2 says every service gets
+"a CloudNativePG Cluster in fathom-data, named fathom-<slug>-pg" and the
+NetworkPolicy template (§4.4.2) already assumes one exists -- its egress
+rule matches pods labelled `cnpg.io/cluster: {{ .Values.database.clusterName }}`,
+a label the CNPG operator applies automatically to pods it creates for a
+Cluster of that name. No build doc anywhere specifies the Cluster CR's own
+body (instances, storage, image, bootstrap), confirmed by grep across the
+whole corpus -- this is [ESTABLISHED HERE], the same footing as the Vault
+SecretStore assumption in externalsecret.yaml.
+
+provisionCluster exists as an escape hatch (default true) for an
+environment where CNPG Clusters are provisioned by a separate
+platform-level GitOps pipeline rather than each service's own chart, and
+for one where the CNPG operator's CRDs simply aren't installed yet -- the
+AWS smoke test's own sandbox was exactly this case (single-instance
+Postgres stood up by hand, no CNPG operator in that cluster at all; see
+values-smoke-test.yaml).
+
+CRITICAL, worked out by reasoning through CNPG's own secret-naming
+convention before writing this, not by trial and error against a live
+cluster (none was available to test against without installing the CNPG
+operator on the shared mikesn136713 cluster, a bigger blast-radius action
+than this pass warranted): CNPG's own default convention names the
+initdb-bootstrap-owner's auto-generated Secret "<cluster-name>-app" and
+the superuser's "<cluster-name>-superuser". Our OWN two ExternalSecret-
+managed Secrets (database.secretRef, "fathom-pdm-pg-app" by 09 §4.4.1's
+own mandated value, and database.migrationSecretRef,
+"fathom-pdm-pg-migrate") are NOT sourced from CNPG at all -- they're
+populated from Vault, per FATHOM_DATABASE__URL's existing design -- but if
+this Cluster rendered with CNPG's bootstrap secret left at ITS default
+name, "fathom-pdm-pg-app" (== database.clusterName + "-app"), it would
+COLLIDE with our own ExternalSecret's identically-named target Secret:
+two different controllers (External Secrets Operator and the CNPG
+operator) would both try to own one Kubernetes Secret object, fighting
+over its contents every reconcile. Fixed by explicitly redirecting BOTH of
+CNPG's own generated secrets to names that cannot collide with anything
+this chart manages -- see bootstrap.initdb.secret.name and
+superuserSecret.name below. Neither of CNPG's own two secrets is consumed
+anywhere in this chart; they exist for CNPG's own bookkeeping and for
+whoever performs the one-time operational step of seeding Vault with the
+real DSNs at the two paths externalsecret.yaml already reads from
+(.../database, .../database-migration) -- the superuser secret's password
+is the natural source for the migration path, since 22-pdm.md §4.5's
+migration creates a BYPASSRLS role (fathom_pdm_invalidator), which
+genuinely requires real Postgres superuser to grant, not merely
+CREATEROLE.
+
+Image: ghcr.io/cloudnative-pg/postgresql:16, digest-pinned to the actual
+multi-arch OCI INDEX (verified live against the registry's own
+Docker-Content-Digest header for the `16` tag, then re-fetched by that
+exact digest to confirm it round-trips to the same multi-platform manifest
+list -- the same discipline the Dockerfile's own arch-pin bug (CLAUDE.md's
+bug #16) should have gotten the first time). Postgres 16 matches every
+`postgres:16-alpine` testcontainer already used by this service's own real
+-Postgres test suite.
+*/}}
+{{- if .Values.database.provisionCluster }}
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: {{ .Values.database.clusterName }}
+  labels: {{- include "fathom.labels" . | nindent 4 }}
+spec:
+  instances: {{ .Values.database.instances }}
+  imageName: "ghcr.io/cloudnative-pg/postgresql:16@sha256:d9942fd46669234d39c5e6152e23a973bd38df4d2e2eddb6b69bb71b76625ce1"
+
+  # A real Postgres superuser -- see this file's own docstring for why
+  # migrations need it (a BYPASSRLS role, not just CREATE ROLE/SCHEMA).
+  # Named explicitly rather than left at CNPG's own default so it can
+  # never collide with a Secret this chart's ExternalSecret manages.
+  enableSuperuserAccess: true
+  superuserSecret:
+    name: {{ .Values.database.clusterName }}-cnpg-superuser
+
+  bootstrap:
+    initdb:
+      database: {{ .Values.database.name }}
+      owner: {{ .Values.database.name }}
+      # Redirected away from CNPG's own default ("<clusterName>-app") for
+      # the same collision reason -- this Secret is CNPG's bookkeeping
+      # only, never referenced by deployment.yaml or migration-job.yaml.
+      secret:
+        name: {{ .Values.database.clusterName }}-cnpg-bootstrap
+
+  storage:
+    size: {{ .Values.database.storageSize }}
+    {{- if .Values.database.storageClassName }}
+    storageClass: {{ .Values.database.storageClassName }}
+    {{- end }}
+
+  resources: {{- toYaml .Values.database.resources | nindent 4 }}
+
+  monitoring:
+    enablePodMonitor: {{ .Values.serviceMonitor.enabled }}
+{{- end }}

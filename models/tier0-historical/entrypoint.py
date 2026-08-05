@@ -11,7 +11,7 @@ monorepo's package graph, and this script depends on nothing beyond the
 stdlib so it runs in that environment with no install step at all.
 
 [PLACEHOLDER -- out of scope, see 22-pdm.md §5.1 and this service's own
-HANDOFF.md "What's NOT built yet for PdM"] The two-parameter Weibull MLE /
+CLAUDE.md "What's NOT built yet for PdM"] The two-parameter Weibull MLE /
 IPCW-weighted fit tier 0's method actually specifies is NOT implemented
 here -- it needs real per-(equipment_family, niin) telemetry and
 failure-label infrastructure this vertical slice does not build.

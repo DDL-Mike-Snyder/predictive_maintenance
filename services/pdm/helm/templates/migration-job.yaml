@@ -5,6 +5,15 @@ recreates it on every install/upgrade (hook-delete-policy below) rather
 than it ever being reconciled as part of the Deployment's steady state.
 backoffLimit: 0 so a partial migration fails the release instead of retrying
 into a worse partial state.
+
+Uses database.migrationSecretRef, NOT database.secretRef (the app
+Deployment's own secret) -- 22-pdm.md §4.5's migration needs CREATE ROLE,
+CREATE SCHEMA, and ownership of a BYPASSRLS SECURITY DEFINER function,
+none of which the app's own fathom_pdm_serving-member role can or should
+hold. An earlier version of this chart pointed both the app and this Job
+at the same secretRef; caught (not by review, by an actual AWS deployment)
+when migrations had to be run by hand with a separate owner DSN instead --
+see CLAUDE.md's "AWS smoke-test deployment" section.
 */}}
 {{- if .Values.migrations.enabled }}
 apiVersion: batch/v1
@@ -46,6 +55,6 @@ spec:
             - configMapRef:
                 name: {{ include "fathom.fullname" . }}
             - secretRef:
-                name: {{ .Values.database.secretRef }}
+                name: {{ .Values.database.migrationSecretRef }}
           resources: {{- toYaml .Values.resources | nindent 12 }}
 {{- end }}

@@ -21,3 +21,10 @@ app:
 
 otel:
   enabled: false
+
+database:
+  instances: 1                          # no HA needed for dev
+  storageSize: 5Gi
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits:   { cpu: 500m, memory: 512Mi }

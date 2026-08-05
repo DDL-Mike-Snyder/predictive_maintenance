@@ -28,7 +28,7 @@ def upgrade() -> None:
     # of every ingest (predictions_written, predictions_rejected, status,
     # completed_at) -- the initial migration granted this role SELECT and
     # INSERT on pdm.scoring_run, but never UPDATE. Same bug shape as bug
-    # #11 (HANDOFF.md): a real code path's privilege need, never actually
+    # #11 (CLAUDE.md): a real code path's privilege need, never actually
     # exercised under the real role until now.
     op.execute("GRANT UPDATE ON pdm.scoring_run TO fathom_pdm_serving")
 

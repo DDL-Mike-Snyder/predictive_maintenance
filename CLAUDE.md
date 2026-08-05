@@ -1,3 +1,40 @@
+# FATHOM — project instructions for Claude Code, plus handoff / continuation notes
+
+This file is loaded automatically by Claude Code at the start of every
+session in this repo (the `CLAUDE.md` convention) — so treat the section
+immediately below as a standing instruction, and everything after "Where
+things stand" as a running handoff log for whoever (human or agent) picks
+this up next. This file used to be `HANDOFF.md`; renamed 2026-08-05 so the
+agentic-model-allocation policy below is actually visible to a fresh
+session rather than living only in Claude's private cross-session memory.
+
+## Agentic model allocation (standing policy)
+
+| Work | Model | Notes |
+|---|---|---|
+| Build-framework / spec authoring | Sonnet 5 | The corpus-hardening phase; done. |
+| Per-service implementation (writing code) | Sonnet 5 | Default for all build work, including self-review of your own output. |
+| Adversarial review of generated code | **Opus 5** — explicit `model` override required | Not run by default. Explicit per-checkpoint decision the user makes — as of 2026-08-05, deferred again even though PdM cleared its 7-item checklist plus a real AWS deploy; don't assume this means it's now standard practice. Ask before scheduling one. |
+| Mechanical sweeps (status-column reconciliation, staleness cleanup, bulk lint fixes, etc.) | **Haiku 4.5** — explicit `model` override required | Cheap, high-volume, low-judgment work only. |
+| Parallelizing genuinely independent build tasks (e.g. Dockerfile + Helm chart) | Multiple Sonnet 5 subagents, fanned out | This is a speed/parallelism choice, not a model-tier change — still Sonnet. Re-verify each subagent's work afterward (real command execution, not just trusting its self-report) before treating it as done. |
+
+**Why an explicit `model` override matters:** omitting the `model` param on
+an `Agent`/subagent call makes it silently inherit whatever model the
+*current session* is running as — there is no config-file pin causing
+this, it's plain inheritance. `opus`/`haiku` overrides are honored
+per-call and reliably produce that tier (verified live). Sonnet needs no
+override since it's both the safe default and the session default.
+
+**Current actual practice (as of 2026-08-05, PdM's implementation):** no
+subagents are used for PdM's own build/review — the main session (Sonnet
+5) does both building and self-review directly. Opus adversarial review
+was considered and explicitly declined twice (once mid-build, once again
+after the AWS smoke-test deploy) — revisit before starting service #2 or
+before any non-smoke-test production deployment, but don't self-schedule
+it without asking.
+
+---
+
 # FATHOM — handoff / continuation notes
 
 **Read this first if you're picking this up cold.** Last updated 2026-08-05
@@ -8,11 +45,13 @@ Domino domain, the Domino Job entrypoint run for real from inside the
 Domino workspace against it, and a minimal live dashboard published at
 the same domain. See "AWS smoke-test deployment" below and bugs #16–#17).
 Commit `4c1e13e` has #27's model-registry binding + Domino Job entrypoint
-work. **Everything from the AWS deployment pass (the Dockerfile arch fix,
-the new scoring_run grant migration, the Helm chart toggles) is NOT YET
-COMMITTED as of this update** — say so explicitly to whoever picks this up
-next if that's still true. `git log --oneline` / `git status` tell the true
-story; this file is the map.
+work. **Update, 2026-08-05, later the same day: the AWS deployment pass
+(the Dockerfile arch fix, the new scoring_run grant migration, the Helm
+chart toggles) is now committed too, in `91e81c0`** — an earlier version of
+this file said it wasn't; that was true when written and is stale now.
+`git log --oneline` / `git status` tell the true story; this file is the
+map, but always verify against those two before trusting a paragraph like
+this one that describes commit state.
 
 ## Where things stand, in one paragraph
 
@@ -442,6 +481,32 @@ in `fathom-pdm-dev` only. Do not do this in a real environment.
 exercised** — see the earlier note that the registry is empty; this pass
 proved the *deployment* end-to-end, not a real registered-model binding.
 
+**2026-08-05 correction, verified live against the real Domino API with
+the `domino-claude-plugin` now installed:** neither the Model Registry
+(`GET /api/registeredmodels/v1`) nor Domino's own Apps registry
+(`GET /api/apps/beta/apps?projectId=...`) has ever had an entry for this
+project — both return zero items, checked directly, not assumed. **The
+"minimal live dashboard published at the same domain" above is a bare
+Kubernetes Ingress/ConfigMap on the shared `mikesn136713` EKS cluster —
+it never went through Domino's own App Publisher (`POST /api/apps/beta
+/apps`), so it does not and never did show up as a registered Domino App**,
+despite "published ... at the same domain" reading like it might have.
+Same for PdM itself: it's a backend microservice deployed via its own
+Helm chart onto the platform's shared EKS cluster, by design — it was
+never meant to *be* a Domino App or a Domino Model API deployment (those
+apply to the UI layer, `51-operator-console`/`52-practitioner-apps`,
+neither built yet). Nothing here is a bug to fix, but don't describe a
+raw k8s Ingress as "published" without the caveat that it's invisible to
+Domino's own Apps tab — a future session or a human skimming this file
+could otherwise reasonably conclude a real platform artifact exists when
+none does. The `domino-claude-plugin`'s own MCP server
+(`domino_server`) is configured to run from inside a Domino
+workspace (`/mnt/code/...`) and fails to connect from this Mac directly
+("Connection closed") — querying the real API from outside a workspace
+still means going through the `dom connect` SSH tunnel and hitting the
+REST API with curl, same as every prior session did, not something the
+plugin's MCP changes for this machine.
+
 ## How to run tests (you'll need to redo this — nothing here survives)
 
 The test venv (`/tmp/fathom-test-venv`) was scratch space for this session
@@ -505,22 +570,33 @@ all built directly (not delegated) since each needed careful judgment, not
 mechanical transcription — see bugs #9, #11/#12, and #13-15 above for what
 that judgment caught.
 
-1. **The AWS smoke-test deployment pass (Dockerfile arch fix, the
-   scoring_run grant migration, the Helm chart toggles) is not committed
-   as of this update** — `git status`/`git diff` first (#27's own work is
-   already committed, `4c1e13e`). Decide whether to commit this pass too.
-2. **Decide what to do with the live `fathom-pdm-dev` sandbox** — it's
-   real, running, and costing real (small) AWS spend: a Postgres pod, a
-   PdM pod, a UI pod, two Ingress objects, all in the shared
-   `mikesn136713` cluster. Tear it down (`kubectl delete namespace
-   fathom-pdm-dev`, plus the two Ingress objects if not swept by
-   namespace deletion, plus the ECR repo/image if truly done with it) or
-   leave it up intentionally — don't let it linger by accident.
-3. **Fix the migration-job.yaml / database.secretRef credential
-   conflation** (see "AWS smoke-test deployment" above) before any real
-   (non-smoke-test) Helm deployment — migrations and the app need two
-   different DB roles, and the chart currently only has one secretRef for
-   both.
+1. ~~The AWS smoke-test deployment pass (Dockerfile arch fix, the
+   scoring_run grant migration, the Helm chart toggles) is not committed~~
+   — **done, committed in `91e81c0`.**
+2. ~~Decide what to do with the live `fathom-pdm-dev` sandbox~~ — **decided
+   2026-08-05: tear it down** (see "2026-08-05 follow-up decisions" below
+   for status).
+3. ~~Fix the migration-job.yaml / database.secretRef credential
+   conflation~~ — **done, 2026-08-05.** Added `database.migrationSecretRef`
+   (a distinct Secret name, `fathom-pdm-pg-migrate`) alongside the existing
+   `database.secretRef`; `migration-job.yaml` now uses the former, the app
+   `Deployment` still uses the latter; `externalsecret.yaml` renders a
+   second `ExternalSecret` (gated on `migrations.enabled`) sourced from a
+   distinct Vault path (`.../database-migration`) so the two never
+   collapse to one credential again. `helm lint`/`template`/`unittest`
+   (17 tests, up from 14) all re-run and passing, against both the
+   default values and `values-smoke-test.yaml` (confirms the second
+   `ExternalSecret`/the migration `Job` both correctly disappear when
+   `migrations.enabled: false`). **Worth knowing if you touch this chart's
+   tests again**: `helm-unittest` v1.1.2's per-assertion `documentIndex`
+   field is silently ignored for multi-document templates in this
+   environment — set `documentIndex` at the test-case (`it:`) level
+   instead, sibling to `asserts:`, or assertions against a multi-doc
+   template's non-shared fields resolve against the wrong document without
+   any error (caught by an assertion that failed with a *value from the
+   wrong document*, not a missing-path error — worth re-checking test
+   output carefully rather than assuming a passing run means the intended
+   document was actually checked).
 4. **The user plans to restart their Claude Code session to pick up the
    newly-installed `domino-claude-plugin`** (marketplace registered at
    `~/.claude/marketplaces/domino`, installed at user scope), specifically
@@ -530,8 +606,9 @@ that judgment caught.
    both expire) — this file plus memory (`project_fathom_corpus_state.md`,
    `reference_domino_workspace_access.md`) is the map back to where things
    stand.
-5. **Decide: is PdM "done enough" to move to service #2, or push further
-   first?** Genuinely out-of-scope-for-this-vertical-slice items remain --
+5. ~~Decide: is PdM "done enough" to move to service #2, or push further
+   first?~~ — **decided 2026-08-05: push PdM to production-grade first,
+   before starting service #2.** Genuinely out-of-scope-for-this-vertical-slice items remain --
    the real tier 0-3 model fits (needs real telemetry/failure-label
    infrastructure), most of `CONSUMES`' ~19 event types (need that same
    pipeline + real Registry/Telemetry/Failure-Intel read models), the
@@ -555,6 +632,84 @@ that judgment caught.
    remain across the whole `services/`/`packages/` tree (see above). The
    user was asked and explicitly chose to defer this — don't re-raise it
    unless asked, but it's still there.
+
+## 2026-08-05 follow-up decisions
+
+After the AWS smoke-test pass above, the user reviewed this file and made
+four explicit decisions, in this order of priority:
+
+1. **Direction: PdM to production-grade first**, not service #2 yet. The
+   top real blocker for that is item 3 above (the migration-job.yaml /
+   database.secretRef conflation) — start there, then CloudNativePG
+   (item mentioned in "AWS smoke-test deployment" above), then the rest of
+   the "harden before calling it production-ready" items.
+2. **Sandbox: tear down `fathom-pdm-dev`.** Done — `kubectl delete
+   namespace fathom-pdm-dev` removed the namespace and both Ingress
+   objects (`pdm-smoke-test`, `pdm-ui-smoke-test`) in one shot, confirmed
+   gone afterward. **Left alone, deliberately**: the ECR repo
+   `946429944765.dkr.ecr.us-west-2.amazonaws.com/mikesn136713/fathom/pdm`
+   still has 3 images (one tagged `smoke-test`, two untagged) — the user's
+   answer covered the running k8s sandbox, not explicitly the registry;
+   delete those too if you're actually done with this image lineage.
+3. **Agentic model allocation: document it in this file** (see the new
+   section near the top) rather than leave it only in Claude's
+   cross-session memory. This file was renamed from `HANDOFF.md` to
+   `CLAUDE.md` for that reason — Claude Code auto-loads `CLAUDE.md` at the
+   start of every session, so the policy is now visible without anyone
+   having to know to ask for it.
+4. **Opus adversarial review: still not now.** Deferred a second time —
+   don't self-schedule it; ask again before service #2 or before any real
+   (non-smoke-test) production deployment.
+
+## 2026-08-05 later still — CloudNativePG, and Sonnet-only for the rest of this push
+
+The user is near their Claude spend limit and asked to stick to Sonnet for
+all remaining work (no Opus, consistent with decision 4 above anyway) —
+worth remembering if a future session considers a model override on this
+project without checking first.
+
+**CloudNativePG, item 1's second blocker, is now provisioned**: a new
+`services/pdm/helm/templates/postgres-cluster.yaml` renders a real CNPG
+`Cluster` CR (`fathom-pdm-pg`, 3 instances by default, Postgres 16
+digest-pinned to the real multi-arch OCI index — verified live against
+the registry, round-tripped by digest, same discipline bug #16 should have
+gotten the first time). `database.provisionCluster` (default `true`) is
+the escape hatch for a platform-level GitOps pipeline or a CNPG-operator-
+less sandbox; `values-smoke-test.yaml` now sets it `false` to match what
+that pass actually did (a hand-rolled single-instance Postgres, no CNPG
+operator in that cluster at all — unchanged behavior, now expressed as an
+explicit toggle instead of an unstated gap). `values-dev.yaml` overrides
+to 1 instance / smaller storage.
+
+**A real, non-obvious hazard found by reasoning through CNPG's own
+behavior before writing anything — not caught by trial and error, since
+no live CNPG cluster was available to test against without installing the
+operator on the shared `mikesn136713` cluster, judged too big a blast-
+radius action for this pass:** CNPG's own default convention names the
+Secret it auto-generates for the bootstrap-owner role `<cluster-name>-app`
+and the superuser's `<cluster-name>-superuser`. This chart's own
+`database.secretRef` — `fathom-pdm-pg-app`, 09 §4.4.1's own mandated
+value — is *exactly* the string CNPG would default to for a completely
+different purpose (the bootstrap owner, not the restricted
+`fathom_pdm_serving`-member role our ExternalSecret actually populates
+from Vault). Left alone, a real CNPG Cluster and this chart's own
+`ExternalSecret` would both try to own one Kubernetes Secret object named
+`fathom-pdm-pg-app`, fighting over its contents every reconcile — two
+different controllers, two different intended credentials, one Secret
+name. Fixed by explicitly redirecting CNPG's own two generated secrets to
+names nothing else in this chart ever references (`<clusterName>-cnpg-
+bootstrap`, `<clusterName>-cnpg-superuser`) — neither `database.secretRef`
+nor `database.migrationSecretRef` changed. **Still an open operational
+step, not a code gap**: someone has to actually copy the real DSN values
+into Vault at the two paths `externalsecret.yaml` reads from
+(`.../database`, `.../database-migration`) — the CNPG superuser secret's
+password is the natural source for the migration path, per this service's
+own §4.5 BYPASSRLS requirement. `helm lint`/`template`/`unittest` all
+re-run (23 tests, up from 17) across default, dev, and smoke-test values;
+none of this has been exercised against a real CNPG operator, since none
+was installed anywhere reachable this pass — worth flagging loudly to
+whoever gets a real cluster with the operator installed, same as every
+other "reviewed carefully but never actually run" item in this file.
 
 ## Where to find more context
 

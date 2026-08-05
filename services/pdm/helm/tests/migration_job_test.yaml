@@ -5,7 +5,7 @@ suite: Migration Job runs alembic as a pre-install/pre-upgrade hook only
 templates:
   - migration-job.yaml
 tests:
-  - it: is a hook Job, not a normal workload, running alembic upgrade head with the same env/secret wiring as the Deployment
+  - it: is a hook Job, running alembic upgrade head under the owner-privilege migrationSecretRef, NOT the app's own secretRef
     asserts:
       - isKind:
           of: Job
@@ -29,7 +29,19 @@ tests:
             - configMapRef:
                 name: RELEASE-NAME-pdm
             - secretRef:
-                name: fathom-pdm-pg-app
+                name: fathom-pdm-pg-migrate
+
+  - it: uses a distinct secret from the app Deployment's own database.secretRef, even when both are overridden
+    set:
+      database.secretRef: some-app-secret
+      database.migrationSecretRef: some-migration-secret
+    asserts:
+      - notEqual:
+          path: spec.template.spec.containers[0].envFrom[1].secretRef.name
+          value: some-app-secret
+      - equal:
+          path: spec.template.spec.containers[0].envFrom[1].secretRef.name
+          value: some-migration-secret
 
   - it: renders nothing when migrations.enabled is false
     set:

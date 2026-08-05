@@ -19,7 +19,7 @@ NOT implement:
     Intelligence/Scheduling. `data_availability_ceiling()` below takes
     those as already-resolved booleans.
 Wiring the actual read models that produce these inputs is event-consumer
-work (see HANDOFF.md).
+work (see CLAUDE.md).
 
 **A formula inconsistency resolved here, not literally transcribed.** §3.2
 gives `score = 100 x sum(w_j * x_j) / sum(w_j)`. Applied to x_j already on a

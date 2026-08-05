@@ -58,9 +58,22 @@ app:
 database:
   clusterName: fathom-pdm-pg           # CloudNativePG Cluster in fathom-data. Exactly one
   name: pdm
-  secretRef: fathom-pdm-pg-app         # created by External Secrets, never in the chart
+  secretRef: fathom-pdm-pg-app         # the app's own restricted role (fathom_pdm_serving-member). Created by External Secrets, never in the chart
+  migrationSecretRef: fathom-pdm-pg-migrate  # a DISTINCT owner-privilege role (CREATE ROLE/SCHEMA, SECURITY DEFINER function ownership) -- migrations need it and the app must never hold it, since it would defeat RLS. See migration-job.yaml/externalsecret.yaml
   poolSize: 10
   maxOverflow: 5
+
+  # CloudNativePG Cluster CR itself -- see postgres-cluster.yaml's own
+  # docstring for the collision reasoning behind the two "cnpg-*" secret
+  # names below (neither is consumed by this chart; both are CNPG's own
+  # bookkeeping, redirected away from secretRef/migrationSecretRef above).
+  provisionCluster: true                     # false if a platform-level pipeline provisions this Cluster instead, or the CNPG operator's CRDs aren't installed yet (e.g. a smoke-test sandbox)
+  instances: 3                               # real HA. Single instance is a values-dev.yaml/values-smoke-test.yaml override, not the default
+  storageSize: 20Gi
+  storageClassName: ""                       # "" = cluster's own default StorageClass
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits:   { cpu: "1",  memory: 1Gi }
 
 migrations:
   enabled: true                        # rendered as a pre-install,pre-upgrade Helm hook Job, 01 §11
