@@ -138,7 +138,7 @@ policies = ConflictPolicyRegistry.declare(
 )
 ```
 
-### 3.2 `WorkCandidate` — three drivers, one lifecycle
+### 3.2 `WorkCandidate` — four drivers, one lifecycle [AMENDMENT — was "three drivers"; see the `driver` enum correction below]
 
 ```
 WorkCandidate {
@@ -150,7 +150,17 @@ WorkCandidate {
   apl?                        text          # EIC+APL is the Navy's stated composite key [07 §5.1]
   baseline_id, baseline_epoch               # 03 §5.4; a candidate is invalid past its epoch
   -- which driver
-  driver                      enum { prediction | pms | casualty }
+  driver                      enum { prediction | pms | casualty | opportunistic }
+                                              # [AMENDMENT — `opportunistic` added. §5.4/§5.4.1
+                                              # derive a treatment record's `opportunistic` /
+                                              # `opportunistic_pms` split from `candidate.driver`
+                                              # and `candidate.prediction_contributed` below; that
+                                              # code is unreachable, and `prediction_contributed`
+                                              # undeclared, unless the candidate itself can carry
+                                              # `driver = opportunistic`. `opportunistic_pms` is
+                                              # NOT a fourth candidate driver: it is a TreatmentRecord
+                                              # -only value, produced from an `opportunistic`
+                                              # candidate whose `prediction_contributed` is false]
   driver_is_timing_determinant bool         # see merge rule 4
   merged_from_drivers[]       enum[]        # empty unless this candidate is a merge product
   merged_candidate_ids[]      uuid[]        # the superseded sources, retained forever
@@ -173,6 +183,17 @@ WorkCandidate {
   casrep_ref?, casrep_category?             # 2..4 [07 §5.8]
   casualty_reported_at?
   status_code?                char(1)       # 3-M STATUS. 2 = inoperative, 3 = degraded [07 §5.4]
+  -- driver = opportunistic  (all null otherwise) [AMENDMENT — block added, see `driver` above]
+  prediction_contributed?     bool          # §5.4.1: "a field on WorkCandidate, not an inference."
+                                              # Set by the optimizer at package construction, when
+                                              # an availability or another work item opens access
+                                              # and this item is folded in though nothing of its
+                                              # own (prediction, PMS due date, casualty) made it a
+                                              # candidate yet. Immutable once set, same as
+                                              # WorkOrder.driver (§3.3). True iff a prediction
+                                              # contributed to the decision to use the access on
+                                              # THIS item — the fact §5.4's `derive_treatment_record`
+                                              # reads to choose `opportunistic` vs `opportunistic_pms`
   -- common
   estimated_scope { man_hours, skill_class, duration_hours,
                     required_parts[{ niin, quantity, interchangeable_group_ref? }] }
@@ -190,13 +211,14 @@ WorkCandidate {
 }
 ```
 
-#### 3.2.1 The three generators
+#### 3.2.1 The four generators [AMENDMENT — was "the three generators"; `opportunistic` row added below, see the `driver` correction at §3.2]
 
 | Driver | Input | Generator | Notes |
 |---|---|---|---|
 | `prediction` | `prediction.updated` → local prediction read model; `casrep_risk.raised` from Fleet Status | `services/candidates/from_prediction.py` | Gated on the admission filter of §4.3 |
 | `pms` | `PmsRequirement` catalog × `usage_counter.updated` / calendar tick | `services/candidates/from_pms.py` | Usage-based due dates are keyed on `(installed_item_id, counter_type, counter_epoch)`; a `usage_counter.reset` **recomputes** the due date rather than carrying it forward |
 | `casualty` | `POST /work-candidates` with `driver=casualty`, authored by ship's force or an RMC planner | API only | See the gap below |
+| `opportunistic` | The optimizer's own package-construction step (§4.3), when an open availability or another item's work creates access to an item with no `prediction`, `pms`, or `casualty` candidate of its own | Minted in-process during solve, not by one of the three input-driven generators above | `prediction_contributed` (§3.2) is set at the same moment, immutably; the `opportunistic`/`opportunistic_pms` split it drives is §5.4.1's |
 
 > **`casrep_risk.raised` is a prediction, not a casualty.** [03 §6](../architecture/03-integration-contracts.md) defines it as "installed item, **predicted** category, horizon, evidence references", published by Fleet Status. A candidate generated from it therefore carries `driver = prediction` and `source_prediction_id` resolved from the event's evidence references — **not** `driver = casualty`. The name invites the opposite coding, and the opposite coding is a silent corruption of D1's correction: prediction-driven interventions would be recorded as routine responses to equipment failure, the treatment record would say no policy assigned them, and the informative-censoring correction would be computed against a treatment population missing exactly the items the model acted on. A unit test asserts this mapping by name (§11.5).
 
@@ -234,7 +256,12 @@ WorkOrder {
   asset_id, system_id?, position_id, installed_item_id
   work_center                 char(4)                     # left-justified, space-padded [07 §5.2]
   originating_candidate_id?   uuid → work_candidate
-  driver                      enum { prediction | pms | casualty }   # denormalized, IMMUTABLE
+  driver                      enum { prediction | pms | casualty | opportunistic }   # denormalized,
+                                              # IMMUTABLE. [AMENDMENT — `opportunistic` added,
+                                              # matching the `WorkCandidate.driver` correction at
+                                              # §3.2: this field is denormalized FROM the
+                                              # originating candidate's `driver`, so it cannot
+                                              # legally exclude a value the candidate can carry]
   policy_version_at_authorization  text
   work_package_id?, availability_id?
   planned_window              { start, end }
@@ -338,6 +365,15 @@ MaintenanceActionRecord {
   occurred_at                 timestamptz     # when the work was done. May be weeks earlier
   classification, correlation_id, baseline_id, baseline_epoch
   sync_quality                jsonb           # 03 §5.4. Retained permanently
+  -- capture quality -----------------------------------------------------------
+  capture_completeness         enum { minimal | partial | full }   # [AMENDMENT — added: published
+                                              # on maintenance_action.recorded (§10.3) and queried
+                                              # via GET /maintenance-history?capture_completeness=
+                                              # (§9.1), but missing from this "exact" schema
+  quality_warnings[]           text[]         # [AMENDMENT — added, same gap]. The named §5.7
+                                              # warning codes (e.g. `item_not_in_open_candidate_set`,
+                                              # `parts_record_ambiguous`, `probable_duplicate_action`).
+                                              # Doubt travels with the record
 }
 ```
 
@@ -757,12 +793,12 @@ class ExpectedConsequence(FathomModel):
 
 Two details in that table are Scheduling's responsibility to get right, because PdM cannot check them:
 
-- **`operating_fraction` is Scheduling's input, and omitting it overstates the horizon by ~50%.** [22 §7.3](22-pdm.md): the hazard rate is per *operating* day, the planning horizon is *calendar* days, and converting one against the other without the factor is "a large silent error in the optimizer's favour" — it would make every class-rate item look less urgent than it is. Scheduling sources it from the mission calendar where planned operations exist and otherwise uses the documented **0.667** sea-going tempo approximation ([07 §5.5](../architecture/07-navy-data-systems.md), [13 §11.1](13-synthetic-data-generator.md)), which is the same constant that appears in the MTBF formula of §5.8.
+- **`operating_fraction` is Scheduling's input, and omitting it overstates the horizon by ~50%.** [22 §7.3](22-pdm.md): the hazard rate is per *operating* day, the planning horizon is *calendar* days, and converting one against the other without the factor — i.e. defaulting `operating_fraction` to `1.0`, treating every calendar day as an operating day — is "a large silent error in the optimizer's favour" [AMENDMENT — was "it would make every class-rate item look less urgent than it is", which had the direction backwards: overstating `h_op` *inflates* `1 − exp(−population_hazard_rate × h_op)`, so the omission makes a class-rate item look *more* urgent, not less. This now agrees with `test_operating_fraction_is_supplied` (§11), which asserts a candidate scored at `operating_fraction = 1.0` ranks *higher* than the same candidate at `0.667`] — it would make every class-rate item look **more** urgent than it is. Scheduling sources it from the mission calendar where planned operations exist and otherwise uses the documented **0.667** sea-going tempo approximation ([07 §5.5](../architecture/07-navy-data-systems.md), [13 §11.1](13-synthetic-data-generator.md)), which is the same constant that appears in the MTBF formula of §5.8.
 - **`timing_p10 = None` must be propagated, never defaulted.** It is D19's shape constraint carried into the decision layer: a class rate implies a mean residual life and does not imply a 10th percentile of an item's residual life. Constraint C2's window arithmetic reads `timing_p50` in that case and a lint rule forbids `timing_p10 or <default>`.
 
 **Risk posture is what closes D7's specific prediction.** [22 §7.4](22-pdm.md): under `AVERSE`, `expected_consequence = p_event_upper × consequence_value`; under `NEUTRAL`, `p_event_horizon × consequence_value`. A tier-0 item's class rate carries a wide epistemic interval, so `AVERSE` lets it "compete on the risk it might actually pose rather than on a population average that is confidently too low for the worst items in the class," while a tier-3 item's sharp interval gains almost nothing from the same posture. **The asymmetry in the correction matches the asymmetry in the defect** — which is why rev 1's shrinkage factor was not merely redundant but pointed the wrong way: shrinking toward a broader base rate moves a thin high-hazard cell *down*, deepening exactly the tier-0 starvation D7 predicts.
 
-#### 4.2.2 Four hard rules, enforced in code
+#### 4.2.2 Seven hard rules, enforced in code [AMENDMENT — was "Four hard rules"; the list below has always enumerated seven]
 
 1. **A NULL `p_failure` is never read as zero.** [03 §7.1](../architecture/03-integration-contracts.md): "A consumer that treats a missing `p_failure` as zero, rather than as 'uncalibrated,' reintroduces the comparability defect this field exists to prevent." **The mechanism that makes this impossible for the optimizer is PdM's function, not Scheduling's care** ([22 §6.3](22-pdm.md)): it accepts a null `p_failure`, derives the consequence from `population_hazard_rate`, and raises `UncalibratedAndUnrated` only when both are absent. Scheduling's obligation is to let that exception propagate: the candidate is admitted with `disposition = unscorable`, `reason_code = unscorable_no_calibrated_rate`, and is **surfaced to the planner** rather than dropped. An unscorable high-criticality item is exactly the item a planner must see. Catching the exception and substituting a number is the one way to reintroduce the defect from Scheduling's side.
 2. **The optimizer ranks on `expected_consequence` and on nothing else** ([22 §7.5](22-pdm.md) rule 1). Not `p_failure`, not `p_event_horizon`, not `confidence`, not `tier`. "A `FailurePrediction` reaching an optimizer objective function without passing through this conversion is the D7 defect." Enforced statically: a lint rule fails the build if `p_failure` is referenced anywhere under `optimizer/` outside `consequence.py`'s adapter call.
@@ -781,6 +817,8 @@ Three bands, from `criticality_tier.assigned` and the Registry's criticality att
 [06 §3](../architecture/06-demo-decisions-and-assumptions.md) assumption A8 rates the defensibility of these weights **LOW** and prescribes the exact treatment: "Use a coarse three-band criticality weighting for the demo, clearly labelled as illustrative, and make weight elicitation a Phase 3 workshop item." Consequently the weights are (a) in `values.yaml`, not code, (b) echoed in every explanation payload with `weights_are_illustrative: true`, and (c) rendered with that marker wherever an operator sees a ranking. A ranking whose weights are presented as authoritative is not credible to a planner and should not be.
 
 **Risk posture is configured beside the weights, because it is the same kind of judgment.** [22 §7.4](22-pdm.md) **[PLACEHOLDER P-17]** sets the default as `AVERSE` for the highest consequence band and `NEUTRAL` otherwise, and says why it is a parameter rather than a formula: "it encodes how much the Navy is willing to spend to avoid an unlikely severe failure. Stating it as a posture parameter rather than burying it in a formula is what makes it reviewable." Scheduling therefore carries `riskPosture.byBand` in `values.yaml` and surfaces the posture in every explanation — a planner comparing two rankings must be able to see that one was produced under a risk-averse posture, because that, and not a change in the fleet, may be the entire difference between them.
+
+**`criticality_floor` [AMENDMENT — defined here; used by constraint C7 (§4.3) and the §8.2 deferral-authority gate but never previously stated] is on the same `expected_consequence` scale as `risk_cost` (§4.3), sourced the same way as the weights above — from `criticality_tier.assigned` via Registry, never recomputed locally, carried in `values.yaml`, and rendered with the same `weights_are_illustrative` marker.** It is set to the `expected_consequence` a `mission_essential`-band item would carry at `p_event_horizon = 1.0` under that band's configured risk posture — i.e. `mission_essential_weight × consequence_value`, the same arithmetic §4.2's conversion already performs, evaluated at certainty. A candidate scoring above that line is, in this scale's own terms, "as consequential as a top-band item that is certain to fail," which is the reading that makes C7's gate ("must be assigned to a real window or deferred through §8's explicit, signed path") a defensible bright line rather than an arbitrary cutoff. **[PLACEHOLDER — Phase 3 SME]**, same status and same low-confidence caveat as the weights it is derived from.
 
 #### 4.2.4 How RC-1 actually closed
 
@@ -813,7 +851,7 @@ Because the functional form changed, `conversion_version` changes, and **no hist
 
 > **The holdout is an admission filter, not a branch in the ranking logic.** [13 §10.3](13-synthetic-data-generator.md) is explicit about this, and the reason is that a ranking-stage branch leaks: a holdout item that survives admission and is then down-weighted has still been *treated* by the policy, which destroys the unconfounded stratum the holdout exists to provide. Excluding at admission, with a recorded reason, keeps the stratum clean and keeps the exclusion visible.
 
-**Decision variables.** `x[c, w] ∈ {0,1}` — candidate `c` assigned to window `w`, where `w` ranges over the availability's schedulable slots plus one **deferral sink** `w_∞` representing "not in this availability". Exactly one assignment per candidate: `Σ_w x[c,w] == 1`.
+**Decision variables.** `x[c, w] ∈ {0,1}` — candidate `c` assigned to window `w`, where `w` ranges over the availability's schedulable slots plus one **deferral sink** `w_∞` representing "not in this availability". Exactly one assignment per candidate: `Σ_w x[c,w] == 1`. `overtime[w] ∈ [0, overtime_cap(w, skill)]` — integer, per `(window, skill_class)` [AMENDMENT — declared here; `overtime[w]` was referenced in the objective and in C1 without ever being declared or bounded, which left it free-floating rather than a proper decision variable]. `overtime_cap(w, skill)`: **[PLACEHOLDER — Phase 3 SME]**, sourced from the executing activity's duty-day / labor-agreement limit for that skill class.
 
 **Objective (minimize).**
 
@@ -821,10 +859,16 @@ Because the functional form changed, `conversion_version` changes, and **no hist
 Σ_c Σ_w  x[c,w] · risk_cost(c, w)
   + λ_cost     · Σ_c Σ_w x[c,w] · cost(c)
   + λ_capacity · Σ_w overtime[w]
-  + λ_churn    · Σ_c reassignment_penalty(c)      # stability across replan generations
+  + λ_churn    · Σ_c Σ_w x[c,w] · reassignment_penalty(c, w)  # stability across replan
+                                                               # generations — nonzero only
+                                                               # where w differs from c's
+                                                               # assignment in the prior
+                                                               # generation's solved run
 ```
 
 where `risk_cost(c, w) = expected_consequence(c, exposure_window(now, w.start))` — the risk **accrued while waiting**, and `exposure_window(now, w_∞.start)` is the full planning horizon. This framing is what makes the output answer [04 §6](../architecture/04-subapplication-architectures.md)'s primary question — "whether an item survives the deployment or must enter the next availability work package" — rather than producing dates. Weights `λ_cost`, `λ_capacity`, `λ_churn`: **[PLACEHOLDER — Phase 3 SME]**.
+
+[AMENDMENT — `reassignment_penalty` was previously written `reassignment_penalty(c)`, a function of the candidate alone. With no `w` argument and no `x[c,w]` multiplier it was constant with respect to every decision variable — added to every feasible solution's objective value identically, so it could never influence which assignment the solver chose. Multiplying by `x[c,w]` and giving the penalty function `w` restores the property the term exists for: a reassignment away from the candidate's previous window now actually costs something, and holding it in place does not.]
 
 **Constraints.**
 
@@ -976,7 +1020,7 @@ Persisted on `work_package.saga_state` and mirrored on `reservation_set.state`. 
 | `RESERVATION_INDETERMINATE` | Timeout, 5xx, connection loss, or `201` with no corroborating event inside the bound. **We do not know whether Supply holds stock, and we may not know its identifier.** The state D6 has no representation for | → `RESERVED` on late corroboration; → `RESERVING` on idempotent re-issue (§4.5.5 step 1, which also *learns the identifier*); → `RELEASE_PENDING` once the identifier is known; → `AWAITING_TTL_EXPIRY` when it cannot be learned |
 | `AWAITING_TTL_EXPIRY` | Identifier unlearnable after `max_reserve_attempts` — Supply unreachable. **Bounded, not orphaned:** the lease expires on its own | → `RELEASED` on `reservation_set.released` (cause `expired`); → `RELEASE_PENDING` if the identifier is learned late |
 | `RELEASE_PENDING` | Compensating `DELETE` issued against a **known** `reservation_set_id` | → `RELEASED` on `204`/`404` or `reservation_set.released` |
-| `RELEASED` | Compensation confirmed. Nothing is held | → `REPLAN_REQUIRED` |
+| `RELEASED` | Compensation confirmed. Nothing is held | → `REPLAN_REQUIRED`; ▪ `ABANDONED` on operator discard [AMENDMENT — the `ABANDONED` exit was missing here even though the `ABANDONED` row below already documented `RELEASED` as its required predecessor ("requires a completed release first"); without this edge the state machine as tabulated made `ABANDONED` unreachable from any package that ever held a reservation] |
 | `APPROVAL_PENDING` | Proposed to the planner; reservation held; TTL running on `monotonic_deadline` | → `APPROVED`; → `EXPIRED_UNAPPROVED` |
 | `EXPIRED_UNAPPROVED` | TTL elapsed before approval; Supply auto-released and published `reservation_set.released` | → `REPLAN_REQUIRED`. **`work_package.approved` is never published from here** |
 | `REPLAN_REQUIRED` | Feasible set has shrunk; a new generation is permitted | → new `optimizer_run` at `replan_generation + 1`, or ▪ `REPLAN_EXHAUSTED` |
@@ -990,11 +1034,11 @@ Persisted on `work_package.saga_state` and mirrored on `reservation_set.state`. 
 |---|---|---|
 | **R1** | **Persist before call.** The `RESERVING` row commits before the HTTP request is sent. The outbox covers events, not outbound commands, so the saga log is the command's durability | A crash between "decide to reserve" and "reserve" leaves no record, and the reservation Supply may have created has no owner. This is the classic orphan |
 | **R2** | **The intent id is client-minted and is the `Idempotency-Key`. It is *not* a release handle.** Supply's `reservation_set_id` is the only release handle, and it is persisted the instant it is learned, in its own committed transaction, before anything else happens | Rev 1 assumed one value could do both jobs and it cannot: [26 §3.9](26-supply.md)'s `DELETE` is by Supply's identifier only. What makes an indeterminate outcome recoverable is instead **idempotent re-issue** — [26 §3.3](26-supply.md) guarantees that the same `Idempotency-Key` with the same body "returns the **original** `201` with the original `reservation_set_id`. No second set, no second event" — so re-issue is both safe *and* the mechanism by which the release handle is learned (§4.5.5). Persisting the id late, or only in memory, is the remaining way to orphan a set |
-| **R3** | **At most one non-terminal intent per work package**, enforced by `CREATE UNIQUE INDEX … ON reservation_set (work_package_id) WHERE state NOT IN (terminal states)` | Two concurrent `/reserve` calls double-reserving the same package. A database constraint, not a mutex |
+| **R3** | **At most one non-terminal intent per work package**, enforced by `CREATE UNIQUE INDEX … ON reservation_set (work_package_id) WHERE state NOT IN ('RESERVATION_REJECTED', 'RELEASED', 'APPROVED', 'REPLAN_EXHAUSTED', 'ABANDONED')` [AMENDMENT — "(terminal states)" was previously left as an unresolved placeholder, which an implementer would naturally have filled from §4.5.3's ▪ markings alone: `APPROVED`, `REPLAN_EXHAUSTED`, `ABANDONED`. Those three mark where the *saga* ends; R3 needs where the *reservation_set row* ends, which is a larger set — `RESERVATION_REJECTED` and `RELEASED` close out one intent without closing out the saga, which continues to `REPLAN_REQUIRED` (and, from there, a *new* `reservation_intent_id`/row) rather than stopping. With only the three ▪ states excluded, the row from a rejected or released generation-1 attempt still counts as "non-terminal," so generation 2's `/reserve` — a fresh `INSERT` at `RESERVING` for the same `work_package_id` — collides with it and the unique index rejects the insert: a replan deadlock at exactly generation 2, the first replan every package with a fence rejection or an expired approval takes. `SOLVED` and `REPLAN_REQUIRED` never appear as a `reservation_set.state` value at all — no row exists yet at `SOLVED`, and `REPLAN_REQUIRED` is a `work_package.saga_state`-only bookkeeping value between one intent's close and the next intent's open — so neither belongs in this list either way] | Two concurrent `/reserve` calls double-reserving the same package. A database constraint, not a mutex |
 | **R4** | **Never loop per NIIN.** One `POST /reservation-sets` carrying every line. A lint rule fails the build if `reservation` appears inside a loop body in `reservation_saga.py`, and §11.3 asserts call counts | D6 verbatim: "reserves per-NIIN with no batch… 37 of 40 succeed, the 38th fails" |
 | **R5** | **The event is the authority, the response is the fast path.** `RESERVED` requires both. `201` with no `reservation_set.confirmed` inside `confirm_corroboration_bound` → `RESERVATION_INDETERMINATE` | A `201` lost or fabricated on a retried proxy hop leaves the client believing it holds stock it does not, and the availability picture disagrees with the plan |
 | **R6** | **A reaper re-drives every non-terminal state.** A background sweep (monotonic, every 30 s) selects `reservation_set` rows past `monotonic_deadline` in a non-terminal state and advances the saga. Idempotent, leader-elected, and it is the only thing that runs after a pod dies mid-saga | Every "we crashed at the worst moment" scenario. Without a reaper the saga is a best-effort convention |
-| **R7** | **`work_package.approved` is published from `APPROVED` only**, and `APPROVED` is reachable only from `RESERVED`. Enforced by the state machine **and** by an event-tap conformance assertion (§11.3) | [03 §6](../architecture/03-integration-contracts.md): "`work_package.approved` — published only after reservation confirmation `[D6]`". Supply, Fleet Status, and Registry all act on that event; publishing it early commits the fleet to a plan whose parts are not held |
+| **R7** | **`work_package.approved` is published from `APPROVED` only**, and `APPROVED` is reachable only from `APPROVAL_PENDING` [AMENDMENT — was "reachable only from `RESERVED`"; §4.5.1 step 5 corrected `/approve`'s precondition to `APPROVAL_PENDING` (step 4's own publish of `work_package.proposed` already exits `RESERVED`), so a state machine that still gated `APPROVED` behind `RESERVED` would reject the very transition the corrected operation requires]. Enforced by the state machine **and** by an event-tap conformance assertion (§11.3) | [03 §6](../architecture/03-integration-contracts.md): "`work_package.approved` — published only after reservation confirmation `[D6]`". Supply, Fleet Status, and Registry all act on that event; publishing it early commits the fleet to a plan whose parts are not held |
 
 #### 4.5.5 Recovering from `RESERVATION_INDETERMINATE` without a client-key release
 
@@ -1575,7 +1619,7 @@ Implemented as a declared minimum, not a second schema:
 
 - **The class is required with no default**, and the `disagreement` block is required on `risk_disagreement` and forbidden on the other three (§3.5). Those are the only two validations that matter, and they are enforced at the API boundary.
 - **`deferral.recorded` publishes all four classes, correctly typed.** Scheduling does not filter, and it does not tell PdM what to do with them: "Events carry facts, not instructions" (03 principle 3). The discrimination is the consumer's, and PdM's **consumer-driven conformance test** — contributed into `packages/contracts/conformance/maintenance/consumers/pdm/` — asserts that the class is always present, never defaulted, and that a non-`risk_disagreement` deferral never carries a `disagreement` block. That test is what makes the contract binding on a substituting Scheduling implementation.
-- **`accepted_expected_consequence` snapshots what the optimizer said at deferral time**, including `conversion_method_version` and `weights_are_illustrative`. Without it, a later change to the consequence weights makes historical risk-acceptance decisions unreadable.
+- **`accepted_expected_consequence` snapshots what the optimizer said at deferral time**, including `conversion_version` [AMENDMENT — was `conversion_method_version`, the pre-rename field; §4.2.1/§4.2.4 renamed it to `conversion_version` everywhere else, including the explicit "no `conversionMethodVersion`" note at §12.1] and `weights_are_illustrative`. Without it, a later change to the consequence weights makes historical risk-acceptance decisions unreadable.
 - **Risk acceptance carries an authority.** `risk_acceptance_authority` uses the [03 §7.2.1](../architecture/03-integration-contracts.md) `AuthorityClass` vocabulary; a deferral of a candidate above `criticality_floor` (constraint C7, §4.3) requires at least `planner`. This is what makes constraint C7 more than a modelling nicety: high-consequence work cannot slide into the deferral sink without a signature.
 
 ---
@@ -1605,13 +1649,13 @@ Base path `/api/v1/maintenance/` ([03 §4](../architecture/03-integration-contra
 | **`POST /work-packages/plan`** | `required` | **`none`** | **yes** | **Solve only. Reserves nothing.** See §9.2 |
 | `POST /work-packages` | `required` | `state-changing` | no | Materialises a solved run as a package |
 | **`POST /work-packages/{id}/reserve`** | `required` | `state-changing` | no | Enters the saga (§4.5) |
-| **`POST /work-packages/{id}/approve`** | `required` | `state-changing` | no | `If-Match`; authority `planner`; requires `saga_state == RESERVED` |
+| **`POST /work-packages/{id}/approve`** | `required` | `state-changing` | no | `If-Match`; authority `planner`; requires `saga_state == APPROVAL_PENDING and monotonic_deadline not elapsed` [AMENDMENT — was `saga_state == RESERVED`; see §4.5.1 step 5] |
 | `POST /work-packages/{id}/release` | `required` | `state-changing` | no | Explicit compensation; idempotent |
 | `GET /work-packages/{id}`, `GET /work-packages?availability_id=&changed_since=&cursor=` | `required` | `none` | yes | |
 | `GET /work-packages/{id}/explanation` | `required` | `none` | yes | [04 §6](../architecture/04-subapplication-architectures.md); §4.4 |
 | `GET /optimizer-runs/{id}` | `internal` | `none` | no | Inputs, watermark, model, solution, dispositions |
 | `POST /proposals` | `required` | `proposal-only` | yes | `work_candidate`, `interval_change` (§3.9) |
-| `GET /proposals?status=&kind=&cursor=` | `required` | `none` | yes | |
+| `GET /proposals?status=&kind=&changed_since=&cursor=` | `required` | `none` | yes | [AMENDMENT — `changed_since=` added; §9.1/§16 already declared it exists "for every aggregate a declared consumer projects — work candidates, work orders, maintenance action records, deferrals, work packages, **proposals**" `[D5]`, but the operation's own param list omitted it] |
 | `POST /proposals/{id}/claim` | `required` | `state-changing` | no | `If-Match`. Lease, per [03 §7.2](../architecture/03-integration-contracts.md) `[D16]` |
 | `POST /proposals/{id}/adjudicate` | `required` | `state-changing` | no | `If-Match` on the claimed ETag; authority re-derived (§3.9) |
 | `POST /maintenance-action-records/bulk` | `required` | `state-changing` | no | Bulk, idempotent, epoch-fenced. `X-Backfill: true` suppresses side effects `[D30]` |
@@ -1642,7 +1686,7 @@ All errors are `application/problem+json` per [03 §4](../architecture/03-integr
 | `interval-delta-out-of-bounds` | 422 | `interval_change` exceeds the bounded delta — rejected *before* authority is consulted (§3.9) |
 | `proposal-stale` | 409 | Superseded `baseline_epoch` or elapsed `valid_until` at adjudication (§3.9) |
 | `staleness-bound-exceeded`, `antecedent-unresolved`, `prediction-invalidated-in-scope`, `lead-time-unavailable`, `clock-dispersion-exceeded` | 409 | The five optimizer refusals (§4.1). Distinct types, never one generic "not ready" |
-| `reservation-not-confirmed` | 409 | `/approve` called when `saga_state != RESERVED` (§4.5.4 R7) |
+| `reservation-not-confirmed` | 409 | `/approve` called when `saga_state != APPROVAL_PENDING` [AMENDMENT — was `saga_state != RESERVED`; see §4.5.1 step 5] (§4.5.4 R7); `reservation-deadline-elapsed` below covers the separate case of `APPROVAL_PENDING` with `monotonic_deadline` already past |
 | `reservation-deadline-elapsed` | 409 | `/approve` after `monotonic_deadline`; the hold is gone (§4.5.6) |
 | `replan-exhausted` | 409 | Generation bound reached (§4.6) |
 | `deferral.*` (three) | 422 | The §3.5 class validations |
@@ -1765,7 +1809,7 @@ Enumerated, never wildcarded `[C38]`. `EVENT_HANDLERS` in `events/consumers.py` 
 | `allowance_shortfall.detected` | `rm_allowance` | Replan trigger for an in-package NIIN; feeds `parts_unavailable` deferral evidence |
 | `allowance.updated` | `rm_allowance` | Validate `estimated_scope.required_parts` against the revised COSAL/APL position |
 | `reservation_set.confirmed` | `reservation_set` | **Saga: `RESERVING`/`INDETERMINATE` → `RESERVED`.** The authority for confirmation (§4.5 rule R5) |
-| `reservation_set.released` | `reservation_set` | Saga: `RELEASE_PENDING` → `RELEASED`; or `RESERVED` → `EXPIRED_UNAPPROVED` on TTL expiry |
+| `reservation_set.released` | `reservation_set` | Saga: `RELEASE_PENDING` → `RELEASED`; or `APPROVAL_PENDING` → `EXPIRED_UNAPPROVED` on TTL expiry [AMENDMENT — was `RESERVED` → `EXPIRED_UNAPPROVED`; §4.5.1 step 5's correction means the approval TTL runs against `APPROVAL_PENDING` in the common case. A still-`RESERVED` row past deadline (F10: crashed before publishing `work_package.proposed`) is the sole surviving path directly from `RESERVED`, closed out by the R6 reaper] |
 | `asset.status_changed` | `rm_asset` | OFRP phase and deployment constraints (C4, C5) |
 | `configuration.baseline_changed` | `rm_configuration` | **Epoch fence.** Withdraw candidates on removed items; advance `baseline_epoch`; block ahead-of-epoch events until the antecedent applies `[D3, D4]` |
 | `usage_counter.updated` | `rm_usage` | Recompute usage-based PMS due dates, keyed on `(installed_item_id, counter_type, counter_epoch)` |
@@ -2171,7 +2215,7 @@ Per [09 §1.3](09-monorepo-and-conventions.md)'s template. Every item is a speci
 5. **Do not set `fence: "none"` to make a rejected reservation succeed.** A fence rejection means the optimizer solved against a stock position that no longer exists, and the correct response is a replan with refreshed availability. *(§4.1.1. The single most tempting way to undo D6's fix after it is in place.)*
 6. **Do not retry a fence rejection with the same `expected_stock_epoch`.** It will fail forever. *(§4.1.1, §4.6 rule 2.)*
 7. **Do not treat a `201` as confirmation.** `RESERVED` requires the `201` **and** a corroborating `reservation_set.confirmed`. *(§4.5.4 R5.)*
-8. **Do not publish `work_package.approved` from any state but `APPROVED`, reachable only from `RESERVED`.** *([03 §6](../architecture/03-integration-contracts.md): "published only after reservation confirmation" `[D6]`; §4.5.4 R7.)*
+8. **Do not publish `work_package.approved` from any state but `APPROVED`, reachable only from `APPROVAL_PENDING`.** [AMENDMENT — was "reachable only from `RESERVED`"; see §4.5.1 step 5 and §4.5.4 R7] *([03 §6](../architecture/03-integration-contracts.md): "published only after reservation confirmation" `[D6]`; §4.5.4 R7.)*
 9. **Do not resurrect an expired reservation set.** Re-verifying every line is a new set by definition. *([26 §7.4](26-supply.md); §4.5.6.)*
 10. **Do not introduce a distributed transaction, orchestrator, or distributed lock manager across the Supply boundary.** *([26 §3.12](26-supply.md): "any proposal to add one must first explain what property the TTL lease fails to provide.")*
 11. **Do not do arithmetic on `supply_expires_at`.** Every timer reads `monotonic_deadline`. *(`[D29]`; §3.8, lint-enforced.)*

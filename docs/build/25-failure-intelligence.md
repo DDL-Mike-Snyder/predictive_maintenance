@@ -543,6 +543,22 @@ class MethodDeclaration:
     known_failure_modes: tuple[str, ...]       # §3. Non-empty, asserted at registration
     placeholder_pending_sme: bool               # §3.8
 
+    # [AMENDMENT — real defect, found in adversarial review: §3.2's gate code called
+    # `decl.min_events(census)` as if `min_events` were a method, when the only related
+    # field declared above is `min_events_expression: str`.] `min_events` is a proper
+    # method, not a second copy of the field. It evaluates `min_events_expression`
+    # against this run's parameter count and the census — a fixed, narrow interpreter
+    # over a small declared vocabulary (`events_per_parameter`, the method's own
+    # parameter count, census fields), never a general expression language, on the
+    # same discipline 21-telemetry.md §4.3(c) states for `transform`: a string a
+    # plugin hook or `eval()` could run defeats review and makes the declared version
+    # meaningless under a fixed version. The exact evaluation grammar remains OD-11's
+    # open decision (§13); every call site depends only on this method returning an
+    # int, never on the raw string, and its result is what §4.2 serves as
+    # `n_required_by_method`.
+    def min_events(self, census: Census) -> int:
+        return evaluate_min_events_expression(self.min_events_expression, census)
+
 def register(decl: MethodDeclaration, fn: MethodFn) -> None:
     if decl.contrast_arity > 1 and decl.treatment_handling is TreatmentHandling.NOT_APPLICABLE:
         raise MethodRegistrationError(                     # D21, at import time
@@ -688,7 +704,7 @@ The wire model is the schema with the JSONB documents typed. `snake_case` fields
                 of 1 class. Treatment assignment was propensity-modeled; residual confounding
                 by maintenance-queue position is enumerated and not excluded.",
   "strength_band": "S2",
-  "band_limiting_axis": "diversity",
+  "band_limiting_axis": "A4_confounding",
   "strength_rule_version": "1.0.0",
   "treatment_handling": "propensity_and_ipcw",
   "gate_verdict": "proceed_corrected",
@@ -762,7 +778,7 @@ def load_population(spec: PopulationSpec, method_id: str, run: DiscoveryRun) -> 
     census = compute_census(items, spec.window, spec.arms, decl)
     persist(census)                                    # referenceable forever, before any verdict
 
-    verdict, reason, effective = _adjudicate(decl, census, spec)
+    verdict, reason, effective = adjudicate_pre_fit(decl, census, spec)
     run.record_gate(census, verdict, reason, effective)
 
     if verdict is GateVerdict.REFUSED:
@@ -792,17 +808,21 @@ confounding_risk_fraction = (model_assigned_count + unknown_count) / action_coun
 
 **The verdict table.** The trigger is *presence*, not magnitude — exactly as D21 words it. No invented threshold is required.
 
+**[AMENDMENT — real defect, found in adversarial review: this table previously showed a single `propensity_modeled`/`propensity_and_ipcw` row gated on "every precondition in §3.3 passes."]** That is impossible to evaluate at a single point: §3.3's own text is explicit that P1-P3 are functions of the census alone, while P4-P5 are functions of a *fitted* propensity model that does not exist until the method under gate has already started running. The row is therefore split below into a pre-fit pair (checked by `adjudicate_pre_fit`, before the method ever runs) and a post-fit pair (checked by `adjudicate_post_fit`, inside the method, after it fits its propensity model) — matching the two-call gate §3.3 specifies.
+
 | Census condition | Declared handling | Verdict | Consequence |
 |---|---|---|---|
 | `max_confounding_risk_fraction = 0` in every arm | any | `proceed` | The unconfounded case. Includes a contrast wholly within the policy-frozen stratum, and a historical window predating any prediction-driven policy |
 | `> 0`, `contrast_arity = 1` | `not_applicable`, `ipcw_corrected`, or `treatment_as_node` | `proceed_corrected` | Within-population methods make no cross-arm contrast; treatment enters as a covariate, a node, or a censoring weight |
-| `> 0`, `contrast_arity > 1` | `propensity_modeled` or `propensity_and_ipcw`, **and** every precondition in §3.3 passes | `proceed_corrected` | D21's sanctioned path |
+| `> 0`, `contrast_arity > 1` | `propensity_modeled` or `propensity_and_ipcw`, **P1-P3 pass** (pre-fit, checked by `adjudicate_pre_fit`) | *admitted, not yet terminal* | `load_population` returns the `GatedPopulation`; the method proceeds to fit its propensity model. P4-P5 (below) are still to come |
+| `> 0`, `contrast_arity > 1` | `propensity_modeled` or `propensity_and_ipcw`, **any of P1-P3 failing** (pre-fit) | **`refused`** | `TreatmentAssignmentGateError` raised by `load_population` on `adjudicate_pre_fit`'s verdict, before the method ever runs. No hypothesis row. Run persisted with the census and the reason |
+| `> 0`, `contrast_arity > 1` | `propensity_modeled` or `propensity_and_ipcw`, P1-P3 passed **and P4-P5 pass** (post-fit, checked by `adjudicate_post_fit`) | `proceed_corrected` | D21's sanctioned path |
+| `> 0`, `contrast_arity > 1` | `propensity_modeled` or `propensity_and_ipcw`, P1-P3 passed but **either P4 or P5 failing** (post-fit) | **`refused`** | `TreatmentAssignmentGateError` raised by the method's own call to `adjudicate_post_fit`, after it has already fit a propensity model. No hypothesis row; the `discovery_run` (already `status='running'`) transitions to `status='refused'` |
 | `> 0`, `contrast_arity > 1` | `restricted_to_policy_frozen` | `restricted` | Population rewritten to the policy-frozen stratum ([06 §2](../architecture/06-demo-decisions-and-assumptions.md), [13 §10](13-synthetic-data-generator.md)), re-censused, must come back clean |
-| `> 0`, `contrast_arity > 1` | any propensity handling, **any §3.3 precondition failing** | **`refused`** | `TreatmentAssignmentGateError`. No hypothesis row. Run persisted with the census and the reason |
 | `> 0`, `contrast_arity > 1` | `not_applicable` | unreachable | Rejected at import (§2.7). If it somehow reaches the gate it refuses, and `contrast_requires_handling` (§2.3) would refuse the row anyway |
 | `feedback_provenance = 'contaminated'` or `'unknown'` | anything other than `restricted_to_policy_frozen` | **`refused`**, with a restriction hint | §3.4 |
 
-**What happens on refusal.** The `discovery_run` row persists with `status = 'refused'`, `gate_verdict = 'refused'`, the `treatment_census_id`, and a human-readable `gate_reason`. `POST /discovery-runs` returns `409` with RFC 9457 problem type `urn:fathom:problem:failure-intel:treatment-assignment-gate`, whose `detail` names the failing arm and precondition and whose extension members carry the census reference. Nothing is emitted, nothing is published, and the refusal is queryable. A refusal is an output of this service, not an error in it.
+**What happens on refusal.** A `discovery_run` row persists with `status = 'refused'`, `gate_verdict = 'refused'`, the `treatment_census_id`, and a human-readable `gate_reason`, whichever stage refused. **A pre-fit refusal (P1-P3, or a declared-handling mismatch)** is synchronous: `POST /discovery-runs` itself returns `409` with RFC 9457 problem type `urn:fathom:problem:failure-intel:treatment-assignment-gate`, whose `detail` names the failing arm and precondition and whose extension members carry the census reference. **A post-fit refusal (P4-P5, §3.3)** cannot work this way — the method is already running asynchronously as a Domino Job by the time it fits a propensity model, long after `POST /discovery-runs` returned — so it surfaces only as the `discovery_run` row's transition to `status='refused'`, queryable via `GET /discovery-runs?status=refused` (§8.1). Either way, nothing is emitted, nothing is published, and the refusal is queryable. A refusal is an output of this service, not an error in it.
 
 **The self-fulfilling-evidence check (`feedback_provenance`).** D21's loop is *causal features → predictions → interventions → labels → causal features*. Handling treatment assignment for a *single* generation of the loop is insufficient if the exposure under examination is itself a feature that the intervening policy already consumed — the analysis would then be recovering its own prior. The check is:
 
@@ -834,15 +854,29 @@ The gate is therefore **two calls, not one**, and every `propensity_modeled`/`pr
 ```python
 # src/fathom_failure_intel/methods/_gate.py
 #
-# Called by load_population (§2.9), before any method runs — checks P1-P3.
-def adjudicate_pre_fit(decl: MethodDeclaration, census: Census, spec: PopulationSpec) -> GateVerdict: ...
+# Called by load_population (§2.9), before any method runs and before
+# `POST /discovery-runs` returns — checks P1-P3, all of which are resolvable
+# from the census alone. Returns (verdict, reason, effective) exactly as
+# `_adjudicate` did, scoped now to P1-P3 only: `reason` and `effective` are
+# `None` except on a `restricted`/`refused` verdict, and `load_population`
+# still does the raising, since it is the one holding `run` to record against.
+def adjudicate_pre_fit(
+    decl: MethodDeclaration, census: Census, spec: PopulationSpec
+) -> tuple[GateVerdict, str | None, PopulationSpec | None]: ...
 
 # Called by the METHOD ITSELF, immediately after fitting propensities and
-# BEFORE persisting any hypothesis row or feature — checks P4-P5. Same
-# exception type and same consequence as a pre-fit refusal: no
-# `causal_hypothesis` row, `discovery_run.status='refused'`, `409` on
-# `POST /discovery-runs`, naming P4 or P5. A method that fits a propensity
-# model and skips this call is the defect §10.2 test B (below) exists to catch.
+# BEFORE persisting any hypothesis row or feature — checks P4-P5. Unlike
+# `adjudicate_pre_fit`, this call happens deep inside a Domino Job (§9.1's
+# discovery execution), long after `POST /discovery-runs` has already
+# returned, so it cannot produce a synchronous 409 the way a pre-fit refusal
+# does. It therefore raises directly rather than returning a verdict for a
+# caller to act on: no `causal_hypothesis` row is written, the `discovery_run`
+# (already `status='running'`) transitions to `status='refused'` naming P4 or
+# P5 in `gate_reason`, and the refusal surfaces only via
+# `GET /discovery-runs?status=refused` (§10.2 test B, case (ii)) — never via
+# a 409 on the original `POST /discovery-runs`. A method that fits a
+# propensity model and skips this call is the defect §10.2 test B (below)
+# exists to catch.
 def adjudicate_post_fit(
     decl: MethodDeclaration,
     estimated_propensities: PropensityEstimates,
@@ -857,7 +891,7 @@ def adjudicate_post_fit(
     return GateVerdict.PROCEED_CORRECTED
 ```
 
-`adjudicate_post_fit` raising is caught at the same `POST /discovery-runs` boundary as a pre-fit refusal (§2.9's `TreatmentAssignmentGateError` handler), so the `409`/`treatment-assignment-gate` contract §10.2 test B already asserts *"for each of P1, P3, P4, P5 independently"* holds for P4 and P5 exactly as it already does for P1-P3 — nothing about the wire contract changes, only where the check runs. The DB guard `CHECK (gate_verdict <> 'refused' OR adjudication_state <> 'published')` (§2.9's schema) is unaffected either way, since a post-fit refusal aborts before any row is written, the same as a pre-fit one.
+`adjudicate_post_fit` raising is **not** caught at the `POST /discovery-runs` boundary — that request-response cycle is long over by the time a method fits a propensity model, because the method itself runs asynchronously as a Domino Job (§9.1). It is caught inside the job, which reports the refusal onto its own `discovery_run` row (`status='refused'`, `gate_reason` naming P4 or P5, the `treatment_census_id` already persisted) rather than through `POST /discovery-runs/{id}/results` (that path is for accepted output, and is itself rejected once `gate_verdict='refused'`, §8.1). §10.2 test B therefore asserts two distinct shapes rather than one: P1-P3, checked synchronously by `adjudicate_pre_fit`, still produce the `409`/`treatment-assignment-gate` contract on `POST /discovery-runs` exactly as before; P4-P5, checked by `adjudicate_post_fit` after the job has already started, instead produce an accepted `POST /discovery-runs` followed by a `discovery_run` that ends at `status='refused'`, visible only through `GET /discovery-runs?status=refused`. The DB guard `CHECK (gate_verdict <> 'refused' OR adjudication_state <> 'published')` (§2.9's schema) is unaffected either way, since a post-fit refusal aborts before any `causal_hypothesis` row is written, the same as a pre-fit one.
 
 ### 3.4 Method M1 — constraint-based structure learning over a domain-constrained graph
 
@@ -888,6 +922,8 @@ def adjudicate_post_fit(
 ### 3.6 Method M3 — comparative population analysis with explicit propensity modeling
 
 **This is D21's method.** It is the one the finding names, and the one the gate exists for.
+
+**[AMENDMENT — real defect, found in adversarial review: this section never referenced `adjudicate_post_fit`, so nothing here required an M3 implementation to call it.]** M3 is the method that fits the propensity model P4-P5 are checked against, and its implementation **must** call `adjudicate_post_fit` (§3.3) immediately after fitting that model and before persisting any `causal_hypothesis` row or `causal_feature_entry` — the same requirement §3.3 states next to the function itself. Nothing at the `load_population` boundary can enforce this, because P4-P5 do not exist at that boundary (§3.3's AMENDMENT); the call is enforced the same way this document enforces every other required-but-unreachable-by-import-linter behavior — by a required test, here `fi-confound-resist` Case B (§10.2), asserting that a declared `propensity_modeled`/`propensity_and_ipcw` method which fits a model and skips the call produces exactly the P4/P5 refusal shape, never a silent `proceed_corrected`. An import-linter contract is the wrong tool here — it forbids a module edge, and there is no fixed edge to forbid between "a method's own code" and "the function it must call after fitting" — so a test is the correct and sufficient mechanism, not a gap.
 
 | | |
 |---|---|
@@ -1027,12 +1063,14 @@ It is not a confidence, a probability, or a score. Nothing sums, nothing average
   },
 
   "band": "S2",
-  "band_limiting_axis": "diversity",
+  "band_limiting_axis": "A4_confounding",
   "axis_levels": { "A1_observations": 2, "A2_diversity": 2, "A3_agreement": 3,
                    "A4_confounding": 2, "A5_censoring": 2 },
   "caps_applied": []
 }
 ```
+
+**[AMENDMENT — real defect, found in adversarial review: this worked example previously gave `band_limiting_axis` as `"diversity"`, contradicting both §4.3's own tie-break rule and its own `axis_levels`.]** `axis_levels` shows a four-way tie at level 2 — `A1_observations`, `A2_diversity`, `A4_confounding`, and `A5_censoring` all equal `2` (`A3_agreement` at `3` is not tied for the minimum). §4.3's derivation rule breaks ties in axis order `A4, A5, A3, A2, A1`, so among the tied axes `A4_confounding` is first in that order and wins — not `A2_diversity`. The value is also corrected to the `A#_name` form `axis_levels` itself uses (`A4_confounding`), rather than the bare axis name (`diversity`) the example previously gave, so `band_limiting_axis` is always a key that can be looked up directly in `axis_levels`.
 
 ### 4.3 The axes, and the band derivation
 
@@ -1463,7 +1501,7 @@ Base path `/api/v1/failure-intel/…` per [03 §4](../architecture/03-integratio
 | `GET /causal-feature-sets?version=&changed_since=&limit=&cursor=` | 04 §9's surface, **with doc 12's OD-6 corrected** — see §8.2 | `required` | `none` | yes |
 | `GET /causal-feature-sets/entries?version=&feature_key=&equipment_family=&cursor=` | Entries with `definition_ref`, `definition_version`, `definition_time`, `strength_band_at_admission`, `standing`, `review_due` | `required` | `none` | yes |
 | `POST /causal-feature-set-admissions` | §5.1 step 8. A resource creation, not a verb on a version path. Three-layer gate per §5.3. **Body `{feature_key, definition_ref, definition_version, definition_time, computation_spec, source_hypothesis_id, standing, applicable_scope, review_due?}`** `[amendment, closes 52-practitioner-apps.md §13 correction 16]` — every `NOT NULL` semantic column of `causal_feature_entry` (§2.6) except the four the service derives and never accepts from the caller: `feature_set_version` (the open draft), `strength_band_at_admission` and `treatment_census_id` (both read off the source hypothesis), and `admission_record_id` (minted by the adjudication this operation itself is gated on). `review_due` defaults per §5.4's cadence if omitted | `internal` | `state-changing` | no |
-| `POST /discovery-runs` | Request a run. Applies the §3.2 gate synchronously and may return 409 with the gate problem type | `internal` | `state-changing` | no |
+| `POST /discovery-runs` | Request a run. Applies the §3.2 gate's pre-fit preconditions (P1-P3, `adjudicate_pre_fit`, §3.3) synchronously and may return 409 with the gate problem type. **P4-P5 are checked post-fit, inside the run itself, and surface only as `discovery_run.status='refused'`** (§3.3, §10.2 test B) | `internal` | `state-changing` | no |
 | `GET /discovery-runs?status=&method_id=&cursor=` | Run register, **including `status=refused`** with the reason and census | `internal` | `none` | no |
 | `POST /discovery-runs/{id}/results` | Bulk, idempotent, **fenced** result ingest from a Domino Job under a workload identity. The only write path for discovery output ([03 §4](../architecture/03-integration-contracts.md) bulk writes, D10/C7) | `internal` | `state-changing` | no |
 | `POST /causal-feature-sets/{version}/publish` | Publish and freeze a draft feature set | `internal` | `state-changing` | no |
@@ -1557,7 +1595,7 @@ The contrast under test is two arms of the same spotlight family on different hu
 | Case | Setup | Assertion |
 |---|---|---|
 | **A — refusal on an undeclared method** | A method variant identical to M3 but declaring `treatment_handling = 'not_applicable'` | **`register()` raises `MethodRegistrationError` at import.** The service does not start. Asserted by importing the variant module inside `pytest.raises` |
-| **B — refusal on an unsatisfied declaration** | M3 declaring `propensity_modeled` with a `PropensitySpec` that **omits `policy_version`**, against a census showing `policy_version_count = 2` | `POST /discovery-runs` returns **409** with problem type `urn:fathom:problem:failure-intel:treatment-assignment-gate`; **no `causal_hypothesis` row exists**; a `discovery_run` row exists with `status='refused'`, a non-null `gate_reason` naming precondition **P2**, and a persisted `treatment_census_id`. The same shape is asserted for each of P1, P3, P4, P5 independently |
+| **B — refusal on an unsatisfied declaration** | M3 declaring `propensity_modeled` with a `PropensitySpec` that **omits `policy_version`**, against a census showing `policy_version_count = 2` (the worked case, for **P2**) | **[AMENDMENT — split into (i)/(ii): P1-P3 and P4-P5 refuse at two different points (§3.3), and a single synchronous shape can no longer be asserted for all four.]** **(i) P1-P3 (pre-fit, `adjudicate_pre_fit`).** `POST /discovery-runs` itself returns **409** with problem type `urn:fathom:problem:failure-intel:treatment-assignment-gate`; **no `causal_hypothesis` row exists**; a `discovery_run` row exists with `status='refused'`, a non-null `gate_reason` naming the failing precondition (**P2** in the worked case), and a persisted `treatment_census_id`. The same synchronous shape is asserted for **P1** and **P3** independently. **(ii) P4-P5 (post-fit, `adjudicate_post_fit`).** `POST /discovery-runs` is **accepted** (P1-P3 pass) and the run proceeds to `status='running'` as a Domino Job; the method fits its propensity model and calls `adjudicate_post_fit`, which raises. **No `causal_hypothesis` row exists**; the `discovery_run` row transitions from `running` to `status='refused'`, with a non-null `gate_reason` naming **P4** or **P5** respectively and the same persisted `treatment_census_id`; the refusal is asserted via `GET /discovery-runs?status=refused` — **never** as a 409 on the original `POST /discovery-runs`, which already returned before the model was fit. The same shape is asserted for **P4** and **P5** independently |
 | **C — correction, two-sided** | M3 correctly specified: `propensity_and_ipcw`, all §3.3 preconditions passing | **Both sides asserted.** (i) The **naive unadjusted** contrast is biased in the direction the generator's truth partition establishes, and the bias is statistically significant by a bootstrap over items at α = 0.05. (ii) The **corrected** estimate recovers the truth-partition effect within the declared tolerance, and its confidence interval covers it. A test asserting only (ii) would pass on a dataset with no confounding to resist |
 | **D — restriction, and its honest limit** | M3 declaring `restricted_to_policy_frozen` | The gate rewrites the population to the holdout stratum ∩ requested; `effective_population_spec` is recorded; the re-census returns `max_confounding_risk_fraction = 0`; the resulting hypothesis carries `gate_verdict='restricted'` and axis A4 level 3. **And**: where the restricted stratum falls below the method's event requirement the run **refuses** — [13 §10.1](13-synthetic-data-generator.md) makes this the *expected* outcome for per-family contrasts (*"10% of ~250 spotlight items is ~25 items — below the n ≥ 50 item-horizon calibration gate… for most per-family cells"*), so the test asserts a refusal at family granularity and a success at aggregate granularity |
 
