@@ -283,7 +283,9 @@ Three properties, and each is required:
 
 #### 4.0.2 The gap-free sequence allocators
 
-Two counters, both row-locked rather than Postgres `SEQUENCE`s, for the reason document 11 §4.3 gives: *"Native sequences are non-transactional: they leak values on rollback, so the stream has holes. A gap-free sequence gives consumers loss detection for free."*
+Three counters, all row-locked rather than Postgres `SEQUENCE`s, for the reason document 11 §4.3 gives: *"Native sequences are non-transactional: they leak values on rollback, so the stream has holes. A gap-free sequence gives consumers loss detection for free."*
+
+**[AMENDMENT]** `AssetDeviation.sequence` (§4.7) was documented as "allocated from `asset_deviation_sequence` on the §4.0.2 row-lock pattern," but no such table was ever given DDL here — only `registry_record_seq` and `asset_baseline_epoch` were. `sequence` is gap-free **per asset**, exactly like `baseline_epoch`, so it needs its own per-asset counter on the same shape as `asset_baseline_epoch`, not a share of the aggregate-keyed `registry_record_seq`. Added below.
 
 ```sql
 CREATE TABLE registry_record_seq (
@@ -296,6 +298,12 @@ CREATE TABLE asset_baseline_epoch (
   next_epoch bigint NOT NULL DEFAULT 1,
   CONSTRAINT abe_next_positive CHECK (next_epoch >= 1)
 );
+
+CREATE TABLE asset_deviation_sequence (
+  asset_id      uuid   PRIMARY KEY REFERENCES assets(asset_id),
+  next_sequence bigint NOT NULL DEFAULT 1,
+  CONSTRAINT ads_next_positive CHECK (next_sequence >= 1)
+);
 ```
 
 ```sql
@@ -306,6 +314,10 @@ UPDATE registry_record_seq SET next_seq = next_seq + 1
 -- baseline_epoch, inside the caller's transaction:
 UPDATE asset_baseline_epoch SET next_epoch = next_epoch + 1
  WHERE asset_id = :asset_id RETURNING next_epoch - 1 AS baseline_epoch;
+
+-- deviation sequence, inside the caller's transaction:
+UPDATE asset_deviation_sequence SET next_sequence = next_sequence + 1
+ WHERE asset_id = :asset_id RETURNING next_sequence - 1 AS sequence;
 ```
 
 **`baseline_epoch` rules — document 03 §5.4's antecedent rule depends on every one of them.**
@@ -377,6 +389,18 @@ class HierarchyScheme(Base, RecordSeqMixin, ETagMixin):
     column is what makes the data card's divergence list mechanical rather than
     remembered, and `GET /assets/{id}/systems` echoes it on every response.
     """
+
+    recorded_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False,
+        server_default=text("now()"), onupdate=text("now()"),
+    )
+    """[AMENDMENT] `changed_since`'s RFC 3339 form (§6.4) translates its input
+    ONCE to a `record_seq` watermark by reading `recorded_at` on the target
+    table; this was declared as universal across every feed-capable aggregate
+    (§6.1, §14.4) but only `ConfigurationBaseline` actually carried the column.
+    Refreshed on every write, same as `updated_at` elsewhere — never an
+    `ORDER BY` and never a page boundary; `record_seq` alone orders and
+    paginates (§4.0's rule, §6.4)."""
 ```
 
 ### 4.2 `Class` and the as-designed template [04 §2]
@@ -404,6 +428,14 @@ class Class(Base, RecordSeqMixin, ETagMixin, ClassifiedMixin):
     default_hsci: Mapped[str] = mapped_column(
         ForeignKey("hierarchy_schemes.hsci"), nullable=False
     )
+
+    recorded_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False,
+        server_default=text("now()"), onupdate=text("now()"),
+    )
+    """[AMENDMENT] `changed_since`'s RFC 3339 form needs this column on every
+    feed-capable table (§6.4); see `HierarchyScheme.recorded_at` for the full
+    rationale."""
 
     __table_args__ = (
         CheckConstraint(
@@ -587,6 +619,13 @@ class Asset(Base, RecordSeqMixin, ETagMixin, ClassifiedMixin):
     commissioned_on: Mapped[dt.date | None] = mapped_column()
     decommissioned_on: Mapped[dt.date | None] = mapped_column()
 
+    recorded_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False,
+        server_default=text("now()"), onupdate=text("now()"),
+    )
+    """[AMENDMENT] `changed_since`'s RFC 3339 form needs this column on every
+    feed-capable table (§6.4); see `HierarchyScheme.recorded_at`."""
+
     __table_args__ = (
         CheckConstraint("uic ~ '^[A-Z0-9]{5}$'", name="uic_five_characters"),
         CheckConstraint(
@@ -664,6 +703,15 @@ class SystemNode(Base, RecordSeqMixin, ETagMixin, ClassifiedMixin):
     index intended for joining, and lint rule FTH001 [10 §4.4] fails any join
     written against it."""
 
+    recorded_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False,
+        server_default=text("now()"), onupdate=text("now()"),
+    )
+    """[AMENDMENT] `changed_since`'s RFC 3339 form needs this column on every
+    feed-capable table (§6.4); see `HierarchyScheme.recorded_at`.  Distinct
+    from — and does not imply — a `record_period`: see §6.3's note that
+    `system_node` does not accept `as_of`/`as_known_at`, only `changed_since`."""
+
     __table_args__ = (
         UniqueConstraint("asset_id", "hsc_code", name="system_node_code_per_asset"),
         CheckConstraint("eic IS NULL OR eic ~ '^[A-Z0-9]{2,7}$'", name="eic_shape"),
@@ -727,6 +775,18 @@ class Position(Base, RecordSeqMixin, ETagMixin, ClassifiedMixin):
     )
     """The template position this instantiates, where it is a template position
     at all.  NULL when the position exists only by deviation (§4.7)."""
+
+    recorded_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False,
+        server_default=text("now()"), onupdate=text("now()"),
+    )
+    """[AMENDMENT] `changed_since`'s RFC 3339 form needs this column on every
+    feed-capable table (§6.4); see `HierarchyScheme.recorded_at`.  This table
+    has `established_period` (VALID time) but no `record_period`, so — per
+    `OAS-REG-1`, which forbids accepting `as_of` without `as_known_at` — §6.3
+    does not list `GET .../positions` or `GET /positions` among the operations
+    that accept either parameter, rather than declaring a half-bitemporal
+    read this table cannot back."""
 
     __table_args__ = (
         UniqueConstraint("asset_id", "position_code", name="position_code_per_asset"),
@@ -836,6 +896,16 @@ class InstalledItem(Base, RecordSeqMixin, ETagMixin, ClassifiedMixin):
     #  See §8 for the full protocol and for what each value means.
 
     first_recorded_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    recorded_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False,
+        server_default=text("now()"), onupdate=text("now()"),
+    )
+    """[AMENDMENT] `changed_since`'s RFC 3339 form needs this column on every
+    feed-capable table (§6.4); see `HierarchyScheme.recorded_at`.  Distinct
+    from `first_recorded_at` above, which is fixed at mint time and never
+    updated (11 §8.2); this one refreshes on every write to the row, which is
+    exactly what the feed's "changed since" question asks."""
 
     __table_args__ = (
         CheckConstraint("eic IS NULL OR eic ~ '^[A-Z0-9]{2,7}$'", name="eic_shape"),
@@ -1139,25 +1209,60 @@ class ConfigurationBaselineItem(Base):
     #  snapshot level: one item per position per snapshot, enforced by the
     #  primary key rather than by the generator's care.
 
-    installed_item_id: Mapped[UUID] = mapped_column(
-        ForeignKey("installed_items.installed_item_id"), nullable=False
+    #  [AMENDMENT — R2's nullability fix reached the wire (`ConfigurationLine`,
+    #  §6.2) but never reached this DDL, leaving the two contradictory: the
+    #  wire model permitted a vacant position (`installed_item_id: UUID |
+    #  None`) while this table declared the same fact `NOT NULL`.  §9.3's
+    #  `DECISION` is unambiguous: the LEFT join is deliberate specifically so a
+    #  vacant position is a real, storable row here, not a row that cannot
+    #  exist.  `installed_item_id`, `occupancy_id`, and `niin` are all facts
+    #  ABOUT THE OCCUPANT, so all three are nullable for exactly that case.
+    #  `system_id` is NOT one of them — a position belongs to a system in the
+    #  hierarchy regardless of whether anything is installed in it, so it
+    #  stays `NOT NULL` and the wire's `ConfigurationLine.system_id` is
+    #  correspondingly non-optional.
+    installed_item_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("installed_items.installed_item_id")
     )
-    occupancy_id: Mapped[UUID] = mapped_column(
-        ForeignKey("item_occupancies.occupancy_id"), nullable=False
+    occupancy_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("item_occupancies.occupancy_id")
     )
     system_id: Mapped[UUID] = mapped_column(ForeignKey("system_nodes.system_id"), nullable=False)
-    niin: Mapped[str] = mapped_column(String(9), nullable=False)
+    niin: Mapped[str | None] = mapped_column(String(9))
     deviation_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("asset_deviations.deviation_id")
     )
     conforms_to_template: Mapped[bool] = mapped_column(Boolean, nullable=False)
     """False where the occupant's NIIN differs from the template's
-    `expected_niin`, or where the position exists only by deviation.  This is
-    04 §2's "makes divergence a first-class, QUERYABLE fact rather than an
-    inconsistency", and it is what `GET /assets/{id}/configuration?
-    conforms_to_template=false` filters on."""
+    `expected_niin`, where the position exists only by deviation, or where the
+    position is vacant against a template that expects an occupant (a
+    shortfall — §9.3).  This is 04 §2's "makes divergence a first-class,
+    QUERYABLE fact rather than an inconsistency", and it is what
+    `GET /assets/{id}/configuration?conforms_to_template=false` filters on."""
+    divergence_reason: Mapped[str | None] = mapped_column(String(16))
+    """[AMENDMENT] Backs `ConfigurationLine.divergence_reason` (§6.2), which
+    was declared on the wire model with nothing computing or storing it.
+    Populated by the snapshot generator from the same three-way distinction
+    `conforms_to_template` already makes (§9.3): `'deviation'`, `'substitution'`,
+    or `'shortfall'`.  `NULL` iff `conforms_to_template` is true."""
 
     __table_args__ = (
+        CheckConstraint(
+            "(divergence_reason IS NULL) = conforms_to_template",
+            name="divergence_reason_iff_nonconforming",
+        ),
+        CheckConstraint(
+            "divergence_reason IS NULL "
+            "OR divergence_reason IN ('deviation','substitution','shortfall')",
+            name="divergence_reason_vocabulary",
+        ),
+        CheckConstraint(
+            "(installed_item_id IS NULL) = (occupancy_id IS NULL) "
+            "AND (installed_item_id IS NULL) = (niin IS NULL)",
+            name="vacant_position_fields_together",
+            # The three occupant-only facts are NULL together (vacant) or
+            # populated together (occupied) — never a partial state.
+        ),
         Index("ix_cfg_baseline_items_item", "installed_item_id"),
     )
 ```
@@ -1215,7 +1320,15 @@ class AssetDeviation(Base, RecordSeqMixin, ETagMixin, ClassifiedMixin):
     authority_reference: Mapped[str | None] = mapped_column(Text)
     baseline_epoch_introduced: Mapped[int] = mapped_column(BigInteger, nullable=False)
 
+    recorded_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    """[AMENDMENT] `changed_since`'s RFC 3339 form needs this column on every
+    feed-capable table (§6.4) — including this one, now that `GET
+    /assets/{asset_id}/deviations` gains a `changed_since` parameter (§6.1 row
+    23, §14.4).  Bitemporal like `AllowanceDocument.recorded_at`: pinned to
+    `lower(record_period)` by the CHECK below, not an independent `now()`."""
+
     __table_args__ = (
+        CheckConstraint("recorded_at = lower(record_period)", name="recorded_at_is_record_lower"),
         UniqueConstraint("asset_id", "sequence", name="deviation_sequence_per_asset"),
         CheckConstraint(
             "kind IN ('add_system','remove_system','add_position','remove_position',"
@@ -1266,7 +1379,16 @@ class AllowanceDocument(Base, RecordSeqMixin, ETagMixin, ClassifiedMixin):
     record_period: Mapped[TstzRange] = mapped_column(TSTZRANGE, nullable=False)
     import_batch_ref: Mapped[str | None] = mapped_column(Text)
 
+    recorded_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    """[AMENDMENT] `changed_since`'s RFC 3339 form needs this column on every
+    feed-capable table (§6.4); see `HierarchyScheme.recorded_at`.  This table
+    is bitemporal, so — as with `ConfigurationBaseline.recorded_at` (§4.6) —
+    it MUST equal `lower(record_period)` rather than carry an independent
+    `now()` default; the CHECK below is what makes that a database invariant
+    rather than a convention."""
+
     __table_args__ = (
+        CheckConstraint("recorded_at = lower(record_period)", name="recorded_at_is_record_lower"),
         CheckConstraint(
             "doc_type IN ('cosal','apl','ael','acl','mrpl')", name="doc_type_vocabulary"
         ),
@@ -1361,6 +1483,13 @@ class Part(Base, RecordSeqMixin, ETagMixin, ClassifiedMixin):
     """`item` | `lot` | `none`.  04 §2's first Phase 3 question: "which NIINs
     warrant item-level serialization against lot-level tracking."  Registry
     enforces it: `serialization_scope = 'item'` requires `InstalledItem.iuid`."""
+
+    recorded_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False,
+        server_default=text("now()"), onupdate=text("now()"),
+    )
+    """[AMENDMENT] `changed_since`'s RFC 3339 form needs this column on every
+    feed-capable table (§6.4); see `HierarchyScheme.recorded_at`."""
 
     __table_args__ = (
         # [AMENDMENT — corrected twice.] The original CHECK, `niin ~ '^[0-9]{9}$'`,
@@ -1502,6 +1631,16 @@ Three outcomes, and each maps to a distinct response:
 
 ```sql
 -- REG-Q2.  Served from the materialized snapshot.  One index scan.
+--
+-- [AMENDMENT] `installed_items` and `item_occupancies` are LEFT joins, not
+-- INNER.  §9.3's `DECISION` is explicit that the position-to-occupancy join is
+-- a LEFT join specifically so a vacant position is represented rather than
+-- dropped; an INNER join here would silently exclude every vacant position
+-- from this "fast path" while REG-Q3's derivation still produced it, which is
+-- precisely the divergence `test_snapshot_equals_derivation` (§11.3) exists to
+-- catch.  `positions` and `system_nodes` remain INNER: `position_id` and
+-- `system_id` are populated for every row, occupied or vacant (the DDL fix
+-- above).
 SELECT i.position_id,
        p.position_code,
        i.system_id,
@@ -1518,12 +1657,13 @@ SELECT i.position_id,
        lower(o.valid_period) AS installed_at,
        o.usage_at_install,
        i.conforms_to_template,
+       i.divergence_reason,
        i.deviation_id
   FROM configuration_baseline_items i
-  JOIN positions       p  ON p.position_id       = i.position_id
-  JOIN system_nodes    s  ON s.system_id         = i.system_id
-  JOIN installed_items ii ON ii.installed_item_id = i.installed_item_id
-  JOIN item_occupancies o ON o.occupancy_id      = i.occupancy_id
+  JOIN      positions       p  ON p.position_id        = i.position_id
+  JOIN      system_nodes    s  ON s.system_id          = i.system_id
+  LEFT JOIN installed_items ii ON ii.installed_item_id = i.installed_item_id
+  LEFT JOIN item_occupancies o ON o.occupancy_id       = i.occupancy_id
  WHERE i.baseline_id = :baseline_id
    AND (:system_id IS NULL OR i.system_id = :system_id)
    AND (:conforms_to_template IS NULL OR i.conforms_to_template = :conforms_to_template)
@@ -1862,8 +2002,9 @@ Document 04 §2's eight rows, expanded to every operation the contract actually 
 | 20 | `GET /positions` (`?asset_id=&system_id=&changed_since=&cursor=`) | required | none | ✓ | `position` | [03 §4, D5] |
 | 21 | `GET /classes` (`?changed_since=&cursor=`) | required | none | ✓ | `class` | [03 §4, D5] |
 | 22 | `GET /allowance-documents` (`?asset_id=&changed_since=&cursor=`) | required | none | ✓ | `allowance_document` | [03 §4, D5] |
-| 23 | `GET /assets/{asset_id}/deviations` | required | none | ✓ | `asset_deviation` | [04 §2 key decision 3] |
-| 24 | `GET /configuration-changes` (`?asset_id=&status=`) | required | none | ✓ | `configuration_change_proposal` | [03 §7.2, C39] |
+| 22a | `GET /hierarchy-schemes` (`?changed_since=&cursor=`) **[AMENDMENT]** | required | none | ✓ | `hierarchy_scheme` | [03 §4, §15 obligation 5, D5] — closes §14.4's gap: row 33 is the only other `hierarchy_scheme` operation, is `POST`-only and internal, and left the aggregate with no read surface of any kind, let alone a `changed_since` one |
+| 23 | `GET /assets/{asset_id}/deviations` (`?changed_since=&cursor=`) **[AMENDMENT — parameter added]** | required | none | ✓ | `asset_deviation` | [04 §2 key decision 3; 03 §4, D5] — `AssetDeviation` already carries `record_seq` and, per §4.0's fix, `recorded_at`; the read existed but the feed parameter did not |
+| 24 | `GET /configuration-changes` (`?asset_id=&status=&changed_since=&cursor=`) **[AMENDMENT — parameter added]** | required | none | ✓ | `configuration_change_proposal` | [03 §7.2, C39; 03 §4, D5] — `configuration_change_proposals` gained `record_seq`/`recorded_at` alongside its other DDL fixes (§6.5); this is the read they enable |
 | 25 | `POST /configuration-changes/{proposal_id}/claim` | required | state-changing | ✗ | `configuration_change_proposal` | [03 §7.2, D16] |
 | 26 | `POST /configuration-changes/{proposal_id}/adjudicate` | required | state-changing | ✗ | `configuration_change_proposal` | [03 §7.2, D16] |
 | 27 | `POST /configuration-changes/bulk` (`X-Backfill`) | required | state-changing | ✗ | `configuration_baseline` | [03 §4 bulk writes, D10/C7] |
@@ -1936,12 +2077,13 @@ class ConfigurationLine(FathomModel):
     divergence_reason: str | None = Field(
         default=None,
         description=(
-            "[AMENDMENT] Required by §6.4's own prose ('divergence_reason carries "
-            "which') and by test_unauthorized_niin_is_recorded_not_rejected (§9.x), "
-            "but never declared on any model until now. One of 'deviation' "
-            "(position exists only by deviation), 'substitution' (occupant's NIIN "
-            "differs from expected_niin), or 'shortfall' (vacant against a "
-            "template expecting an occupant). NULL iff conforms_to_template is true."
+            "Required by §9.3's own prose ('divergence_reason carries which') and "
+            "by test_unauthorized_niin_is_recorded_not_rejected (§11.4). One of "
+            "'deviation' (position exists only by deviation), 'substitution' "
+            "(occupant's NIIN differs from expected_niin), or 'shortfall' (vacant "
+            "against a template expecting an occupant). NULL iff conforms_to_template "
+            "is true. Computed by the snapshot generator (§9.3) and stored on "
+            "`configuration_baseline_items.divergence_reason` (§4.6.1)."
         ),
     )
     deviation_id: UUID | None = None
@@ -2224,6 +2366,7 @@ class AllowanceUpdated(FathomModel):
 
 ```python
 # src/fathom_registry/api/v1/configuration.py
+import datetime as dt
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Response
@@ -2278,7 +2421,12 @@ async def get_asset_configuration(
     page: Annotated[CursorParams, Depends()] = ...,
     svc: Annotated[ConfigurationService, Depends(get_configuration_service)] = ...,
 ) -> AssetConfiguration:
-    at = resolve_coordinates(as_of, as_known_at)
+    #  [AMENDMENT] `resolve_coordinates` declares `request_instant` as a
+    #  required keyword-only parameter (rule 1-2 below: captured ONCE, from
+    #  the request scope, never per-parameter) but this, its only call site,
+    #  never passed it.  Captured here, once, at the top of the handler.
+    request_instant = dt.datetime.now(dt.timezone.utc)
+    at = resolve_coordinates(as_of, as_known_at, request_instant=request_instant)
     result = await svc.resolve(asset_id, at, system_id, conforms_to_template, page)
     #  ETag is derived from (baseline_id, version) — a historical bitemporal
     #  coordinate resolves to an immutable row, so its representation is
@@ -2375,7 +2523,9 @@ def resolve_coordinates(
     )
 ```
 
-`as_of` and `as_known_at` are accepted, with identical semantics, on: operation 3 (`/configuration`), 4 (`/systems`), 5 (`/positions`), 6 (`/installed-items`), 11 (`/allowances`), 16 (`/installed-items`), 20 (`/positions`), 22 (`/allowance-documents`), and 23 (`/deviations`). Every one of them threads a single `BitemporalCoordinates` into the repository. `OAS-REG-1`, a Registry-specific spec rule added to `tools/check_openapi.py`, fails the build if an operation accepts `as_of` without also accepting `as_known_at` — a half-bitemporal operation is a uni-temporal operation wearing the parameter name.
+`as_of` and `as_known_at` are accepted, with identical semantics, on: operation 3 (`/configuration`), 6 (`/installed-items`), 11 (`/allowances`), 16 (`/installed-items`), 22 (`/allowance-documents`), and 23 (`/deviations`). Every one of them threads a single `BitemporalCoordinates` into the repository, backed by a table that actually carries both `valid_period`/`established_period`-style valid time AND a `record_period` for record time. `OAS-REG-1`, a Registry-specific spec rule added to `tools/check_openapi.py`, fails the build if an operation accepts `as_of` without also accepting `as_known_at` — a half-bitemporal operation is a uni-temporal operation wearing the parameter name.
+
+**[AMENDMENT — corrected.]** Operations 4 (`/systems`) and 5/20 (`/positions`) were previously included in this list, mandating `as_known_at` on both. Neither backing table can support it: `system_nodes` (§4.3) carries no temporal column of any kind, and `positions` (§4.4) carries `established_period` — VALID time only, no `record_period`. Declaring `as_known_at` there would have been a parameter with nothing behind it, silently accepting any value and always answering with current belief — exactly the failure mode `OAS-REG-1` exists to catch on the `as_of`-without-`as_known_at` side, reached instead from the other direction. `GET /assets/{asset_id}/systems`, `GET /assets/{asset_id}/positions`, and `GET /positions` are current-state reads only; historical reconstruction of the hierarchy or of a position's own establishment history is not offered by this service. (Historical reconstruction of what was *installed* at a position, which is what most callers mean by "the configuration on that date," is unaffected: it is `GET /assets/{asset_id}/configuration`, operation 3, resolved through `item_occupancies` — fully bitemporal — not through `positions` or `system_nodes` directly.)
 
 ### 6.4 `changed_since` — the exact snapshot-read implementation
 
@@ -2605,13 +2755,15 @@ class ConfigurationChangeRequest(FathomModel):
 
 **[AMENDMENT — the table itself was never given DDL, though §2.4's conflict-policy row and rows 24–26's operations both presuppose it.]**
 
+**[AMENDMENT — four DDL problems found and fixed on review.]** (a) The table was named `configuration_change_proposal`, singular, against every sibling table in this document (`hierarchy_schemes`, `classes`, `assets`, `system_nodes`, `positions`, `installed_items`, `configuration_baselines`, `asset_deviations`, `allowance_documents`, `parts` — all plural), and §4.10's inventory table already lists it correctly as `configuration_change_proposals`; the DDL now matches. (b) It was declared under a `registry.` schema prefix that no `CREATE SCHEMA registry` anywhere in this document creates — every other table here (`__tablename__`, and the standalone `registry_record_clock`/`registry_record_seq`/`asset_baseline_epoch`) is unqualified, so the prefix is dropped. (c) Its FK referenced `registry.asset(asset_id)`; the actual table is `assets` (§4.3), unqualified. (d) It was missing `record_seq` — every other feed-capable table in this service carries it via `RecordSeqMixin` (§4.0) — and `recorded_at`, needed for `changed_since`'s RFC 3339 form (§6.4) now that this aggregate gets a `changed_since` read (§6.1 row 24, §14.4). Both are added below, alongside the same `updated_at`-style refresh every other write-heavy table gets.
+
 ```sql
-CREATE TABLE registry.configuration_change_proposal (
+CREATE TABLE configuration_change_proposals (
     proposal_id       uuid PRIMARY KEY DEFAULT gen_random_uuid(),   -- 03 §7.2 [C30]
     kind              text NOT NULL DEFAULT 'configuration_change'
         CHECK (kind = 'configuration_change'),
     target_sub_app    text NOT NULL DEFAULT 'registry' CHECK (target_sub_app = 'registry'),
-    asset_id          uuid NOT NULL REFERENCES registry.asset(asset_id),
+    asset_id          uuid NOT NULL REFERENCES assets(asset_id),
     blast_radius      text NOT NULL CHECK (blast_radius IN ('item', 'asset')),  -- 03 §7.2.1: no wider scope for this kind
     authority_class   text NOT NULL DEFAULT 'maintainer' CHECK (authority_class = 'maintainer'),  -- 03 §7.2.1
     requires_dual_control boolean NOT NULL DEFAULT false,
@@ -2631,6 +2783,8 @@ CREATE TABLE registry.configuration_change_proposal (
     agent_version     text NULL,
     llm_version       text NULL,
     trace_ref         text NULL,
+    record_seq        bigint NOT NULL,          -- RecordSeqMixin's column, by hand: this table is raw SQL, not ORM
+    recorded_at       timestamptz NOT NULL DEFAULT now(),   -- `changed_since` RFC 3339 form [§6.4]
 
     CONSTRAINT ccp_claim_state CHECK ((claimed_by IS NULL) = (claimed_until IS NULL)),
     CONSTRAINT ccp_agent_provenance CHECK (
@@ -2638,6 +2792,7 @@ CREATE TABLE registry.configuration_change_proposal (
         OR (agent_id IS NOT NULL AND agent_version IS NOT NULL AND llm_version IS NOT NULL)
     )
 );
+CREATE INDEX ix_configuration_change_proposals_record_seq ON configuration_change_proposals (record_seq);
 ```
 
 `requires_dual_control` is always `false` here: 03 §7.2.1's table gives `configuration_change` `maintainer` authority at `item`/`asset` scope only, with **Registry confirmation** as the state transition (not a second signature) — the two-stage cell §7.2.1 itself names, not this document's invention. `evidence`, `claimed_by`/`claimed_until`, and `adjudicated_by`/`adjudicated_at` follow 03 §7.2's four adjudication rules without variation, identical to every other service-local proposal table in the corpus.
@@ -3119,7 +3274,7 @@ async def reconcile(self, sub: ProvisionalInstalledItemSubmission, key: str) -> 
 | `removed_item_id` was not the occupant at `installed_at` | REJECTED — the ship and shore disagree about what came out, which is exactly the divergence that must not be auto-merged |
 | The NIIN is not APL-authorized for the position | **Not rejected.** Written, and flagged `conforms_to_template: false`. A cannibalization or an emergency substitution at sea is a real event, and refusing to record it would reintroduce D8 |
 
-Quarantined submissions are surfaced by `GET /installed-items?provisional=true&status=quarantined` and never discarded [11 §8.3 step 6c, §12 item 15].
+**[AMENDMENT — corrected.]** Quarantined submissions were previously said to be surfaced by `GET /installed-items?provisional=true&status=quarantined`, but that is a query against the wrong store: a REJECTED submission fails `_impossible()` and is never written to `installed_items` at all (the table above), so no `status` value on that row could ever read `quarantined` — and `installed-items` (§6.1 row 16) declares no `status` parameter regardless. The quarantine record is written by `self.quarantine.record()` (§8.3) to the identity-quarantine store, a separate, operationally append-only store from `installed_items` (§12.5), and is surfaced to an adjudicator through that store's own query surface, never through `GET /installed-items`. Never discarded [11 §8.3 step 6c, §12 item 15].
 
 ### 8.4 What happens to events already published under a provisional id
 
@@ -3203,6 +3358,13 @@ async def resolve_effective_positions(
         raise NoTemplateAtCoordinates(class_id=asset.class_id, at=at)
 
     # (b) Start from the as-designed set.
+    #     [AMENDMENT] `tp.node_hsc_code` referenced a column `ClassTemplatePosition`
+    #     does not have (§4.1) — the code lives on its parent `ClassTemplateNode.
+    #     hsc_code`, not on the position.  `self.templates.positions()` joins
+    #     `class_template_positions` to `class_template_nodes` on
+    #     `template_node_id` and projects the node's `hsc_code` as `node_hsc_code`
+    #     on each returned row; it was the join projection's name, not a raw
+    #     column, and is documented as such here rather than left implicit.
     effective: dict[str, EffectivePosition] = {
         tp.position_code: EffectivePosition(
             position_code=tp.position_code,
@@ -3308,12 +3470,19 @@ effective_configuration(asset, as_of, as_known_at) =
     RETURN LEFT JOIN positions ON occupancy BY position_code
            WITH conforms_to_template =
                   (position.origin = 'template'
+                   AND occupancy IS NOT NULL
                    AND occupancy.niin = position.expected_niin)
+           WITH divergence_reason =
+                  CASE WHEN conforms_to_template          THEN NULL
+                       WHEN position.origin = 'deviation'  THEN 'deviation'
+                       WHEN occupancy IS NULL               THEN 'shortfall'
+                       ELSE                                      'substitution'
+                  END
 ```
 
 A **LEFT** join, deliberately. A position with no occupant is a real and reportable state — an empty foundation awaiting a part — and an inner join would silently drop it, which would make `GET /assets/{id}/configuration` under-report the hull and would make Supply's allowance-position computation short. `ConfigurationLine.installed_item_id` is therefore nullable on the wire for the vacant case, and a consumer must handle it; a conformance test asserts the reference dataset contains at least one vacant position so the case is exercised rather than asserted.
 
-`conforms_to_template: false` arises from three distinct conditions, and the response distinguishes them because the remedies differ: the position exists only by deviation (`origin = 'deviation'`); the occupant's NIIN differs from `expected_niin` (a substitution); or the position is vacant against a template that expects an occupant (a shortfall). `divergence_reason` carries which.
+`conforms_to_template: false` arises from three distinct conditions, and the response distinguishes them because the remedies differ: the position exists only by deviation (`origin = 'deviation'`); the occupant's NIIN differs from `expected_niin` (a substitution); or the position is vacant against a template that expects an occupant (a shortfall). `divergence_reason` carries which, computed once here by the snapshot generator (`services/snapshots.py`, §10) and stored on `configuration_baseline_items.divergence_reason` (§4.6.1) — the same column REG-Q2 projects (§5.3) and `ConfigurationLine.divergence_reason` (§6.2) carries to the wire. **[AMENDMENT]** Prior to this fix `divergence_reason` existed only on the wire model, with no backing column and nothing computing it; the formula above, the DDL of §4.6.1, and REG-Q2's projection are the missing derivation, storage, and read path.
 
 ### 9.4 Why the baseline pins `template_version_id` and `deviation_high_water`
 
@@ -3432,7 +3601,7 @@ These are the tests that would not be written by an implementer who understood b
 | `test_correction_is_accepted_by_the_same_constraint` | The negative control for the test above: overlapping *valid* periods with adjacent *record* periods | **Accepted.** This test is what proves the constraint has three operands and not two (§4.5.2); without it, a two-operand constraint passes the rejection test and looks correct |
 | `test_adjacent_periods_do_not_overlap` | Close a record period at exactly `T` and open the successor at exactly `T` | Accepted, and `as_known_at=T` resolves to the successor. Proves the `'[)'` bound choice (§4.0) |
 | `test_no_gap_in_record_time_coverage` | After a correction and a retraction | For every valid instant with any coverage, record-time coverage is contiguous from the first record to `now()`. A gap presents as a spurious `404` on an audit query |
-| `test_snapshot_equals_derivation` | Every baseline in the reference dataset | REG-Q2's snapshot equals REG-Q3's derivation, position for position. §4.6.1's safety property |
+| `test_snapshot_equals_derivation` | Every baseline in the reference dataset, **including the reference dataset's vacant position (§9.3)** as its first case | REG-Q2's snapshot equals REG-Q3's/§9.3's derivation, position for position, `divergence_reason` included — a vacant position must appear as one row with `installed_item_id IS NULL` on both sides, not be silently dropped by either. §4.6.1's safety property |
 | `test_baseline_recipe_is_reproducible` | Every baseline | Re-deriving from `(template_version_id, deviation_high_water, coordinates)` reproduces the snapshot. §9.4 |
 | `test_baseline_epoch_is_gap_free_per_asset` | After the full 24-month history load | `SELECT baseline_epoch ORDER BY baseline_epoch` equals `generate_series(1, max)` for every asset, and `max = next_epoch - 1` |
 | `test_epoch_never_regresses_across_restart` | Restart the service mid-history-load | No epoch is reissued and none regresses. §4.0.2 |
@@ -3466,7 +3635,7 @@ Document 11 §11.4 names two; Registry's suite runs those plus the cases only th
 | `test_query_by_superseded_provisional_id_returns_303` | `GET /installed-items/{provisional_id}` after supersession returns `303` with `Location` and `X-Fathom-Identity-Resolution: superseded`. **A `404` fails this test**, and 11 §8.4's maintainer-with-a-six-week-old-form is the reason |
 | `test_provisional_flag_survives_confirmation` | `provisional` remains `true` with `identity_resolution = 'confirmed'`, and `ProvisionalContext` is intact (§8.3) |
 | `test_provisional_context_retained_after_resolution` | Including `minting_node_id` and `mint_monotonic_seq`. 11 §8.2: *"retained forever, including after resolution"* |
-| `test_rejected_submission_is_quarantined_never_discarded` | Each `_impossible()` condition of §8.3 produces a quarantine record surfaced by `GET /installed-items?provisional=true&status=quarantined`, and **nothing is dropped** [11 §8.3 step 6c, §12 item 15] |
+| `test_rejected_submission_is_quarantined_never_discarded` | Each `_impossible()` condition of §8.3 produces a quarantine record in the identity-quarantine store (§8.3, §12.5) — never in `installed_items`, and never surfaced by `GET /installed-items`, which has no `status` parameter — and **nothing is dropped** [11 §8.3 step 6c, §12 item 15] |
 | `test_unauthorized_niin_is_recorded_not_rejected` | An at-sea substitution with a NIIN not APL-authorized for the position is **written**, flagged `conforms_to_template: false` with `divergence_reason`. Refusing it would reintroduce D8 (§8.3) |
 | `test_resubmission_replays_via_idempotency_key` | The coordinator resubmits after a dropped link, with `Idempotency-Key = provisional_id`. The stored response replays; `Idempotency-Replayed: true`; **no second occupancy, no second epoch** |
 | `test_different_body_same_provisional_id_is_409` | Two different physical items claiming one provisional id → `409 idempotency-key-reuse`. Silently merging them is a real conflict resolved by a rule, which §8.3 forbids |
@@ -3656,7 +3825,7 @@ Document 03 §13 requires *"An explicit statement per store of whether it is leg
 | `asset_deviations` | Operationally append-only | As above |
 | `outbox`, `inbox`, `outbox_quarantine`, identity quarantine | Operationally append-only | `fathom_sync.purge_by_selector(...)` covers all four [11 §10.1] |
 | `idempotency_keys` | Operationally transient | Time-based expiry (§12.1) |
-| `registry_record_clock`, `registry_record_seq`, `asset_baseline_epoch` | **Never purged, never reset** | Resetting any of the three is unrecoverable (§4.0.2) |
+| `registry_record_clock`, `registry_record_seq`, `asset_baseline_epoch`, `asset_deviation_sequence` | **Never purged, never reset** | Resetting any of the four is unrecoverable (§4.0.2) |
 
 A spillage remediation therefore has a declared owner and a tested procedure for every Registry store, which document 03 §13 makes an accreditation prerequisite rather than a refinement.
 
@@ -3688,7 +3857,7 @@ Each item carries the finding that makes it a defect rather than a preference. A
 15. **Do not write `LIMIT 1` on REG-Q1.** Uniqueness is a database guarantee; `LIMIT 1` converts a constraint failure into a silent arbitrary pick. *(§5.2)*
 16. **Do not allocate `baseline_epoch` from a Postgres `SEQUENCE`.** Sequences leak values on rollback, so the stream has holes, and they do not serialize allocation with commit, so epoch 43 can become visible before 42. Both properties are required. *(11 §4.3's identical argument; **D4**; §4.0.2)*
 17. **Do not allow a `baseline_epoch` gap to go undetected.** With a gap, every consumer blocked on the antecedent rule waits for an epoch that will never arrive, and the operational response is to weaken the block — at which point **D4** returns. `epoch_continuity` fails readiness. *(03 §5.4; **D3**, **D4**; §12.4)*
-18. **Do not reset, reuse, or regress `baseline_epoch`, `record_seq`, or the record clock** — not on redeploy, not on migration, not on a database restore without operator confirmation. *(11 §4.3; §4.0.2)*
+18. **Do not reset, reuse, or regress `baseline_epoch`, `record_seq`, the deviation `sequence`, or the record clock** — not on redeploy, not on migration, not on a database restore without operator confirmation. *(11 §4.3; §4.0.2)*
 19. **Do not order the `changed_since` feed on a timestamp.** Ordering on `recorded_at` permits a lower-sequence row to become visible after a higher one, and a rebuilder that reached the end permanently misses it. *(**D5**; §6.4)*
 20. **Do not filter the `changed_since` feed to currently-believed rows.** A correction and a retraction are exactly the facts a rebuilder must not miss, and `WHERE upper_inf(record_period)` hides both. *(**D5**; §6.4)*
 21. **Do not clamp `as_known_at` into the past.** A future record time is a `422`. Clamping silently returns current belief and the caller comes to believe it audited a historical read. *(§6.3 rule 4)*
@@ -3783,7 +3952,7 @@ Registry adds the following, and the service is not done until every one holds.
 
 ### 14.4 `changed_since` — every aggregate a consumer projects
 
-- [ ] **A `changed_since` read exists for every one of the twelve owned aggregates in §4.10**, cursor-paginated, `x-fathom-aggregate` declared so `OAS013` can prove it. *(03 §4, §15 obligation 5, **D5**)*
+- [ ] **A `changed_since` read exists for every one of the twelve owned aggregates in §4.10**, cursor-paginated, `x-fathom-aggregate` declared so `OAS013` can prove it — eleven via a `changed_since` parameter (rows 1, 10, 13, 16, 19, 20, 21, 22, 22a, 23, 24), and `class_template` via its documented singleton carve-out (row 8), which `OAS013` treats as satisfying this requirement without a separate list read, on the same basis as `configuration_baseline`'s `current-baseline-epoch` carve-out (row 15). **[AMENDMENT]** Prior to this fix only eight aggregates had a `changed_since` parameter at all — `hierarchy_scheme` had no read operation whatsoever, and `asset_deviation`/`configuration_change_proposal` had a read but not the parameter — leaving this bullet's "twelve" contradicted by the operation table it points to. *(03 §4, §15 obligation 5, **D5**)*
 - [ ] Ordering and pagination are on `record_seq`; no feed orders on a timestamp. *(§6.4)*
 - [ ] Feeds return **full current row state**, and include rows whose `record_period` is closed.
 - [ ] `next_changed_since` is returned in `rt:<seq>` form on every response, and the RFC 3339 input form is accepted and translated once.
@@ -3794,7 +3963,7 @@ Registry adds the following, and the service is not done until every one holds.
 ### 14.5 Registry-specific contract and event gates
 
 - [ ] Every read operation is `x-agent-eligible`; no operation is `proposal-only`; agent eligibility is asserted only where `x-side-effects` is `none`. *(**C1/D11**)*
-- [ ] `as_of` and `as_known_at` are accepted together on all nine operations of §6.3, asserted by spec rule `OAS-REG-1`.
+- [ ] `as_of` and `as_known_at` are accepted together on all six bitemporal operations of §6.3 — and on no others, since neither `system_node` nor `position` has a `record_period` to back it — asserted by spec rule `OAS-REG-1`.
 - [ ] `GET /classes/{id}/template` and `GET /assets/{id}/current-baseline-epoch` are enumerated in `x-naming-carve-outs` with reasons. *(**C23**)*
 - [ ] `producer_node == "enterprise"` on every event; `test_registry_producer_node_is_always_enterprise` green.
 - [ ] The catalog-label → wire-name mapping of §3.2 is implemented, and `tools/check_event_catalog.py` exits 0 against it.
