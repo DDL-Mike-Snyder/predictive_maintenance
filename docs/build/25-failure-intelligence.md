@@ -1100,6 +1100,8 @@ Five ordinal axes. Each level is defined structurally so that two engineers scor
 
 A `single_hull_dominance` above `strength.max_hull_dominance` demotes A2 by one level, because four hulls of which one supplies 90% of events is a single-hull study wearing a multi-hull label. [13 §7.1](13-synthetic-data-generator.md) makes this checkable by construction: *"no family exists in only one asset, because a family present on a single hull cannot support the cross-hull population comparison that the causal analysis depends on."*
 
+**[Reviewed for the D13 aggregation defect this session closed elsewhere in this document (§2.8's `treatment_census` field suppression) and judged safe as specified, recorded for completeness.]** A2's level is, like `treatment_census`'s counts, derived from the resolved population and could in principle move when a compartmented hull's contribution changes. Unlike a raw count, though, A2 is a five-value coarse structural band (0–4) — the same shape this corpus already treats as safe elsewhere (mission-criticality's and consequence-of-failure's fixed `{0, 33, 67, 100}` bands, `22-pdm.md` §3.1), as distinct from a live percentile rank or an exact count. The residual signal — "somewhere between 1 and however many hulls" rather than an exact number — is materially smaller than the shapes this review found and fixed, and is not itself flagged as a defect here.
+
 **A3 — method agreement.**
 
 | Level | Condition |
