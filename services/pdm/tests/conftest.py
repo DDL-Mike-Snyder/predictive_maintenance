@@ -36,10 +36,9 @@ os.environ.setdefault("FATHOM_AUTH__JWKS_URL", "https://test-issuer/jwks")
 os.environ.setdefault("FATHOM_AUDIT__BASE_URL", "http://test-audit")
 os.environ.setdefault("FATHOM_REFERENCE_DATA__BASE_URL", "http://test-reference-data")
 
+from fathom_pdm.models import Base
 from fathom_py_common.idempotency import IdempotencyBase
 from fathom_sync import Base as SyncBase
-
-from fathom_pdm.models import Base
 
 
 @pytest_asyncio.fixture

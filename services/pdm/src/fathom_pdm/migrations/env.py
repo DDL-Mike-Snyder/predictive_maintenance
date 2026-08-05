@@ -20,14 +20,13 @@ import asyncio
 from logging.config import fileConfig
 
 from alembic import context
+from fathom_pdm.config import Settings
+from fathom_pdm.models import Base
 from fathom_py_common.idempotency import IdempotencyBase
 from fathom_sync import Base as SyncBase
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
-
-from fathom_pdm.config import Settings
-from fathom_pdm.models import Base
 
 config = context.config
 

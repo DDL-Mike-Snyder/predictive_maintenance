@@ -37,7 +37,7 @@ class CursorParams(BaseModel):
     @classmethod
     def as_query(
         cls, limit: int = Query(default=50, ge=1, le=500), cursor: str | None = Query(default=None)
-    ) -> "CursorParams":
+    ) -> CursorParams:
         return cls(limit=limit, cursor=cursor)
 
 
@@ -65,5 +65,5 @@ class ChangedSinceParams(BaseModel):
         changed_since: str | None = Query(default=None),
         cursor: str | None = Query(default=None),
         limit: int = Query(default=100, ge=1, le=1000),
-    ) -> "ChangedSinceParams":
+    ) -> ChangedSinceParams:
         return cls(changed_since=changed_since, cursor=cursor, limit=limit)

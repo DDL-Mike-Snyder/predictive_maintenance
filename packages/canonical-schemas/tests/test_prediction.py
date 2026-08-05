@@ -2,7 +2,6 @@ import datetime as dt
 from uuid import uuid4
 
 import pytest
-
 from fathom_schemas import (
     Basis,
     ConsequenceWeights,
@@ -12,7 +11,6 @@ from fathom_schemas import (
     Rul,
     RulUnit,
     TimingBasis,
-    UncalibratedAndUnrated,
     expected_consequence,
 )
 
@@ -35,7 +33,7 @@ def _base_kwargs(**overrides: object) -> dict[str, object]:
         "tier": 2,
         "model_version": "tier2-degradation-1.0.0",
         "scoring_run_id": uuid4(),
-        "computed_at": dt.datetime.now(dt.timezone.utc),
+        "computed_at": dt.datetime.now(dt.UTC),
         "p_failure": 0.12,
         "rul": Rul(p10=10, p50=40, p90=90, unit=RulUnit.DAYS),
     }

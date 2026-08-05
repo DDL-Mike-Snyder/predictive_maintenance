@@ -1,14 +1,9 @@
 import datetime as dt
 
 import pytest
-import pytest_asyncio
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 from fathom_contracts import SideEffects, Substitution, operation_extra
-from httpx import ASGITransport, AsyncClient
-from sqlalchemy.ext.asyncio import create_async_engine
-from sqlalchemy.pool import StaticPool
-
 from fathom_py_common import (
     ProblemException,
     assert_operation_annotations,
@@ -22,6 +17,9 @@ from fathom_py_common import (
     persist_idempotent_response,
 )
 from fathom_py_common.idempotency import IdempotencyBase
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.pool import StaticPool
 
 
 @pytest.fixture(autouse=True)
@@ -177,7 +175,7 @@ async def test_idempotency_key_required_on_state_changing_operation() -> None:
         ),
     )
     async def bulk_ingest(request: Request, run_id: str) -> dict[str, str]:
-        body = {"run_id": run_id, "at": dt.datetime.now(dt.timezone.utc).isoformat()}
+        body = {"run_id": run_id, "at": dt.datetime.now(dt.UTC).isoformat()}
         await persist_idempotent_response(request, body, 200)
         return body
 

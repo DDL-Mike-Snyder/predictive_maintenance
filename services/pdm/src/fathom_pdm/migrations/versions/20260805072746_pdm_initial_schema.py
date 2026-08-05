@@ -6,10 +6,10 @@ Create Date: 2026-08-05 07:27:46.526512
 """
 from __future__ import annotations
 
-from typing import Sequence
+from collections.abc import Sequence
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = '22ca49ca2ede'

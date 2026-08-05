@@ -63,7 +63,7 @@ class Inbox:
 
     async def record(self, session: AsyncSession, envelope: EventEnvelope) -> None:
         """`processed_at` LEFT NULL here -- set only by `mark_processed`."""
-        now = dt.datetime.now(dt.timezone.utc)
+        now = dt.datetime.now(dt.UTC)
         session.add(
             InboxRow(
                 event_id=str(envelope.event_id),
@@ -86,7 +86,7 @@ class Inbox:
     ) -> None:
         import time as _time
 
-        now = dt.datetime.now(dt.timezone.utc)
+        now = dt.datetime.now(dt.UTC)
         session.add(
             InboxRow(
                 event_id=str(envelope.event_id),
@@ -112,5 +112,5 @@ class Inbox:
         await session.execute(
             update(InboxRow)
             .where(InboxRow.event_id == str(event_id))
-            .values(processed_at=dt.datetime.now(dt.timezone.utc))
+            .values(processed_at=dt.datetime.now(dt.UTC))
         )

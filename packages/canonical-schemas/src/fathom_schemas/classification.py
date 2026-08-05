@@ -100,7 +100,7 @@ class ClassificationLabel(FathomModel):
         return self
 
     @classmethod
-    def union(cls, *inputs: "ClassificationLabel", derived_from: str) -> Self:
+    def union(cls, *inputs: ClassificationLabel, derived_from: str) -> Self:
         """THE only sanctioned way to label a derived value. Document 03 §7.3,
         §15 obligation 4: 'classification labels on every response and event,
         with `inherited_from` set as the union of inputs on every derived value.'

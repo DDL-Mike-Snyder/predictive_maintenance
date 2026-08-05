@@ -2,7 +2,6 @@ import datetime as dt
 from uuid import uuid4
 
 import pytest
-
 from fathom_schemas import (
     ClassificationLabel,
     ClassificationLevel,
@@ -19,7 +18,7 @@ from fathom_schemas import (
 
 
 def _clock() -> Clock:
-    now = dt.datetime.now(dt.timezone.utc)
+    now = dt.datetime.now(dt.UTC)
     return Clock(
         monotonic_seq=1,
         hlc=HybridLogicalClock(physical=1, logical=0, node_id="enterprise"),
@@ -44,8 +43,8 @@ def test_asset_scope_requires_exactly_asset_id() -> None:
         event_id=uuid4(),
         event_type="fathom.pdm.prediction.updated",
         event_version=1,
-        occurred_at=dt.datetime.now(dt.timezone.utc),
-        recorded_at=dt.datetime.now(dt.timezone.utc),
+        occurred_at=dt.datetime.now(dt.UTC),
+        recorded_at=dt.datetime.now(dt.UTC),
         producer=ProducerRef(slug=SubAppSlug.PDM, version="1.0.0"),
         producer_node="enterprise",
         correlation_id="corr-1",
@@ -64,8 +63,8 @@ def test_installed_item_scope_requires_both_fields() -> None:
             event_id=uuid4(),
             event_type="fathom.pdm.prediction.updated",
             event_version=1,
-            occurred_at=dt.datetime.now(dt.timezone.utc),
-            recorded_at=dt.datetime.now(dt.timezone.utc),
+            occurred_at=dt.datetime.now(dt.UTC),
+            recorded_at=dt.datetime.now(dt.UTC),
             producer=ProducerRef(slug=SubAppSlug.PDM, version="1.0.0"),
             producer_node="enterprise",
             correlation_id="corr-1",
@@ -83,8 +82,8 @@ def test_event_type_slug_must_match_producer() -> None:
             event_id=uuid4(),
             event_type="fathom.registry.asset.registered",
             event_version=1,
-            occurred_at=dt.datetime.now(dt.timezone.utc),
-            recorded_at=dt.datetime.now(dt.timezone.utc),
+            occurred_at=dt.datetime.now(dt.UTC),
+            recorded_at=dt.datetime.now(dt.UTC),
             producer=ProducerRef(slug=SubAppSlug.PDM, version="1.0.0"),
             producer_node="enterprise",
             correlation_id="corr-1",

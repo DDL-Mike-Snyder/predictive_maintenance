@@ -14,7 +14,7 @@ import datetime as dt
 import uuid
 
 from fathom_schemas import ClassificationLabel, FailurePrediction
-from fathom_sync import BaselineSuperseded, OutboxWriter, UnitOfWork
+from fathom_sync import OutboxWriter, UnitOfWork
 
 from fathom_pdm.events.publishers import publish_prediction_updated
 from fathom_pdm.models import Prediction, PredictionProvenance, ScoringRun
@@ -136,10 +136,10 @@ async def bulk_ingest_predictions(
     scoring_run.predictions_written = written
     scoring_run.predictions_rejected = rejected
     scoring_run.status = "published"
-    scoring_run.completed_at = dt.datetime.now(dt.timezone.utc)
+    scoring_run.completed_at = dt.datetime.now(dt.UTC)
 
     if written > 0 and last_asset_id is not None and last_installed_item_id is not None:
-        now = dt.datetime.now(dt.timezone.utc)
+        now = dt.datetime.now(dt.UTC)
         await publish_prediction_updated(
             outbox,
             uow,

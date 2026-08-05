@@ -183,7 +183,8 @@ class OutboxWriter:
         if scope is EventScope.FLEET:
             return "fleet"
         field = _SCOPE_PARTITION_FIELD[scope]
-        assert field is not None
+        # FLEET (the one key whose value is None) already returned above.
+        assert field is not None  # noqa: S101
         value = getattr(subject, field)
         if value is None:
             raise ValueError(f"scope={scope.value!r} requires `{field}` to derive a partition key")

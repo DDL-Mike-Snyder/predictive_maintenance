@@ -31,19 +31,29 @@ survive between sessions).
 | `packages/py-sync` | Transactional outbox (partition-key derivation, D5 compaction-key guard), inbox (D2 record-before-processed), `MonotonicSequencer`, epoch fencing both directions (`EpochFence` consumer-side + `BaselineFencedComputation` producer-side), conflict-policy declarations, divergence budgets | 5 passing |
 | `packages/contracts` | The `@operation`/`operation_extra` decorator (`x-substitution`/`x-side-effects`, import-time enforcement) | untested (simple, no test dir yet) |
 | `packages/py-common` | RFC 9457 problem details, correlation-ID middleware, classification middleware, idempotency (see gotcha #2 below), ETag/If-Match, health/readyz/metrics, structured logging, cursor pagination. **This whole package is a corpus gap** — `10-shared-packages.md` explicitly disclaims owning it; it's authored from `09-monorepo-and-conventions.md` §5's prose contract | 6 passing |
-| `services/pdm` | DB models for `prediction` (RLS-bearing), `criticality_assessment`, `calibration_record` (compartment-partitioned), `scoring_run`, `tier_policy`, `prediction_provenance`; a working bulk-ingest endpoint (idempotent, transactional, baseline-fenced, outbox-emitting); get-prediction, get-criticality, expected-consequence reads; a real Alembic migration (`versions/20260805072746_pdm_initial_schema.py`, applied and round-tripped against real Postgres); RLS holdout isolation, verified end to end against a real Postgres container, not just reviewed as DDL; a real `Dockerfile` (builds and runs, `/healthz`/`/readyz` verified against real Postgres) and a complete Helm chart (`helm/`, depends on the new `deploy/helm/_fathom-common` library chart, `helm lint`/`template`/`unittest` all passing) | 14 passing, incl. one real HTTP→DB integration test and 10 real-Postgres RLS tests |
+| `services/pdm` | DB models for `prediction` (RLS-bearing), `criticality_assessment`, `calibration_record` (compartment-partitioned), `scoring_run`, `tier_policy`, `prediction_provenance`; a working bulk-ingest endpoint (idempotent, transactional, baseline-fenced, outbox-emitting); get-prediction, get-criticality, expected-consequence reads; a real Alembic migration (`versions/20260805072746_pdm_initial_schema.py`, applied and round-tripped against real Postgres); RLS holdout isolation, verified end to end against a real Postgres container, not just reviewed as DDL; a real `Dockerfile` (builds and runs, `/healthz`/`/readyz` verified against real Postgres) and a complete Helm chart (`helm/`, depends on the new `deploy/helm/_fathom-common` library chart, `helm lint`/`template`/`unittest` all passing); the criticality scoring/tier-assignment/hysteresis algorithm (`services/criticality.py` — the formula, band function, and hysteresis gate only; §3.1's per-input normalization and §3.3's ceiling-input read models are event-consumer work, not built yet, see the module's own docstring) | 34 passing, incl. one real HTTP→DB integration test, 10 real-Postgres RLS tests, and 20 scoring/hysteresis unit tests |
 
-**Total: 36 passing tests**, all newly written this session, all genuinely
+**Total: 56 passing tests**, all newly written this session, all genuinely
 exercised (not just "written and assumed to work" — see the gotchas below,
 several were only caught by actually running them).
 
+**Repo-wide finding, this pass: `ruff` had never actually been run across
+the whole `services/`/`packages/` tree before now** (only spot-checked on
+individual files). Running it surfaced ~280 findings repo-wide — meaning
+`make lint`/CI's lint gate would currently fail entirely, across code from
+every prior session, not just this one. Triaged: applied ~55 safe
+auto-fixes, fixed two real repo-wide config gaps (see below), and
+hand-fixed a handful of genuine-but-defensible findings in PdM's own code.
+**~206 findings remain untriaged** (mostly `E501` line-length, `TRY003`
+exception-message style, `TC001-3` typing-only-import placement,
+`PLC0415` deferred imports) — real, but mechanical and spread across ~30
+files from earlier sessions, not evaluated one by one. This is its own
+well-scoped cleanup task, separate from anything on the PdM checklist —
+flagged for the user to prioritize rather than silently absorbed into
+whatever task was in progress when it was found.
+
 ## What's NOT built yet for PdM
 
-- **The actual criticality-scoring / hysteresis algorithm.** We modeled the
-  *data* (the `criticality_assessment` table, `tier_is_capped`,
-  `migration_requires_rescore` constraints) but not the *computation* —
-  22-pdm.md §3.3/§3.4's `raw_band`/`proposed_tier` hysteresis logic, the
-  five-input scoring formula, none of that is implemented as code yet.
 - **The Domino Job entrypoint script** and the Domino Model Registry
   binding logic (22-pdm.md §5.6) — nothing Domino-specific has been
   exercised against a live workspace at all. The `.env.example` has
@@ -147,6 +157,30 @@ because they'll bite again if not accounted for:
    mechanism and `services/pdm/tests/integration/test_rls_holdout_isolation.py`
    for the test that proves it (and that would have failed loudly against
    the old design).
+9. **22-pdm.md §3.2's scoring formula is internally inconsistent, and the
+   spec text was never actually run.** It gives `score = 100 x sum(w_j x_j)
+   / sum(w_j)`, but §3.1 already normalizes every x_j to `[0, 100]` for
+   storage — applying the literal formula to already-`[0,100]` inputs
+   produces values up to 10,000, not the documented and DB-range-checked
+   `[0, 100]` `score` column. `services/criticality.py` implements
+   `score = sum(w_j x_j) / sum(w_j)` (no extra factor) instead, documented
+   inline; the "100 x" only makes sense if x_j were `[0,1]` fractions,
+   which contradicts §3.1's own normalization column. Not yet corrected in
+   the spec doc itself — worth fixing `22-pdm.md` §3.2 to match if you're
+   back in there.
+10. **Root `pyproject.toml`'s ruff `per-file-ignores` pattern
+    (`"tests/*"`) never matched anything** — every real test tree lives at
+    `services/<slug>/tests/` or `packages/<name>/tests/`, two directories
+    deep, which a bare `tests/*` glob doesn't reach. Fixed to
+    `"**/tests/*"`. Also added a `flake8-bugbear.extend-immutable-calls`
+    entry for `fastapi.Depends`/`Query`/`Path`/etc. — B008 was flagging
+    every single FastAPI route handler's dependency-injection parameter as
+    a "mutable default," which is the idiomatic pattern 09§4.6 itself
+    specifies, not a bug. Both gaps existed because **nothing had ever run
+    `ruff` across a real multi-directory service tree before this pass** —
+    worth running `make lint` for real (not just spot-checking individual
+    files) early when building service #2, now that these two config gaps
+    are fixed.
 
 ## How to run tests (you'll need to redo this — nothing here survives)
 
@@ -193,9 +227,9 @@ shell state doesn't persist between separate tool calls.
 
 The user has explicitly chosen to finish PdM before moving to service #2,
 in this order: ~~Alembic migration~~ → ~~RLS testing~~ → ~~Dockerfile~~ →
-~~Helm chart~~ → hysteresis/scoring algorithm → event consumers → Domino
-Job entrypoint/Model Registry binding. The first four are done (see above).
-Dockerfile and Helm chart were built in parallel across two Sonnet
+~~Helm chart~~ → ~~hysteresis/scoring algorithm~~ → event consumers →
+Domino Job entrypoint/Model Registry binding. The first five are done (see
+above). Dockerfile and Helm chart were built in parallel across two Sonnet
 subagents (per the user's explicit interest in parallelizing genuinely
 independent PdM work) — both independently re-verified afterward (real
 `docker build` + container run + `/healthz`/`/readyz`, and `helm lint`/
@@ -206,18 +240,29 @@ chart every per-service chart depends on) and the two namespace-wide
 default-deny NetworkPolicy charts (`fathom-sustainment`, `fathom-data`)
 first, since none of that shared Helm infrastructure existed yet — done
 directly rather than delegated, since it's foundational/shared, not PdM's
-own deliverable.
+own deliverable. The scoring/hysteresis algorithm was built directly (not
+delegated) since correctly deriving the hysteresis persistence rule from
+only the immediately-prior assessment row needed careful judgment, not
+mechanical transcription — see bug #9 above for a real spec inconsistency
+found while implementing it.
 
-1. **The hysteresis/scoring algorithm** (#25) and **event consumers** (#26)
-   are more sequential: consumers need the invalidation pattern this
-   session already built (`PredictionRepository.invalidate()` calls
-   `pdm.invalidate_prediction()` by id, not by a pre-loaded object — see bug
-   #8 above for why), so build/review that pattern before wiring the ~15
+1. **Event consumers** (#26): the invalidation pattern is already built
+   (`PredictionRepository.invalidate()` calls `pdm.invalidate_prediction()`
+   by id, not by a pre-loaded object — see bug #8 above for why) and the
+   scoring/tier-assignment pattern is now built (`services/criticality.py`)
+   — both ready to be called from consumer handlers. Wiring the ~15
    consumed event types (the real list is in
-   `services/pdm/src/fathom_pdm/events/catalog.py`'s `CONSUMES`).
+   `services/pdm/src/fathom_pdm/events/catalog.py`'s `CONSUMES`) will also
+   need to build the read-model projections `services/criticality.py`
+   deliberately left out of scope (§3.1's normalization curves, §3.3's
+   ceiling inputs) — see that module's docstring for exactly what's missing.
 2. **Domino Job entrypoint + Model Registry binding** (#27) needs the
    user's real Domino project/workspace details — get these regardless of
    sequencing, since every other service will need them too.
+3. **Separate from the PdM checklist**: ~206 untriaged `ruff` findings
+   remain across the whole `services/`/`packages/` tree (see above) — a
+   well-scoped, mechanical cleanup task the user hasn't weighed in on yet.
+   Worth asking whether to fix now, defer, or fold into a later pass.
 
 ## Where to find more context
 

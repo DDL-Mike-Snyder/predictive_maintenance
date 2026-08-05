@@ -123,7 +123,7 @@ def expected_consequence(
 
     if pred.reference_class is ReferenceClass.ITEM:
         # Case A.
-        assert pred.p_failure is not None  # guaranteed by _rul_only_when_item_conditional
+        assert pred.p_failure is not None  # noqa: S101 -- guaranteed by _rul_only_when_item_conditional
         p_event_horizon = pred.p_failure
         basis = Basis.ITEM_CONDITIONAL
         timing_basis = TimingBasis.RUL_QUANTILES
@@ -134,7 +134,7 @@ def expected_consequence(
         # Case B (niin_fleet | equipment_family | class_estimate), and Case C
         # (p_failure null, below the gate) is exactly this branch too, since
         # the calibration gate forces reference_class to class_estimate below n=50.
-        assert pred.population_hazard_rate is not None
+        assert pred.population_hazard_rate is not None  # noqa: S101 -- guaranteed by _rul_only_when_item_conditional
         h_op = pred.horizon_days * operating_fraction
         p_event_horizon = 1.0 - math.exp(-pred.population_hazard_rate * h_op)
         basis = Basis.CLASS_RATE_CONVERTED

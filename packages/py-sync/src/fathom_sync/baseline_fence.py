@@ -35,7 +35,7 @@ class BaselineFencedComputation:
     epoch_at_start: dict[str, int]
 
     @classmethod
-    async def start(cls, reader: BaselineReader, asset_ids: list[str]) -> "BaselineFencedComputation":
+    async def start(cls, reader: BaselineReader, asset_ids: list[str]) -> BaselineFencedComputation:
         epoch_at_start = {asset_id: await reader.current_epoch(asset_id) for asset_id in asset_ids}
         return cls(reader=reader, epoch_at_start=epoch_at_start)
 

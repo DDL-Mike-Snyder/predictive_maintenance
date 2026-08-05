@@ -53,7 +53,9 @@ _ENV_DEFAULTS = {
 
 @pytest.fixture(scope="module")
 def pg_container() -> Iterator[PostgresContainer]:
-    with PostgresContainer("postgres:16-alpine", dbname="pdm", username="pdm_owner", password="pdm_owner") as pg:
+    with PostgresContainer(
+        "postgres:16-alpine", dbname="pdm", username="pdm_owner", password="pdm_owner"  # noqa: S106 -- throwaway, ephemeral testcontainer
+    ) as pg:
         yield pg
 
 

@@ -25,7 +25,7 @@ class HybridLogicalClock:
     logical: int
     node_id: str
 
-    def __lt__(self, other: "HybridLogicalClock") -> bool:
+    def __lt__(self, other: HybridLogicalClock) -> bool:
         return (self.physical, self.logical, self.node_id) < (
             other.physical,
             other.logical,

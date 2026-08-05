@@ -6,10 +6,10 @@ Create Date: ${create_date}
 """
 from __future__ import annotations
 
-from typing import Sequence
+from collections.abc import Sequence
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 ${imports if imports else ""}
 
 revision: str = ${repr(up_revision)}

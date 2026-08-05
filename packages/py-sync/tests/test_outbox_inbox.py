@@ -13,11 +13,19 @@ from fathom_schemas import (
     Rul,
     RulUnit,
 )
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-
-from fathom_sync import Base, EpochFence, EventId, Inbox, MonotonicSequencer, OutboxWriter, UnitOfWork, evaluate_fence
-from fathom_sync.models import InboxRow, OutboxRow
+from fathom_sync import (
+    Base,
+    EpochFence,
+    EventId,
+    Inbox,
+    MonotonicSequencer,
+    OutboxWriter,
+    UnitOfWork,
+    evaluate_fence,
+)
+from fathom_sync.models import OutboxRow
 from fathom_sync.testing import FixedEpochFence, InsecureTestSigner
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 
 @pytest_asyncio.fixture
@@ -49,7 +57,7 @@ def _prediction() -> FailurePrediction:
         tier=2,
         model_version="tier2-degradation-1.0.0",
         scoring_run_id=uuid4(),
-        computed_at=dt.datetime.now(dt.timezone.utc),
+        computed_at=dt.datetime.now(dt.UTC),
         p_failure=0.12,
         rul=Rul(p10=10, p50=40, p90=90, unit=RulUnit.DAYS),
     )
@@ -65,7 +73,7 @@ async def test_emit_writes_one_outbox_row_with_derived_partition_key(session: As
     )
     asset_id = uuid4()
     pred = _prediction()
-    now = dt.datetime.now(dt.timezone.utc)
+    now = dt.datetime.now(dt.UTC)
 
     async with session.begin():
         event_id = await writer.emit(
@@ -106,7 +114,7 @@ async def test_compaction_key_equal_to_partition_key_is_rejected(session: AsyncS
     )
     asset_id = uuid4()
     pred = _prediction()
-    now = dt.datetime.now(dt.timezone.utc)
+    now = dt.datetime.now(dt.UTC)
 
     with pytest.raises(ValueError, match="compaction_key must never equal partition_key"):
         async with session.begin():
@@ -141,9 +149,16 @@ async def test_monotonic_sequencer_is_gap_free_per_producer_node(session: AsyncS
 @pytest.mark.asyncio
 async def test_inbox_suppresses_only_after_processed_at_set(session: AsyncSession) -> None:
     inbox = Inbox()
-    from fathom_schemas import Clock, EventEnvelope, HybridLogicalClock, ProducerRef, SubAppSlug, SyncQuality, TimeSource
+    from fathom_schemas import (
+        Clock,
+        EventEnvelope,
+        ProducerRef,
+        SubAppSlug,
+        SyncQuality,
+        TimeSource,
+    )
 
-    now = dt.datetime.now(dt.timezone.utc)
+    now = dt.datetime.now(dt.UTC)
     envelope = EventEnvelope(
         event_id=uuid4(),
         event_type="fathom.registry.configuration_baseline.changed",
@@ -195,9 +210,17 @@ def HybridLogicalClockShim():
 
 @pytest.mark.asyncio
 async def test_epoch_fence_blocks_ahead_of_current_epoch(session: AsyncSession) -> None:
-    from fathom_schemas import Clock, EventEnvelope, HybridLogicalClock, ProducerRef, SubAppSlug, SyncQuality, TimeSource
+    from fathom_schemas import (
+        Clock,
+        EventEnvelope,
+        HybridLogicalClock,
+        ProducerRef,
+        SubAppSlug,
+        SyncQuality,
+        TimeSource,
+    )
 
-    now = dt.datetime.now(dt.timezone.utc)
+    now = dt.datetime.now(dt.UTC)
     asset_id = uuid4()
     envelope = EventEnvelope(
         event_id=uuid4(),

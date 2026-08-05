@@ -10,8 +10,25 @@ ignore = ["ANN401", "PLR0913"]
 # which document 03 §4 (RFC 3339 with explicit offset) requires.
 # T20 forbids print(); all output is structlog (09 §4.8).
 
+[tool.ruff.lint.flake8-bugbear]
+# Every service's main.py/api/* uses FastAPI's own idiomatic
+# `param: T = Depends(...)` pattern (09 §4.6) -- B008 exists to catch a
+# mutable literal default (`[]`, `{}`), not this; Depends()/Query()/etc.
+# return a resolution-time marker FastAPI's DI machinery consumes
+# specially, never evaluated as a shared mutable default. Found missing
+# here only because nothing had run ruff across a real router file yet.
+extend-immutable-calls = [
+    "fastapi.Depends", "fastapi.Query", "fastapi.Path", "fastapi.Body",
+    "fastapi.Header", "fastapi.Cookie", "fastapi.Security", "fastapi.Form", "fastapi.File",
+]
+
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["S101", "ANN", "PLR2004"]           # asserts and magic numbers are fine in tests
+# "tests/*" alone only matches a top-level tests/ dir; every actual test
+# tree lives at services/<slug>/tests/ or packages/<name>/tests/, so this
+# pattern silently never matched anything -- found by actually running
+# ruff against a real per-service tests/ directory during PdM's criticality
+# scoring work.
+"**/tests/*" = ["S101", "ANN", "PLR2004"]        # asserts and magic numbers are fine in tests
 "**/migrations/versions/*" = ["ANN", "ERA", "E501"]
 
 [tool.mypy]

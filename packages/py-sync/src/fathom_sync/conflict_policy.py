@@ -106,7 +106,7 @@ class ConflictPolicyRegistry:
         self._by_aggregate: dict[str, ConflictPolicy] = {p.aggregate: p for p in policies}
 
     @classmethod
-    def declare(cls, *, service: str, policies: list[ConflictPolicy]) -> "ConflictPolicyRegistry":
+    def declare(cls, *, service: str, policies: list[ConflictPolicy]) -> ConflictPolicyRegistry:
         return cls(service, policies)
 
     def policy_for(self, aggregate: str) -> ConflictPolicy:

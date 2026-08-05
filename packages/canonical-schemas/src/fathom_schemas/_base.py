@@ -31,7 +31,7 @@ from pydantic import (
 def _to_utc_z(value: _dt.datetime) -> str:
     if value.tzinfo is None:
         raise ValueError("naive datetime reached serialization")
-    return value.astimezone(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"
+    return value.astimezone(_dt.UTC).strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"
 
 
 UtcDateTime = Annotated[AwareDatetime, PlainSerializer(_to_utc_z, return_type=str)]

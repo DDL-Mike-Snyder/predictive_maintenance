@@ -87,7 +87,7 @@ class HybridLogicalClock(FathomModel):
     logical: int = Field(ge=0)
     node_id: NonEmptyStr
 
-    def __lt__(self, other: "HybridLogicalClock") -> bool:
+    def __lt__(self, other: HybridLogicalClock) -> bool:
         return (self.physical, self.logical, self.node_id) < (
             other.physical,
             other.logical,
@@ -157,7 +157,10 @@ class EventEnvelope(FathomModel):
             return self
 
         field = _SCOPE_SUBJECT_FIELD[self.scope]
-        assert field is not None
+        # The type is `str | None` only for FLEET's sake; every other branch
+        # above returns before reaching here, so `self.scope` is never FLEET
+        # (the one key whose value is None) at this point.
+        assert field is not None  # noqa: S101
         populated = [
             f
             for f in EventSubject.model_fields
@@ -183,7 +186,7 @@ class EventEnvelope(FathomModel):
         """(producer.slug, producer_node, clock.monotonic_seq)."""
         return (str(self.producer.slug.value), self.producer_node, self.clock.monotonic_seq)
 
-    def precedes(self, other: "EventEnvelope") -> bool:
+    def precedes(self, other: EventEnvelope) -> bool:
         if self.producer.slug == other.producer.slug and self.producer_node == other.producer_node:
             return self.clock.monotonic_seq < other.clock.monotonic_seq
         return self.clock.hlc < other.clock.hlc

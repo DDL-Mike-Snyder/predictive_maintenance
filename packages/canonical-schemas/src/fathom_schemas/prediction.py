@@ -146,7 +146,7 @@ class FailurePrediction(FathomModel):
                 )
         return self
 
-    def comparable_with(self, other: "FailurePrediction") -> bool:
+    def comparable_with(self, other: FailurePrediction) -> bool:
         """THE only sanctioned cross-prediction comparison of raw fields.
         Never a `tier` comparison -- lint rule FTH006 forbids it statically."""
         return self.reference_class is other.reference_class

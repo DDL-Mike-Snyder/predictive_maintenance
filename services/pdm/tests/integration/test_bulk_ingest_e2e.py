@@ -26,10 +26,6 @@ import uuid
 
 import pytest
 import pytest_asyncio
-from httpx import ASGITransport, AsyncClient
-from sqlalchemy import event
-from sqlalchemy.ext.asyncio import async_sessionmaker
-
 from fathom_pdm.config import (
     AuditSettings,
     AuthSettings,
@@ -38,11 +34,13 @@ from fathom_pdm.config import (
     ReferenceDataSettings,
     Settings,
 )
-from fathom_py_common.idempotency import IdempotencyBase
-from fathom_sync import Base as SyncBase
-
 from fathom_pdm.main import create_app
 from fathom_pdm.models import Base, ScoringRun
+from fathom_py_common.idempotency import IdempotencyBase
+from fathom_sync import Base as SyncBase
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy import event
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 
 def _settings() -> Settings:
@@ -85,7 +83,7 @@ async def app_and_client():
 async def _seed_scoring_run(app, scoring_run_id: uuid.UUID) -> None:
     maker = async_sessionmaker(app.state.engine, expire_on_commit=False)
     async with maker() as session:
-        now = dt.datetime.now(dt.timezone.utc)
+        now = dt.datetime.now(dt.UTC)
         session.add(
             ScoringRun(
                 scoring_run_id=scoring_run_id,
@@ -104,7 +102,7 @@ async def _seed_scoring_run(app, scoring_run_id: uuid.UUID) -> None:
 
 
 def _prediction_payload(*, asset_id: str, installed_item_id: str) -> dict:
-    now = dt.datetime.now(dt.timezone.utc).isoformat()
+    now = dt.datetime.now(dt.UTC).isoformat()
     return {
         "asset_id": asset_id,
         "installed_item_id": installed_item_id,

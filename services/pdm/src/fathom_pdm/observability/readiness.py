@@ -5,10 +5,9 @@ read_model_lag, outbox_drain.
 
 from __future__ import annotations
 
+from fathom_py_common import ReadinessCheck, make_check
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
-
-from fathom_py_common import ReadinessCheck, make_check
 
 from fathom_pdm.config import Settings
 

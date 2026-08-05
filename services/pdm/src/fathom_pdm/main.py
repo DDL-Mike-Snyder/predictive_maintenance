@@ -16,7 +16,6 @@ from fathom_py_common import (
     install_health_routes,
     install_idempotency_middleware,
     install_problem_handlers,
-    make_check,
 )
 from fathom_sync.outbox import OutboxWriter
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -24,7 +23,6 @@ from sqlalchemy.pool import StaticPool
 
 from fathom_pdm.api import build_router
 from fathom_pdm.config import Settings
-from fathom_pdm.models import Base
 from fathom_pdm.observability.readiness import register_checks
 from fathom_pdm.signer import EnvelopeSigner
 

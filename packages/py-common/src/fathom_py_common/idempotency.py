@@ -172,8 +172,8 @@ async def persist_idempotent_response(request: Request, response_body: dict[str,
             request_hash=req_hash,
             response_status=status_code,
             response_body=response_body,
-            created_at=dt.datetime.now(dt.timezone.utc),
-            expires_at=dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=24),
+            created_at=dt.datetime.now(dt.UTC),
+            expires_at=dt.datetime.now(dt.UTC) + dt.timedelta(hours=24),
         )
     )
     await session.flush()
