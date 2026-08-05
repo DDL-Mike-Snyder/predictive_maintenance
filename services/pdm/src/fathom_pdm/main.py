@@ -112,3 +112,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
 
 app = create_app()
+
+if __name__ == "__main__":
+    # 09-monorepo-and-conventions.md: `make contract` runs
+    # `python -m fathom_pdm.main --emit-openapi > openapi.json` and diffs
+    # against the committed copy. `create_app()` (module level, above) has
+    # already run by the time this executes, so this just prints its result.
+    import json
+    import sys
+
+    if "--emit-openapi" in sys.argv:
+        print(json.dumps(app.openapi(), indent=2))  # noqa: T201 -- this print IS `make contract`'s output
+    else:
+        print("usage: python -m fathom_pdm.main --emit-openapi", file=sys.stderr)  # noqa: T201
+        sys.exit(1)

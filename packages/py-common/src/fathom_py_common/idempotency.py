@@ -112,10 +112,16 @@ async def idempotency_guard(
     escape hatch for the rare `side_effects=none` operation whose own spec
     still calls for a key -- 22-pdm.md §10's `POST /scoring-runs` is the
     first: `none` because it computes and does not alter *domain* state,
-    but it mints a real row, so a blind retry is not safe."""
+    but it mints a real row, so a blind retry is not safe. `x-fathom-
+    idempotency-exempt` is the inverse: a `state-changing`/`proposal-only`
+    operation that structurally cannot carry the header --
+    30-gateway.md §8.1.2's `GET /session/callback` is the first (a browser
+    following Keycloak's 302, not an XHR call)."""
     route = request.scope.get("route")
     extra = getattr(route, "openapi_extra", None) or {}
     side_effects = extra.get("x-side-effects")
+    if extra.get("x-fathom-idempotency-exempt"):
+        return
     if side_effects not in ("proposal-only", "state-changing") and not extra.get(
         "x-fathom-idempotency-required"
     ):

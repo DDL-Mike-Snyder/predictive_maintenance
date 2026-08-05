@@ -59,6 +59,16 @@ extend-immutable-calls = [
 # ruff against a real per-service tests/ directory during PdM's criticality
 # scoring work.
 "**/tests/*" = ["S101", "ANN", "PLR2004", "PLC0415"]        # asserts, magic numbers, and locally-scoped test-only imports (e.g. to reset shared state between tests) are fine in tests
+"**/tests/integration/*" = ["S603", "S106"]
+# S603 ("subprocess call: check for execution of untrusted input") and S106
+# ("possible hardcoded password") both exist to catch real risk in SERVICE
+# code, where an argument or secret can originate from a caller; an
+# integration test's own subprocess argv is built entirely from fixed,
+# in-repo paths (never request/user input) and its "password" is always a
+# throwaway test literal never used against anything real -- first hit by
+# platform/gateway's own real-PdM-subprocess e2e test, checked by hand
+# rather than assumed safe, same discipline as every other repo-wide
+# ignore in this file.
 "**/migrations/versions/*" = ["ANN", "ERA", "E501"]
 
 [tool.mypy]

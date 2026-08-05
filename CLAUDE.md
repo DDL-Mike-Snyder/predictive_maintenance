@@ -940,6 +940,299 @@ values.yaml changes were made this pass; this is the same shape of gap
 as the migration-secret conflation was before it got its own fix, named
 here so it doesn't get assumed-solved by the code existing.
 
+## 2026-08-05 later still — three production-readiness questions, researched
+
+The user asked three questions before continuing: is the AWS infra we've
+been using actually controlled by the Domino cluster's own lifecycle (they
+recalled seeing Karpenter used for this); is the backend properly
+integrated with Domino's own MLOps surfaces (model registry, experiment
+tracking); and what's left, configuration-wise, to support a production
+UI — hosted on Domino if that's the right call, otherwise a documented
+reason why not. All three were researched against the corpus's own
+architecture docs (`docs/architecture/01-system-architecture.md`,
+`02-domino-platform-assessment.md`) and verified live against the real
+`mikesn136713` cluster, not answered from assumption. No code changed in
+this pass — findings only, recorded here so the next session (or this one,
+continuing) doesn't have to re-derive them.
+
+**1. Node pools / autoscaling — Karpenter is NOT what's running here,
+verified live.** `kubectl get crd | grep karpenter` and `kubectl get pods
+-n karpenter` both come back empty; there is no `karpenter.sh/nodepool`
+label anywhere in the cluster. What actually runs: the classic Kubernetes
+**`cluster-autoscaler`** (a Deployment in `domino-platform`) against
+**EKS Managed Node Groups** tagged `platform-mikesn136713-*` and
+`compute-mikesn136713-*` — confirmed via each node's own
+`eks.amazonaws.com/nodegroup` label. Its exact auto-discovery flag:
+`--node-group-auto-discovery=asg:tag=k8s.io/cluster-autoscaler/enabled,
+k8s.io/cluster-autoscaler/mikesn136713`. **A `fathom.navy/pool: program`
+node pool does not exist anywhere in this cluster** — no node carries that
+label — confirming the smoke-test values file's own earlier note was
+accurate, not stale. `deploy/terraform/` (named in 01 §11's own monorepo
+layout) is completely empty — no IaC exists for this at all yet.
+
+The canonical mechanism, given what's actually installed, is **not**
+Karpenter — it's a new EKS Managed Node Group (a new ASG) tagged with the
+same two `k8s.io/cluster-autoscaler/*` tags the existing node groups
+carry, labeled `fathom.navy/pool: program`, tainted to keep Domino's own
+workloads off it. The already-running cluster-autoscaler picks it up
+automatically — no new controller to install, no interaction with
+Domino's own scaling to reason about. Installing Karpenter fresh alongside
+an existing cluster-autoscaler would be the non-canonical, more invasive
+choice for this specific cluster.
+
+**On the actual question asked** ("is our AWS infra controlled by bringing
+the Domino cluster up and down"): by design, **no** — 01 §11 and 02 §4.6
+are explicit that program workloads *coexist* in the same physical
+cluster/VPC as Domino but are deliberately **not** managed by Domino
+("Program workloads on their own labeled pool... so that autoscaling and
+consolidation behavior in one plane does not disturb the other"; 02 §4.6:
+"[a]nything co-located sits outside Domino's governance, audit trail,
+role-based access control, upgrade path, Nexus placement, and support
+boundary"). If the whole `mikesn136713` cluster is destroyed (e.g. via
+Fleetcommand), our stuff goes with it since it's the same cluster and same
+VPC — but day to day, our own node pool's scaling is independent of
+Domino's own pool activity, which is the deliberate point, not a gap.
+**Not yet built**: creating this node pool at all (real infra change on
+the shared `946429944765` AWS account — needs explicit sign-off before
+acting, not something to do unilaterally).
+
+**2. Domino MLOps integration — architecture is already right; the gap is
+narrow and concrete.** `01-system-architecture.md` §9's own capability
+table already resolves the two questions that could have gone either way:
+**Model Registry gates by lifecycle stage are NOT expressible in Domino
+today** (GA for registry/lineage only) — PdM's own `model_binding`
+refusal-check mechanism (§5.6) is the documented, correct workaround, not
+a gap to close. Likewise **Model Monitor doesn't work on remote data
+planes, where all scoring runs** — PdM's own `calibration_record`
+table (drift_state, weighted/unweighted calibration error) is the
+documented, correct place for this, not something to delegate to Domino.
+Both are already built correctly; nothing to change there.
+
+What's actually missing: **`models/tier0-historical/entrypoint.py` never
+calls MLflow/Experiment Manager or the Model Registry at all** — no
+experiment run gets logged for whatever the stand-in fit computes, and
+(confirmed empirically earlier this session) no model version has ever
+been registered in this Domino instance. This is real, concrete, buildable
+work — `mlflow.start_run()`/`log_metric()`/`register_model()` inside the
+entrypoint — and the live Domino workspace SSH tunnel from earlier this
+session is **still alive** (re-verified: `ssh -F ~/.domino/ssh/config ...`
+round-tripped cleanly), so this is testable against the real instance
+without re-establishing access. Registering even the stand-in artifact for
+real would also close a previously-named gap: `POST /model-bindings`
++`/activate` has never been exercised against a real
+`registry_model_version`/`registry_model_uri` (the registry has been
+empty this whole project).
+
+**3. Production UI hosting — the corpus already has a definitive,
+documented answer, and it depends on WHICH UI.** `apps/` has two distinct
+app concepts (01 §11's own monorepo layout), each hosted differently on
+purpose:
+- **`apps/web`, the operator interface — Sustainment Plane, i.e. program-
+  operated Kubernetes, NOT Domino.** `02-domino-platform-assessment.md`
+  §5 says so explicitly, with reasons: anonymous access is being removed
+  platform-wide, which is "inconsistent with fleet-scale maintainer
+  access"; documented SPA sub-path asset-loading failures through
+  Domino's proxy; iframe rendering by default; base path supplied at
+  runtime rather than baked in at build time; pods restarted by platform
+  maintenance and evicted by node consolidation against only a 99% SLA.
+  Nine domain sub-applications (PdM included) get the same Sustainment
+  placement for parallel reasons (§4.1: "not intended for persistent
+  workflows," no service-to-service networking, single container only).
+- **`apps/practitioner` — Intelligence Plane, i.e. Domino** (Extensions
+  where the deployment supports them — Domino Cloud only — with Domino
+  Apps as "the portable fallback... since the production target is
+  self-managed OpenShift and air-gapped enclaves," per 01 §9).
+
+So: don't host the operator UI on Domino, and the reason is already
+written down at length, not something to newly justify. **What's actually
+missing to support building it, though, is bigger than "write the React
+app":** 01 §11 says the program operates its OWN ingress for "the
+operator interface and gateway" — the AWS smoke test only ever borrowed
+Domino's own shared `nginx-ingress-controller`, a smoke-test shortcut, not
+the real target. More importantly, the operator UI's real front door per
+the architecture is **`platform/gateway`** (`30-gateway.md`) — session
+cookies, CSRF, the BFF pattern, the delegated-token exchange — and
+**`platform/gateway` does not exist as code at all**, along with every
+other platform service. Building a "production" operator UI without it
+means either standing up `gateway` first or accepting a throwaway auth
+shortcut (matching what `apps/web`'s own placeholder `current_principal`
+already is on the PdM side) — worth deciding explicitly rather than
+backing into by default.
+
+**Nothing has been implemented for any of these three yet** — this
+section is the research the user asked for before deciding how to
+proceed, not a change log of new infrastructure. Node-pool creation
+touches shared AWS infrastructure and needs explicit sign-off; Domino
+MLOps wiring is safe to build against the live workspace; UI/gateway work
+is the largest of the three and its sequencing (gateway first? UI first
+against a throwaway auth shim?) is an open decision for the user.
+
+**Decisions made on all three, 2026-08-05, same session:** (1) node pool —
+**skip for now**, don't provision; (2) Domino MLOps integration — **build
+now**, safe against the live workspace; (3) UI — **build `platform/gateway`
+first**, per the architecture's own dependency order, rather than a
+throwaway auth shim.
+
+Also, standing instruction from the user for the rest of this project:
+**always ask explicit permission before standing up any AWS resource
+estimated at more than $10/hr**, not only for obviously large changes.
+
+## 2026-08-05 later still — Domino MLOps integration: real Experiment Manager logging + a real Model Registry entry
+
+`models/tier0-historical/entrypoint.py` now calls Domino's Experiment
+Manager (MLflow-backed) and registers a model version, best-effort (a
+tracking-server failure must never break the script's actual deliverable,
+the bulk-ingest HTTP round trip — wrapped in `log_to_experiment_manager()`,
+which returns `{}` on any failure, including `mlflow` being unavailable at
+all). Verified against the real, live Domino workspace (SSH tunnel from
+earlier in the day, confirmed still reachable) — not just written and
+assumed to work.
+
+**Confirmed empirically: `mlflow` (3.2.0) is pre-installed in this
+workspace's compute environment**, with `MLFLOW_TRACKING_URI` auto-
+injected — this is Domino's own platform integration, not a third-party
+dependency this script would have to vendor, so it doesn't violate the
+script's own "no install step" design the way a real statistics library
+would have.
+
+**Two real bugs, both found only by actually running this against the
+live instance, not by reading MLflow's docs:**
+1. `mlflow.register_model(model_uri=f"runs:/{run_id}/model", ...)` failed
+   with `"Unable to find a logged_model with artifact_path model under
+   run..."`. MLflow 3.x's `register_model()` now requires the artifact to
+   have been logged via the `log_model()` family (a real "logged model"
+   entity), which a plain `mlflow.log_artifact()` call — the correct
+   choice here, since the stand-in is a JSON note, not a framework model
+   — deliberately isn't. Fixed by dropping to the lower-level
+   `MlflowClient.create_model_version(source=..., run_id=...)`, which has
+   no such requirement.
+2. `create_model_version()` alone then failed with `RESOURCE_DOES_NOT_
+   EXIST: Registered Model ... not found` — unlike `mlflow.register_model()`,
+   this lower-level call does not create-or-get the parent registered
+   model. Fixed by calling `client.create_registered_model(name)` first,
+   catching `RESOURCE_ALREADY_EXISTS` explicitly (this function has no
+   create-or-get form either).
+
+**The result is real, verified against Domino's own platform API, not
+just MLflow's tracking server**: `GET /api/registeredmodels/v1` — empty
+for this entire project until today — now returns a real entry,
+`fathom-pdm-tier0-historical`, version 1, with full Domino-native
+provenance metadata (project id, git commit, hardware tier, run id). A
+throwaway debug registration made while diagnosing bug 1 above
+(`debug-model-2`) was deleted afterward; `fathom-pdm-tier0-historical` was
+left in place deliberately — it's exactly the artifact shape the real
+code path produces, not scratch, even though this particular version was
+created from a manual test call with synthetic predictions rather than a
+real scheduled Job run. **Worth being precise about what this does and
+doesn't prove**: a real model version now exists and PdM's `model_binding`
+mechanism could reference it for real, but the underlying "model" is still
+the same fit-free stand-in as always — nothing about tier 0's real
+Weibull MLE fit changed, and this version's `run_id` traces back to a
+manual verification call, not a real Domino Job execution.
+
+**Not done, and deliberately not re-tested**: actually exercising
+`POST /model-bindings` + `/activate` against this real
+`registry_model_version="1"`/`registry_model_uri="models:/fathom-pdm-
+tier0-historical/1"` pair. Skipped because it would not exercise new
+code — §5.6 says PdM only ever records what it's given, `CreateModel
+BindingRequest`'s fields are unvalidated-beyond-non-empty strings, and
+both real values are unremarkable strings of exactly the shape the
+existing `test_model_binding_e2e.py` suite already assumes. Confirmed by
+inspection, not by adding a redundant test.
+
+## 2026-08-05 later still — platform/gateway built (session/OIDC + pass-through proxy)
+
+Per the decision above ("build `platform/gateway` first"), the gateway is
+now a real, tested service — not scaffolding. `platform/gateway/src/
+fathom_gateway/`: `config.py`/`models.py` (`gateway_session` table, no
+schema qualification — its own DB, not PdM's), `oidc.py` (PKCE/state
+generation, `OidcClient` for Keycloak's authorization-code+token+revoke
+endpoints), `deps.py` (`current_gateway_session` — cookie-only, 404 on
+missing/expired; `verify_csrf` — double-submit, applied per-route),
+`api/v1/session.py` (`GET /session/login`, `GET /session/callback`,
+`GET /session`, `POST /session/logout`), `proxy.py` (DECISION G-3's
+openapi.json-driven pass-through route generator — no catch-all), and
+`main.py` (the assembly point, mirroring PdM's own `create_app()` pattern
+minus outbox/broker, which this service has neither of). A real Alembic
+migration (`20260805165723_gateway_gateway_initial_schema.py`) creates
+`gateway_session` + `idempotency_keys`, round-tripped upgrade→downgrade→
+upgrade against real Postgres. `services/pdm/openapi.json` was generated
+this pass too (`main.py --emit-openapi`), a prerequisite the route
+generator reads at startup.
+
+**Real bugs found, same discipline as every other entry in this file —
+by running the thing, not by re-reading the code:**
+
+1. **SQLite silently drops tzinfo on a `DateTime(timezone=True)` round
+   trip**, caught by `current_gateway_session`'s own expiry check
+   crashing with `TypeError: can't compare offset-naive and
+   offset-aware datetimes` the first time a seeded session row was read
+   back. Production Postgres/asyncpg is unaffected (same shape as PdM's
+   own bug #5) — fixed with a documented SQLite-only guard in `deps.py`.
+2. **PdM, this vertical slice's only real upstream, never checks an
+   `Authorization` header at all** — `fathom_py_common.authz
+   .current_principal` (the placeholder every domain service actually
+   runs) reads a raw `X-Fathom-Principal` header instead. The proxy's
+   first draft forwarded a bearer token, which PdM would have silently
+   ignored end-to-end (never caught without hitting a real PdM). Fixed
+   by decoding the access token's own `sub` claim (no signature check —
+   the token came from Keycloak directly over the confidential-client
+   channel, never presented by an untrusted caller at this point) and
+   forwarding it as `X-Fathom-Principal`, matching PdM's real contract —
+   see `oidc.py::principal_id_from_access_token`'s docstring.
+3. **A real, reproducible testcontainers/Keycloak gotcha, not documented
+   anywhere upstream**: provisioning a realm/client/user via
+   `KeycloakAdmin`'s REST API at container runtime produces a client the
+   admin API itself considers fully valid (`enabled: true`, correct
+   `redirectUris`/protocol) but the user-facing
+   `/protocol/openid-connect/auth` endpoint still rejects with
+   `error=client_not_found`, every time — reproduced identically on both
+   Keycloak 25.0.4 and 23.0.7. Realm **import at container startup**
+   (`with_realm_import_file`) does not have this problem. Fixed by
+   switching provisioning method entirely (`tests/integration/fixtures/
+   fathom-realm.json`), not by retrying/working around the symptom.
+4. **`POST /session/logout` genuinely requires an `Idempotency-Key`**
+   (it's `state-changing`, per 09 §8.1's general rule) — caught by the
+   e2e test's own first attempt 400ing, not a code bug; the test was
+   fixed to send the header, matching every other state-changing
+   operation in this corpus.
+
+**Real tests, both against the genuine article, not mocks:**
+- `tests/integration/test_passthrough_proxy_e2e.py` — a real PdM
+  instance, started as an actual `uvicorn` subprocess (its own event
+  loop, its own file-backed SQLite so the separate schema-setup step and
+  the subprocess can share state — in-memory SQLite can't cross a
+  process boundary), reached through the gateway's generated
+  pass-through router over a real socket. Proves routing → session
+  lookup → principal-header substitution → PdM's own real business logic
+  (a real 404 with PdM's own problem `type`) → relayed back unmodified.
+- `tests/integration/test_session_login_e2e.py` — the full
+  login → real Keycloak login form → callback → whoami → logout
+  lifecycle, against a real `testcontainers.community.keycloak
+  .KeycloakContainer`. The login-form POST is screen-scraped with a
+  plain regex (proportionate for reaching an OSS product's own login
+  page in a test fixture, not a maintained integration surface).
+
+4 tests passing, `ruff check`/`ruff format --check` clean across
+`platform/gateway/src` and `tests/`. Root `pyproject.toml` gained one
+new per-file-ignore (`S603`/`S106` for `**/tests/integration/*` —
+subprocess argv and "passwords" in integration-test fixtures are always
+fixed, in-repo, throwaway literals, checked by hand before ignoring).
+
+**Still not done for `platform/gateway`** (named gaps, not silently
+folded in): no Dockerfile/Helm chart yet (PdM's own chart is the
+template to follow); `GET /session`'s identity block is a placeholder
+(session_id + expiry only — the real `fathom.identity` shape needs
+decoding the access token's ABAC claims, 31-auth.md §3.2, not built);
+the pass-through router doesn't declare individual OpenAPI `Parameter`
+objects for path/query params (functionally fine since `docs_url` is
+disabled everywhere, but worth fixing if this service's own OpenAPI
+document ever feeds a codegen step); no production Vault/OIDC values
+wired anywhere (every test uses a throwaway realm/client/secret). Next
+real step per the architecture's own dependency order: `apps/web` (the
+operator UI) can now be built against a real, working BFF instead of a
+throwaway auth shim.
+
 ## Where to find more context
 
 - `git log --oneline` — every commit this session (and the many before it)

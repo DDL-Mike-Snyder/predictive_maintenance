@@ -1,0 +1,1273 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "FATHOM -- Predictive Maintenance",
+    "version": "1.0"
+  },
+  "paths": {
+    "/api/v1/pdm/scoring-runs/{scoring_run_id}/predictions": {
+      "post": {
+        "tags": [
+          "predictions"
+        ],
+        "summary": "Bulk Ingest",
+        "operationId": "pdm_bulk_ingest",
+        "parameters": [
+          {
+            "name": "scoring_run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Scoring Run Id"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "name": "X-Fathom-Principal",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fathom-Principal"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BulkPredictionIngestRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkPredictionIngestResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "x-substitution": "required",
+        "x-side-effects": "state-changing",
+        "x-fathom-aggregate": "prediction"
+      }
+    },
+    "/api/v1/pdm/predictions/{prediction_id}": {
+      "get": {
+        "tags": [
+          "predictions"
+        ],
+        "summary": "Get Prediction",
+        "operationId": "pdm_get_prediction",
+        "parameters": [
+          {
+            "name": "prediction_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Prediction Id"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "name": "X-Fathom-Principal",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fathom-Principal"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Pdm Get Prediction"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "x-substitution": "required",
+        "x-side-effects": "none",
+        "x-fathom-aggregate": "prediction"
+      }
+    },
+    "/api/v1/pdm/scoring-runs": {
+      "post": {
+        "tags": [
+          "scoring-runs"
+        ],
+        "summary": "Create Scoring Run",
+        "operationId": "pdm_create_scoring_run",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "name": "X-Fathom-Principal",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fathom-Principal"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateScoringRunRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScoringRunResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "x-substitution": "required",
+        "x-side-effects": "none",
+        "x-agent-eligible": true,
+        "x-fathom-idempotency-required": true
+      }
+    },
+    "/api/v1/pdm/criticality": {
+      "get": {
+        "tags": [
+          "criticality"
+        ],
+        "summary": "Get Criticality",
+        "operationId": "pdm_get_criticality",
+        "parameters": [
+          {
+            "name": "niin",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Niin"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "name": "X-Fathom-Principal",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fathom-Principal"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Pdm Get Criticality"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "x-substitution": "required",
+        "x-side-effects": "none",
+        "x-fathom-aggregate": "criticality_assessment"
+      }
+    },
+    "/api/v1/pdm/expected-consequence": {
+      "post": {
+        "tags": [
+          "decisions"
+        ],
+        "summary": "Compute Expected Consequence",
+        "operationId": "pdm_compute_expected_consequence",
+        "parameters": [
+          {
+            "name": "consequence_value",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "number",
+              "title": "Consequence Value"
+            }
+          },
+          {
+            "name": "consequence_band",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Consequence Band"
+            }
+          },
+          {
+            "name": "risk_posture",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/RiskPosture",
+              "default": "NEUTRAL"
+            }
+          },
+          {
+            "name": "operating_fraction",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "default": 0.667,
+              "title": "Operating Fraction"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "name": "X-Fathom-Principal",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fathom-Principal"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FailurePrediction"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExpectedConsequence"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "x-substitution": "required",
+        "x-side-effects": "none",
+        "x-agent-eligible": true
+      }
+    },
+    "/api/v1/pdm/model-bindings": {
+      "post": {
+        "tags": [
+          "model-bindings"
+        ],
+        "summary": "Create Model Binding",
+        "operationId": "pdm_create_model_binding",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "name": "X-Fathom-Principal",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fathom-Principal"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateModelBindingRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelBindingResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "x-substitution": "internal",
+        "x-side-effects": "state-changing",
+        "x-fathom-aggregate": "model_binding"
+      }
+    },
+    "/api/v1/pdm/model-bindings/{binding_id}/activate": {
+      "post": {
+        "tags": [
+          "model-bindings"
+        ],
+        "summary": "Activate Model Binding",
+        "operationId": "pdm_activate_model_binding",
+        "parameters": [
+          {
+            "name": "binding_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Binding Id"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "name": "X-Fathom-Principal",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fathom-Principal"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelBindingResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "x-substitution": "internal",
+        "x-side-effects": "state-changing",
+        "x-fathom-aggregate": "model_binding"
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Basis": {
+        "type": "string",
+        "enum": [
+          "item_conditional",
+          "class_rate_converted"
+        ],
+        "title": "Basis"
+      },
+      "BulkPredictionIngestRequest": {
+        "properties": {
+          "predictions": {
+            "items": {
+              "$ref": "#/components/schemas/FailurePrediction"
+            },
+            "type": "array",
+            "title": "Predictions"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "predictions"
+        ],
+        "title": "BulkPredictionIngestRequest",
+        "description": "22-pdm.md \u00a72.5: 'The bulk ingest schema does NOT contain\n`serving_class` -- a caller cannot set it, cannot override it.'"
+      },
+      "BulkPredictionIngestResult": {
+        "properties": {
+          "scoring_run_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Scoring Run Id"
+          },
+          "predictions_written": {
+            "type": "integer",
+            "title": "Predictions Written"
+          },
+          "predictions_rejected": {
+            "type": "integer",
+            "title": "Predictions Rejected"
+          },
+          "rejection_summary": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Rejection Summary",
+            "default": []
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "scoring_run_id",
+          "predictions_written",
+          "predictions_rejected"
+        ],
+        "title": "BulkPredictionIngestResult"
+      },
+      "ContributingFactor": {
+        "properties": {
+          "factor": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Factor"
+          },
+          "contribution": {
+            "type": "number",
+            "title": "Contribution"
+          },
+          "attribution_method": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Attribution Method"
+          },
+          "stability": {
+            "type": "number",
+            "title": "Stability",
+            "description": "Rank stability across runs or bootstrap."
+          },
+          "observation_ref": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Observation Ref",
+            "description": "Points at a feature observation, NOT at itself."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "factor",
+          "contribution",
+          "attribution_method",
+          "stability",
+          "observation_ref"
+        ],
+        "title": "ContributingFactor",
+        "description": "Renamed from `drivers` [D23]. A causal statement must cite an\nadjudicated Failure Intelligence hypothesis -- this is never one."
+      },
+      "CreateModelBindingRequest": {
+        "properties": {
+          "tier": {
+            "type": "integer",
+            "title": "Tier"
+          },
+          "equipment_family": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Equipment Family"
+          },
+          "taxonomy_version": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Taxonomy Version"
+          },
+          "registry_model_version": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Registry Model Version"
+          },
+          "registry_model_uri": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Registry Model Uri"
+          },
+          "approval_ref": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Approval Ref"
+          },
+          "label_set_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Label Set Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "tier",
+          "equipment_family",
+          "taxonomy_version",
+          "registry_model_version",
+          "registry_model_uri",
+          "approval_ref",
+          "label_set_id"
+        ],
+        "title": "CreateModelBindingRequest"
+      },
+      "CreateScoringRunRequest": {
+        "properties": {
+          "stratum": {
+            "type": "string",
+            "enum": [
+              "operational",
+              "holdout_research"
+            ],
+            "title": "Stratum"
+          },
+          "scope": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Scope"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "stratum",
+          "scope"
+        ],
+        "title": "CreateScoringRunRequest"
+      },
+      "ExpectedConsequence": {
+        "properties": {
+          "p_event_horizon": {
+            "type": "number",
+            "title": "P Event Horizon",
+            "description": "Probability of the event within the horizon, on a COMMON basis."
+          },
+          "p_event_lower": {
+            "type": "number",
+            "title": "P Event Lower",
+            "description": "Epistemic interval, widened by fallback_level and cell size."
+          },
+          "p_event_upper": {
+            "type": "number",
+            "title": "P Event Upper"
+          },
+          "basis": {
+            "$ref": "#/components/schemas/Basis"
+          },
+          "consequence_value": {
+            "type": "number",
+            "title": "Consequence Value"
+          },
+          "expected_consequence": {
+            "type": "number",
+            "title": "Expected Consequence",
+            "description": "THE only rankable quantity."
+          },
+          "timing_basis": {
+            "$ref": "#/components/schemas/TimingBasis"
+          },
+          "timing_p10": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timing P10",
+            "description": "None unless timing_basis is rul_quantiles."
+          },
+          "timing_p50": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timing P50"
+          },
+          "conversion_version": {
+            "type": "string",
+            "title": "Conversion Version"
+          },
+          "inputs_digest": {
+            "type": "string",
+            "title": "Inputs Digest"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "p_event_horizon",
+          "p_event_lower",
+          "p_event_upper",
+          "basis",
+          "consequence_value",
+          "expected_consequence",
+          "timing_basis",
+          "conversion_version",
+          "inputs_digest"
+        ],
+        "title": "ExpectedConsequence"
+      },
+      "FailurePrediction": {
+        "properties": {
+          "asset_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Asset Id"
+          },
+          "installed_item_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Installed Item Id"
+          },
+          "position_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Position Id"
+          },
+          "niin": {
+            "type": "string",
+            "pattern": "^(\\d{9}|[A-Z]{2}[A-Z0-9]{7})$",
+            "title": "Niin"
+          },
+          "equipment_family": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Equipment Family"
+          },
+          "baseline_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Baseline Id"
+          },
+          "baseline_epoch": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Baseline Epoch"
+          },
+          "horizon_days": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Horizon Days"
+          },
+          "p_failure": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 1.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P Failure",
+            "description": "NULL when calibration_population < 50. A predicted probability that cannot be calibrated must not be emitted merely because the field exists; omission is the honest signal."
+          },
+          "reference_class": {
+            "$ref": "#/components/schemas/ReferenceClass"
+          },
+          "sharpness": {
+            "type": "number",
+            "title": "Sharpness",
+            "description": "Dispersion relative to the reference-class base rate."
+          },
+          "calibration_population": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Calibration Population"
+          },
+          "rul": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Rul"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Omitted where not item-conditional."
+          },
+          "population_hazard_rate": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Population Hazard Rate",
+            "description": "Emitted INSTEAD OF `rul` for non-item reference classes."
+          },
+          "confidence": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Confidence",
+            "description": "Sharpness-and-fit confidence only."
+          },
+          "fallback_level": {
+            "type": "integer",
+            "maximum": 4.0,
+            "minimum": 0.0,
+            "title": "Fallback Level",
+            "description": "Cold-start depth, NOT folded into confidence."
+          },
+          "tier": {
+            "type": "integer",
+            "maximum": 3.0,
+            "minimum": 0.0,
+            "title": "Tier",
+            "description": "Transparency only. Never branch on this -- FTH006."
+          },
+          "contributing_factors": {
+            "items": {
+              "$ref": "#/components/schemas/ContributingFactor"
+            },
+            "type": "array",
+            "title": "Contributing Factors",
+            "default": []
+          },
+          "model_version": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Model Version"
+          },
+          "scoring_run_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Scoring Run Id"
+          },
+          "computed_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Computed At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "asset_id",
+          "installed_item_id",
+          "position_id",
+          "niin",
+          "equipment_family",
+          "baseline_id",
+          "baseline_epoch",
+          "horizon_days",
+          "reference_class",
+          "sharpness",
+          "confidence",
+          "fallback_level",
+          "tier",
+          "model_version",
+          "scoring_run_id",
+          "computed_at"
+        ],
+        "title": "FailurePrediction"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "ModelBindingResponse": {
+        "properties": {
+          "binding_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Binding Id"
+          },
+          "tier": {
+            "type": "integer",
+            "title": "Tier"
+          },
+          "equipment_family": {
+            "type": "string",
+            "title": "Equipment Family"
+          },
+          "taxonomy_version": {
+            "type": "string",
+            "title": "Taxonomy Version"
+          },
+          "registry_model_version": {
+            "type": "string",
+            "title": "Registry Model Version"
+          },
+          "registry_model_uri": {
+            "type": "string",
+            "title": "Registry Model Uri"
+          },
+          "approval_ref": {
+            "type": "string",
+            "title": "Approval Ref"
+          },
+          "label_set_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Label Set Id"
+          },
+          "censoring_correction": {
+            "type": "string",
+            "title": "Censoring Correction"
+          },
+          "activated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Activated At"
+          },
+          "deactivated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deactivated At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "binding_id",
+          "tier",
+          "equipment_family",
+          "taxonomy_version",
+          "registry_model_version",
+          "registry_model_uri",
+          "approval_ref",
+          "label_set_id",
+          "censoring_correction",
+          "activated_at",
+          "deactivated_at"
+        ],
+        "title": "ModelBindingResponse"
+      },
+      "ReferenceClass": {
+        "type": "string",
+        "enum": [
+          "item",
+          "niin_fleet",
+          "equipment_family",
+          "class_estimate"
+        ],
+        "title": "ReferenceClass"
+      },
+      "RiskPosture": {
+        "type": "string",
+        "enum": [
+          "NEUTRAL",
+          "AVERSE"
+        ],
+        "title": "RiskPosture",
+        "description": "[PLACEHOLDER P-17] Program decision, not an analytic one -- 22-pdm.md\n\u00a77.4: \"it encodes how much the Navy is willing to spend to avoid an\nunlikely severe failure.\" Default AVERSE for the highest consequence\nband, NEUTRAL otherwise."
+      },
+      "Rul": {
+        "properties": {
+          "p10": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "P10"
+          },
+          "p50": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "P50"
+          },
+          "p90": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "P90"
+          },
+          "unit": {
+            "$ref": "#/components/schemas/RulUnit"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "p10",
+          "p50",
+          "p90",
+          "unit"
+        ],
+        "title": "Rul"
+      },
+      "RulUnit": {
+        "type": "string",
+        "enum": [
+          "days",
+          "steaming_hours",
+          "eoh",
+          "cycles",
+          "sorties",
+          "dives"
+        ],
+        "title": "RulUnit"
+      },
+      "ScoringRunResponse": {
+        "properties": {
+          "scoring_run_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Scoring Run Id"
+          },
+          "stratum": {
+            "type": "string",
+            "title": "Stratum"
+          },
+          "trigger": {
+            "type": "string",
+            "title": "Trigger"
+          },
+          "scope": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Scope"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "feature_definition_time": {
+            "type": "string",
+            "title": "Feature Definition Time"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "scoring_run_id",
+          "stratum",
+          "trigger",
+          "scope",
+          "status",
+          "feature_definition_time"
+        ],
+        "title": "ScoringRunResponse"
+      },
+      "TimingBasis": {
+        "type": "string",
+        "enum": [
+          "rul_quantiles",
+          "mean_residual_life_from_rate",
+          "none"
+        ],
+        "title": "TimingBasis"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  }
+}

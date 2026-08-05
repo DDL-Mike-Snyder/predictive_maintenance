@@ -48,6 +48,7 @@ class OperationDeclaration:
     aggregate: str | None = None  # for the §4 changed_since completeness check
     singleton_carveout: str | None = None  # §4 naming carve-out justification
     idempotency_required: bool = False  # see `operation()`'s own docstring
+    idempotency_exempt: bool = False  # inverse escape hatch, see `operation()`'s docstring
 
 
 REGISTRY: dict[str, OperationDeclaration] = {}
@@ -64,6 +65,7 @@ def operation(
     aggregate: str | None = None,
     singleton_carveout: str | None = None,
     idempotency_required: bool = False,
+    idempotency_exempt: bool = False,
 ) -> Callable[[F], F]:
     """Declare an operation's contract annotations. Document 03 §4.1, §8.1.
 
@@ -79,12 +81,28 @@ def operation(
     still mints a real row, so blind retries are not safe). Do not set this
     on a normal `none` operation -- that would silently make retries of an
     ordinary read-only-ish endpoint require a header no caller expects.
+
+    `idempotency_exempt` is the INVERSE escape hatch, for the rare
+    `state-changing`/`proposal-only` operation the general rule would
+    otherwise catch but that structurally cannot carry the header --
+    30-gateway.md §8.1.2's `GET /session/callback` is the first: it is the
+    OAuth `redirect_uri` a browser reaches via a 302 it is following, not
+    an XHR call that could attach a custom header, and its own spec text
+    says so explicitly ("09 §5.3's mandate is scoped to exactly those
+    reachability classes" -- callback is reachable from neither an agent,
+    a bulk write, nor an edge sync). Setting both flags on one operation
+    is a contradiction and raises.
     """
     if agent_eligible and not side_effects.agent_eligible_permitted:
         raise ValueError(
             f"operation {operation_id!r}: `x-agent-eligible` may be asserted only "
             f"where `x-side-effects` is `none` or `proposal-only`; got "
             f"{side_effects.value!r}. Document 03 §8.1 and §15 obligation 8."
+        )
+    if idempotency_required and idempotency_exempt:
+        raise ValueError(
+            f"operation {operation_id!r}: `idempotency_required` and "
+            f"`idempotency_exempt` are mutually exclusive."
         )
     if operation_id in REGISTRY:
         raise ValueError(
@@ -103,6 +121,7 @@ def operation(
         aggregate=aggregate,
         singleton_carveout=singleton_carveout,
         idempotency_required=idempotency_required,
+        idempotency_exempt=idempotency_exempt,
     )
     REGISTRY[operation_id] = declaration
 
@@ -130,4 +149,6 @@ def operation_extra(**kwargs: Any) -> dict[str, Any]:
         extra["x-fathom-singleton-carveout"] = declaration.singleton_carveout
     if declaration.idempotency_required:
         extra["x-fathom-idempotency-required"] = True
+    if declaration.idempotency_exempt:
+        extra["x-fathom-idempotency-exempt"] = True
     return extra

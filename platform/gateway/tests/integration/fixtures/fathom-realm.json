@@ -1,0 +1,28 @@
+{
+  "realm": "fathom",
+  "enabled": true,
+  "sslRequired": "none",
+  "clients": [
+    {
+      "clientId": "gateway",
+      "secret": "gateway-test-secret",
+      "publicClient": false,
+      "protocol": "openid-connect",
+      "redirectUris": ["https://gateway.test/api/v1/gateway/session/callback"],
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "enabled": true
+    }
+  ],
+  "users": [
+    {
+      "username": "testuser",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "testuser@fathom.test",
+      "firstName": "Test",
+      "lastName": "User",
+      "credentials": [{"type": "password", "value": "testpass", "temporary": false}]
+    }
+  ]
+}
