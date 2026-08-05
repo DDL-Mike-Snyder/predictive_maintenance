@@ -1483,6 +1483,25 @@ class EventEnvelope(FathomModel):
                 )
             return self
 
+        # [AMENDMENT] scope=installed_item denormalizes asset_id alongside
+        # installed_item_id -- a real defect this closes: 11-outbox-sync-library.md's
+        # partition-key derivation is "asset_id when scope=asset, otherwise the
+        # event's own scope identifier," but 20-registry.md's own DO-NOT 37 forbids
+        # partitioning installed-item events on installed_item_id at all (a removal
+        # and its replacement's install would land in different partitions,
+        # reordering at the consumer). With installed_item_id as the ONLY subject
+        # field, there was no asset_id anywhere in the envelope for the derivation
+        # to fall back to. Both fields are now required together for this one scope.
+        if self.scope is EventScope.INSTALLED_ITEM:
+            if populated != {"installed_item_id", "asset_id"}:
+                raise ValueError(
+                    "scope='installed_item' requires both `subject.installed_item_id` "
+                    "and `subject.asset_id` (11-outbox-sync-library.md §5.1's partition "
+                    "derivation depends on the latter); got "
+                    f"{sorted(populated) or 'nothing'}"
+                )
+            return self
+
         if populated != {expected}:
             if populated == {"mission_id"}:
                 raise ValueError(

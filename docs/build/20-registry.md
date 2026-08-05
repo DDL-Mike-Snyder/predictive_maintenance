@@ -2692,7 +2692,9 @@ async def publish_baseline_changed(
         aggregate_id=str(payload.baseline_id),
         scope=EventScope.ASSET,
         subject=EventSubject(asset_id=payload.asset_id),
-        partition_key=str(payload.asset_id),
+        # [AMENDMENT] partition_key removed -- 11-outbox-sync-library.md §2.3: "partition_key
+        # is not a parameter -- it is derived, never supplied," from scope/subject. emit()
+        # has no such keyword; this call raised TypeError as originally written.
         compaction_key=str(payload.baseline_id),      # MUST differ from partition_key [D5]
         payload=payload,
         classification=classification,
@@ -2726,8 +2728,15 @@ async def publish_installed_item_installed(
         aggregate="installed_item",
         aggregate_id=str(payload.installed_item.installed_item_id),
         scope=EventScope.INSTALLED_ITEM,
-        subject=EventSubject(installed_item_id=payload.installed_item.installed_item_id),
-        partition_key=str(payload.asset_id),          # §7.1, DECISION
+        subject=EventSubject(
+            installed_item_id=payload.installed_item.installed_item_id,
+            asset_id=payload.asset_id,   # [AMENDMENT] required alongside installed_item_id for
+        ),                               # this scope (10 §5.4) -- 11 §5.1's partition derivation
+                                          # needs it to honour DO-NOT 37 (never partition on
+                                          # installed_item_id: a removal and its replacement's
+                                          # install would reorder at the consumer)
+        # [AMENDMENT] partition_key parameter removed -- derived from scope/subject (11 §2.3),
+        # not a keyword emit() accepts.
         compaction_key=str(payload.installed_item.installed_item_id),
         payload=payload,
         classification=classification,
