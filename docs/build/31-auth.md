@@ -1147,19 +1147,33 @@ deny contains "clearance_level_insufficient" if {
         level_rank[input.principal.clearance.level]
 }
 
-deny contains sprintf("compartment_not_held: %v", [missing]) if {
+# [AMENDMENT — real security defect, found in adversarial review and closed here.]
+# The three rules below previously interpolated the actual missing compartment,
+# dissemination control, or CUI category set into the denial reason string
+# (`sprintf("compartment_not_held: %v", [missing])`), which is returned verbatim
+# in `decision.reasons` (§6.4 below) to the denied caller. This is the same
+# metrics-based existence oracle §6.2's amendment already closed for
+# `fathom_authz_denials_total{reason}` — "no label here may vary with which
+# specific resource or compartment was probed" — applied to a channel that
+# amendment never touched: the response BODY. A caller without compartment X
+# clearance, denied read access to a resource, would learn "compartment_not_held:
+# [X]" directly — disclosing the specific compartment/CUI-category a resource
+# carries to a principal not cleared to know it exists. Fixed the same way,
+# with the same closed, coarse vocabulary §6.2 already established: the reason
+# names the CATEGORY of denial, never the specific value that triggered it.
+deny contains "compartment_not_held" if {
     missing := {c | some c in input.resource.classification.compartments
                     not c in input.principal.clearance.compartments}
     count(missing) > 0
 }
 
-deny contains sprintf("dissemination_control_unsatisfied: %v", [unmet]) if {
+deny contains "dissemination_control_unsatisfied" if {
     unmet := {d | some d in input.resource.classification.dissemination
                   not d in input.principal.clearance.caveats}
     count(unmet) > 0
 }
 
-deny contains sprintf("cui_category_not_authorized: %v", [unmet]) if {
+deny contains "cui_category_not_authorized" if {
     unmet := {k | some k in input.resource.classification.cui_categories
                   not k in input.principal.clearance.cui_categories_authorized}
     count(unmet) > 0
@@ -1370,7 +1384,7 @@ Four tiers per document 09 §4.7, plus the shared conformance suite at `packages
 | T-7 | **Authority matrix exhaustiveness.** Property test over the full cross-product of 03 §7.2.1's `kind` × `blast_radius` × **the six classes** (`security_officer` included — **[AMENDMENT]** this test previously iterated only the pre-amendment-03-1 five, which meant every `purge`/`rewrap` cell, the only cells `security_officer` appears in, was untested by the corpus's own exhaustiveness check) | Every cell's allow/deny matches the table exactly; an uncovered cell **fails**; `not_applicable` cells deny; `any_of` cells accept either class; **no implicit hierarchy** — `fleet_authority` is denied on `anomaly_tag`; `purge`/`rewrap`'s dual-control and counter-signature cells (§6.4) are exercised, not merely present |
 | T-8 | **Dual control.** Class and fleet scope, and external-legal-effect kinds | Required; second adjudicator must differ from the first; the second signature is checked against the matrix's `second_signature_any_of` (same-role `any_of` by default, `counter_signature_class` for `purge`/`rewrap`) for **every** kind requiring dual control, not `interval_change` alone |
 | T-9 | **Re-validation.** Adjudicate a proposal whose `blast_radius` was corrected after creation | `authority_class_field_stale` denial — 03 §7.2's *"[r]e-validation at approval is mandatory"* |
-| T-10 | **Classification.** Level dominance, missing compartment, unmet dissemination control, unauthorized CUI category, retired `FOUO` marking, above-deployment-level | Each denied with its own reason string |
+| T-10 | **Classification.** Level dominance, missing compartment, unmet dissemination control, unauthorized CUI category, retired `FOUO` marking, above-deployment-level | Each denied with its own reason string, and **[AMENDMENT]** the string is a coarse category only (`compartment_not_held`, `dissemination_control_unsatisfied`, `cui_category_not_authorized`) — asserted explicitly to contain no compartment name, CUI category, or dissemination-control value, so a 403 response cannot disclose to a denied caller which specific compartment a resource carries |
 | T-11 | **No post-filtering.** For `read`/`retrieve` the decision returns a `classification_predicate` and the service's emitted SQL / vector query contains it | D13, 09 §9.4 item 22. Asserted on the emitted query, not on the result set — a passing result-set assertion is exactly what a post-filter would produce |
 | T-12 | **Declared-scope containment.** An autonomous token reading outside its assets, outside its aggregates, or above its clearance ceiling | `403 …:outside-declared-scope` / `clearance_exceeds_accountable_owner` |
 | T-13 | **Grant validation.** `POST /autonomous-grants` without `accountable_owner`, with a disabled owner, with an empty `declared_scope`, and with `fleet: true` and one signature | Each refused with its own problem type |
