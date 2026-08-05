@@ -448,6 +448,12 @@ CREATE TABLE pdm.calibration_record (
     reference_class   pdm.reference_class NOT NULL,
     taxonomy_version  text NOT NULL,
     stratum           text NOT NULL CHECK (stratum IN ('treated','policy_frozen')),
+    -- [AMENDMENT] compartments is part of the cell key per §6.1's compartment-
+    -- partitioning fix, but was never added to this table when that fix
+    -- landed -- caught while implementing this table for real. Every
+    -- contributing label_observation's compartments is a subset of this
+    -- cell's own; the baseline cell has compartments = '{}'.
+    compartments      text[] NOT NULL DEFAULT '{}',
     -- population and power
     calibration_population int NOT NULL,          -- resolved item-horizon observations. THE gate input
     effective_sample_size  numeric NOT NULL,      -- IPCW ESS. Recorded, alarmed, NOT a second gate (§6.2)
@@ -468,7 +474,7 @@ CREATE TABLE pdm.calibration_record (
     computed_at       timestamptz NOT NULL,
     window_start timestamptz NOT NULL, window_end timestamptz NOT NULL,
     classification    jsonb NOT NULL,
-    UNIQUE (tier, equipment_family, horizon_days, reference_class, taxonomy_version, stratum, window_end)
+    UNIQUE (tier, equipment_family, horizon_days, reference_class, taxonomy_version, stratum, compartments, window_end)
 );
 ```
 
