@@ -184,7 +184,7 @@ The two differ in exactly one respect, and it is the respect that matters:
 | Spillage remediation | Purge the low-side copies; shred the canonical record | **Re-wrap upward and contain** (§5.10). The record is retained and readable to appropriately cleared holders; every lower-side copy is shredded |
 | Who can order it | `security_officer` under dual control (§6.1) | The same, and the outcome is *never* destruction of the canonical record |
 
-**The re-wrap is the whole resolution of the legal-immutability tension, and it deserves to be said plainly:** reclassifying a record upward is a change to *which key wraps its data-encryption key*, not a change to the record. The ciphertext is untouched, the signature still verifies, the hash chain is intact, and the record has become unreadable to everyone below the new level. A record can therefore be *both* legally immutable *and* remediable, which document 05 D15 assumes to be impossible and which is the reason it was dispositioned as a blocker.
+**The re-wrap is the whole resolution of the legal-immutability tension, and it deserves to be said plainly:** reclassifying a record upward is a change to *which key wraps its data-encryption key*, not a change to the record's plaintext. **The ciphertext bytes themselves do change** — §5.6's AAD binds `key_class`, `purge_group_id`, and `classification` into the GCM authentication tag, so a record whose classification moves cannot keep its old ciphertext; §5.10 details the decrypt-under-the-old-binding, re-encrypt-under-the-new-binding procedure this requires. What does *not* change, and could not without breaking non-repudiation, is the plaintext, the producer signature, `payload_hmac`, and the hash chain — none of which is computed over `key_class`, `purge_group_id`, or `classification` (§8.1, §8.4) — so all three still verify unmodified, and the record has become unreadable to everyone below the new level. A record can therefore be *both* legally immutable *and* remediable, which document 05 D15 assumes to be impossible and which is the reason it was dispositioned as a blocker.
 
 **The declaration, per record type:**
 
@@ -353,8 +353,10 @@ CREATE TABLE agent_answer (
   claims                jsonb NOT NULL,         -- the emitted claims, each with its citation refs
   refusal_reason       text   NULL,             -- set iff the agent refused rather than answered
   classification       jsonb  NOT NULL,         -- union of every cited input's label, inherited_from populated
-  trace_ref            text   NOT NULL,
-  correlation_id       text   NOT NULL,
+  trace_ref            text   NULL,             -- **[CORRECTED]** was NOT NULL; audit_record.trace_ref
+                                                  -- (§4.2) is nullable -- not every turn has a Domino trace
+  correlation_id       uuid   NOT NULL,          -- **[CORRECTED]** was `text`; audit_record.correlation_id
+                                                  -- (§4.2) is `uuid`, and this column must match it to join
 
   CONSTRAINT aa_answer_or_refusal CHECK (
     (claims != '[]'::jsonb AND refusal_reason IS NULL) OR
@@ -562,16 +564,25 @@ def key_class(label: ClassificationLabel) -> str:
 The purge group is **the unit of independently destroyable content**. Choosing it is the central design decision of this document, because it fixes both the granularity of remediation and the cost of key management.
 
 ```python
-def purge_group_id(record: AuditRecord) -> UUID:
+def purge_group_id(record: AuditRecord, key_class: str) -> UUID:
     """[ESTABLISHED HERE] Deterministic UUIDv5 over the group selector.
+    `key_class` is passed explicitly, separately from `record.key_class`, because
+    §5.10's re-wrap must compute the group for a NOT-YET-COMMITTED classification
+    before the row is updated -- the function never reads `record.key_class` itself.
 
     Group selector, by record class:
 
       A. DOMAIN-PAYLOAD RECORDS  (event_ingest, tool_invocation, prediction_recorded,
          and every record whose payload can carry mislabeled content)
-             ("record", record_id)
-         -> ONE PURGE GROUP PER RECORD. Maximum granularity: a single logical
-            record can be destroyed with zero collateral.
+             ("record", record_id, key_class)
+         -> ONE PURGE GROUP PER (RECORD, KEY_CLASS). Maximum granularity: a single
+            logical record, at its CURRENT classification, can be destroyed with
+            zero collateral. `key_class` is part of the selector, not decoration:
+            §5.10's re-wrap must be able to destroy the OLD classification's
+            low-side copies without touching the record it just re-encrypted
+            under the NEW classification. If the selector were `record_id` alone,
+            "old group" and "new group" would be THE SAME group, and re-wrap's
+            own low-side shred would destroy the record it exists to save.
 
       B. ATTESTATION RECORDS  (sync_quality, clock steps)
              ("attestation", key_class, day_bucket(ingest_time))
@@ -625,7 +636,7 @@ class AuditWriter:
         #    INCLUDING sync_quality. Failure -> quarantine + audit, never a drop (§8.6).
         # 2. Countersign (§8.4) and extend the hash chain (§4.7), inside this transaction.
         # 3. key_class  := key_class(candidate.classification)          # §5.3
-        #    purge_group:= purge_group_id(candidate)                    # §5.4
+        #    purge_group:= purge_group_id(candidate, key_class)         # §5.4
         # 4. R-DEK := csprng(32)
         #    aad    := canonical(record_id, record_type, key_class, purge_group_id,
         #                        producer_slug, producer_node, producer_monotonic_seq,
@@ -664,6 +675,8 @@ Four rules:
 
 This is the purge primitive. Every store's purge in §6.3 ultimately reduces to it or to a physical deletion where physical deletion is genuinely possible.
 
+Invoked **once per distinct `purge_group_id`** found among the purge's `purge_target` rows (`SELECT DISTINCT purge_group_id FROM purge_target WHERE purge_id = :purge_id`) — a closure ordinarily spans several groups, one per (record, key_class) under §5.4 class A, so a purge with N distinct groups in its closure runs this procedure N times.
+
 ```
 PROCEDURE crypto_shred(purge_group_id, purge_id):
 
@@ -671,10 +684,11 @@ PROCEDURE crypto_shred(purge_group_id, purge_id):
                   and no record in the group is legally-immutable or under legal hold
                   (§4.1). Violation -> refuse; the purge FAILS, it does not partially apply.
 
- 2. RECORD FIRST  Write the purge_target rows for every record_id in the group, with
-                  record_type, classification LABEL, payload_hmac, and the record's
-                  dissemination rows. NOTHING is destroyed before the description of
-                  what is being destroyed is durable. (§6.6)
+ 2. RECORD FIRST  Confirm the purge_target rows for every record_id in this group, with
+                  purge_group_id, record_type, classification LABEL, payload_hmac,
+                  payload_hmac_key_id, and the record's per-holder dissemination rows
+                  (holder_slug, holder_node, holder_store). NOTHING is destroyed before
+                  the description of what is being destroyed is durable. (§6.6)
 
  3. DESTROY       vault.transit.destroy(shred_nonce(purge_group_id))
                   — a single operation inside the FIPS boundary, under HSM dual-control
@@ -714,29 +728,86 @@ Four independent proofs, all sealed into the purge certificate (§6.6). Independ
 
 Proof 2 is the one that turns the claim into evidence, and it is the reason `test_purge_certificate_records_unwrap_failures` (§12.2) is a Definition-of-Done item rather than a nice-to-have. A purge that produced no negative evidence is not a completed purge, and the certificate cannot be sealed without it.
 
-### 5.10 Re-wrap — reclassification without mutation
+### 5.10 Re-wrap — reclassification without content mutation
 
 For a `legally-immutable` record (§4.1), destruction is refused. The remediation is:
 
+**[CORRECTED — adversarial review found the previous version of this procedure unusable: it `UPDATE`d `key_class` and `classification` in place without re-encrypting, and both are bound into §5.6's AAD, so every subsequent GCM decrypt would recompute the AAD from the new column values and fail authentication against ciphertext sealed under the old ones — a re-wrapped, legally-immutable record became permanently undecryptable. The corrected procedure decrypts under the OLD binding and re-encrypts under the NEW one, exactly as any AAD-bound reclassification must.]**
+
 ```
-PROCEDURE rewrap(record_id, new_key_class, purge_id):
- 1. new_pg   := purge_group_id for the record under new_key_class
- 2. dek      := vault.transit.unwrap(old_pg_kek, wrapped_dek)      # inside the HSM session
- 3. new_wrap := vault.transit.wrap(new_pg_kek, dek); zeroize(dek)
- 4. append a REWRAP record (its own audit_record, legally-immutable) carrying
-    old_key_class, new_key_class, authority, purge_id
- 5. UPDATE audit_record SET wrapped_dek = :new_wrap, wrapped_dek_key_id = :new_id,
-           key_class = :new_key_class, rewrapped_from_key_class = :old
-     WHERE record_id = :id
- 6. destroy the OLD purge group's shred nonce  → every LOW-SIDE copy of that wrapped
-    DEK (backups, replicas, the low-side shore replica) becomes unwrappable
- 7. correct the stored ClassificationLabel via an APPEND-ONLY correction record; the
-    original label is retained, because a mislabeling is itself evidence (§6.6)
+PROCEDURE rewrap(record_id, corrected_classification, purge_id):
+ # new_key_class is DERIVED from corrected_classification via key_class() (§5.3) --
+ # it is never supplied independently. key_class is always a pure function of the
+ # label it is derived from, and this procedure does not create an exception.
+
+ 1. old       := SELECT key_class, purge_group_id, classification, wrapped_dek,
+                        wrapped_dek_key_id, payload_ciphertext
+                 FROM audit_record WHERE record_id = :record_id
+ 2. new_key_class := key_class(corrected_classification)                        # §5.3
+
+ 3. dek       := vault.transit.unwrap(pg_kek_handle(old.purge_group_id),
+                                       old.wrapped_dek)          # inside the HSM session,
+                                                                  # under the OLD (record_id,
+                                                                  # old.key_class) group
+ 4. old_aad   := canonical(record_id, record_type, old.key_class, old.purge_group_id,
+                           producer_slug, producer_node, producer_monotonic_seq,
+                           old.classification, immutability_class)
+ 5. plaintext := AES-256-GCM-decrypt(dek, old.payload_ciphertext, old_aad)
+                 # THE step the previous version skipped. A bare column UPDATE of
+                 # key_class/classification without first decrypting under the AAD
+                 # that was actually used at encryption time is exactly the defect
+                 # this replaces: every future read recomputes the AAD from the
+                 # CURRENT columns, and GCM authentication fails, silently and
+                 # permanently, against ciphertext sealed under the OLD ones.
+
+ 6. new_pg    := purge_group_id(record_id, new_key_class)        # §5.4 class A: one
+                 # group per (record, key_class) -- a genuinely DIFFERENT,
+                 # independently destructible group from old.purge_group_id. This
+                 # is what makes step 9 below safe: destroying the old group cannot
+                 # reach the record this procedure just re-encrypted under the new one.
+    new_dek   := csprng(32)                                       # a FRESH R-DEK
+    new_aad   := canonical(record_id, record_type, new_key_class, new_pg,
+                           producer_slug, producer_node, producer_monotonic_seq,
+                           corrected_classification, immutability_class)
+    new_ct    := AES-256-GCM-encrypt(new_dek, plaintext, new_aad)  # fresh nonce, §5.6's rule
+    zeroize(dek, new_dek, plaintext)
+
+ 7. new_wrap  := vault.transit.wrap(pg_kek_handle(new_pg), new_dek); zeroize(new_dek)
+
+ 8. append a REWRAP record (its own audit_record, legally-immutable) carrying
+    old.key_class, new_key_class, old.purge_group_id, new_pg, authority, purge_id
+
+ 9. UPDATE audit_record SET
+      payload_ciphertext       = :new_ct,
+      payload_aad_sha256       = :sha256(new_aad),
+      wrapped_dek              = :new_wrap,
+      wrapped_dek_key_id       = :new_id,
+      key_class                = :new_key_class,
+      classification           = :corrected_classification,
+      purge_group_id           = :new_pg,
+      rewrapped_from_key_class = :old.key_class
+    WHERE record_id = :record_id
+    -- payload_hmac, payload_hmac_key_id, producer_signature, admission_signature,
+    -- chain_prev_hash, and chain_hash are NOT in this list and are NEVER touched:
+    -- none of them is computed over key_class, purge_group_id, or classification
+    -- (§8.1's signed field set omits all three; §8.4's countersigned field set
+    -- excludes key_class and purge_group_id alongside wrapped_dek), so none of
+    -- them is invalidated by this UPDATE and none of them needs to change.
+
+10. append an APPEND-ONLY correction record naming the ORIGINAL classification as
+    mislabeling evidence (§6.6); it is retained THERE, not in `audit_record` itself,
+    because a mislabeling is itself evidence
+
+11. destroy the OLD group's shred nonce — the (record_id, old.key_class) group,
+    NOT (record_id, new_key_class) — so every LOW-SIDE copy of the OLD wrapped DEK
+    (backups, replicas, the low-side shore replica) becomes unwrappable. The NEW
+    group is a distinct, still-live HSM-resident group (step 6), so this cannot
+    reach the record the procedure just re-encrypted
 ```
 
-**Step 5 modifies key-wrapping metadata, not content.** The ciphertext, the `payload_hmac`, the producer signature, the admission countersignature, and the hash chain are all untouched and all still verify — because §4.7's chain covers the record header and the payload HMAC, and `wrapped_dek` is deliberately excluded from both the chain input and the signed field set of document 11 §10.2. That exclusion is a design requirement, not an accident: **the record's integrity must be independent of which key currently wraps it**, or reclassification and key rotation would both be indistinguishable from tampering.
+**Step 9 re-encrypts; it does not merely re-label.** The record's *plaintext* is untouched — that is what "reclassification, not modification" means — but the *ciphertext bytes* necessarily change, because §5.6's AAD binds `key_class`, `purge_group_id`, and `classification` into the GCM authentication tag. A design that changed those columns without regenerating the ciphertext under a matching AAD would look correct until the next read, then fail every time. What genuinely stays untouched — and this is the property that makes re-wrap non-repudiation-safe rather than merely convenient — is `payload_hmac`, the producer signature, the admission countersignature, and the hash chain, because none of them is computed over the fields that changed: §8.1's signed field set never included `key_class` or `classification`, and §8.4 now excludes `key_class` and `purge_group_id` from the admission-countersigned set for exactly this reason, joining `wrapped_dek`. **The record's integrity must be independent of which key currently wraps it and which purge group currently owns it**, or reclassification and key rotation would both be indistinguishable from tampering.
 
-Step 6 is why re-wrap is a real remediation and not a relabeling exercise: the *low-side* copies genuinely die, and the canonical record genuinely survives. **Shred low-side, re-wrap high-side.** This is also the correct handling of the routine case document 03 §13 describes — *"a mislabeled payload reaching a lower-side topic is a routine expected incident"* — because in that case the content is not itself illegitimate; it was in the wrong place.
+Step 11 is why re-wrap is a real remediation and not a relabeling exercise: the *low-side* copies genuinely die, and the canonical record genuinely survives under its own, independent, still-live group. **Shred low-side, re-wrap high-side.** This is also the correct handling of the routine case document 03 §13 describes — *"a mislabeled payload reaching a lower-side topic is a routine expected incident"* — because in that case the content is not itself illegitimate; it was in the wrong place.
 
 ### 5.11 Edge key custody
 
@@ -797,25 +868,59 @@ with `target_sub_app = audit`, published on `fathom.audit.proposal.v1` per docum
 
 **[AMENDMENT — real defect, found in adversarial review: `audit_record.purged_by` and `dissemination.purge_receipt_id` both `REFERENCES` these tables, and phase 3/phase 5 below both write to them by name, but no `CREATE TABLE` for any of the three existed anywhere in this document. The first migration referencing either foreign key fails outright.]**
 
+**[CORRECTED — two further defects found in adversarial review, both fixed below:]**
+
+**First**, `purge.purge_group_id uuid NOT NULL` assumed one purge group per purge. §5.4 class A says the opposite for domain-payload records — *one purge group per record* — so a single purge closure spanning several records ordinarily spans several distinct groups, and the column couldn't hold them. It also couldn't have been populated at phase 1 (REPORT, when the `purge` row is first created) regardless of shape, because group membership falls out of the phase-3 closure computation — the same reason `sealed_at` is nullable. The cleaner fix, given `purge_target` is already the phase-3 child table that enumerates the closure one row per target: move the group identifier there instead, as `purge_target.purge_group_id`, populated at the same INSERT that writes the rest of the row (so it never has the phase-1-vs-phase-3 timing problem `purge.purge_group_id` had, and needs no nullable interim state). `crypto_shred` (§5.8) is invoked once per **distinct** `purge_group_id` found in `purge_target` for a given `purge_id`, not once per purge.
+
+**Second**, `phase` could not represent `certified-partial`, `aborted`, or `pending-at-node` (§6.7), because those are outcomes of the protocol, not phases of it — the seven-phase names (`report`…`certify`) and the outcome names in §6.7's state diagram are two different dimensions that were folded into one column. Split, matching how the rest of this document (and `fathom_audit_purges_total{outcome}`, §13.3) already treats them as separate: `phase` tracks progress through the protocol steps; `state` tracks the purge's overall status. `phase` also gains `counter-sign` for phase 4a, which had no representation at all.
+
 ```sql
 CREATE TABLE purge (
   purge_id          uuid        PRIMARY KEY,   -- = the purge Proposal's own proposal_id (§6.1: "a purge is a Proposal")
-  purge_group_id    uuid        NOT NULL,      -- §5.4's shred handle for the sealed closure
-  phase             text        NOT NULL,      -- report | contain | enumerate | adjudicate | execute | verify | certify (§6.2)
+  phase             text        NOT NULL,      -- report | contain | enumerate | adjudicate
+                                                -- | counter-sign | execute | verify | certify (§6.2, §6.2 phase 4a)
+  state             text        NOT NULL DEFAULT 'proposed',
+                                                -- proposed | claimed | adjudicated | executing | verifying
+                                                -- | certified | certified-partial | aborted | refused
+                                                -- | pending-at-node (§6.2, §6.7's state diagram)
   sealed_at         timestamptz NULL,          -- set at phase 3 (ENUMERATE), never before
+  counter_signed_at timestamptz NULL,          -- set at phase 4a, class/fleet blast radius only
+  counter_signed_by text        NULL,          -- the THIRD, distinct fleet_authority signatory (§6.1, §6.2 phase 4a)
+  counter_signature bytea       NULL,          -- the fleet_authority counter-signature itself
   certificate_ref   text        NULL,          -- set at phase 7 (CERTIFY), §6.6
-  CONSTRAINT purge_certified_requires_seal CHECK (certificate_ref IS NULL OR sealed_at IS NOT NULL)
+  CONSTRAINT purge_certified_requires_seal CHECK (certificate_ref IS NULL OR sealed_at IS NOT NULL),
+  CONSTRAINT purge_counter_sign_pair CHECK (
+    (counter_signed_at IS NULL) = (counter_signature IS NULL) AND
+    (counter_signed_at IS NULL) = (counter_signed_by IS NULL))
+  -- Population of counter_signed_* is enforced by POST /purges/{id}/counter-sign
+  -- (§10.5), not by a DB-level blast-radius check: blast_radius lives on the
+  -- Proposal (03 §7.2), not on this table.
 );
 
 CREATE TABLE purge_target (
-  purge_id      uuid  NOT NULL REFERENCES purge(purge_id),
-  record_id     uuid  NOT NULL,
-  holder_slug   text  NOT NULL,   -- 03 §3.1 slug
-  holder_store  text  NOT NULL,   -- read-model / index / cache / object-store / trace name
-  destroyed_at  timestamptz NULL, -- set at phase 5 (EXECUTE), per §6.3's leaves-inward order
-  PRIMARY KEY (purge_id, record_id, holder_slug, holder_store)
+  purge_id        uuid  NOT NULL REFERENCES purge(purge_id),
+  record_id       uuid  NOT NULL,
+  purge_group_id  uuid  NOT NULL,   -- §5.4's shred handle for THIS record, at closure time.
+                                     -- Lives here, not on `purge`, because a closure spans
+                                     -- one purge group per (record, key_class) (§5.4 class A),
+                                     -- potentially many per purge -- see the note above.
+  record_type     text  NOT NULL,   -- §4.1's table. Written at phase 3 (§5.8 step 2:
+                                     -- "RECORD FIRST... record_type, classification LABEL,
+                                     -- payload_hmac")
+  classification  jsonb NOT NULL,   -- the record's ClassificationLabel at purge time -- the
+                                     -- spillage evidence itself (§6.6), not content
+  payload_hmac      bytea NOT NULL,   -- §5.8 step 2, §8.5: the keyed HMAC, not the plaintext
+  payload_hmac_key_id text NOT NULL, -- so a pre-purge verifier can confirm; post-purge it cannot
+  holder_slug     text  NOT NULL,   -- 03 §3.1 slug
+  holder_node     text  NOT NULL,   -- 'enterprise' | 'edge:<asset_id>'. Without this, an edge
+                                     -- instance and the enterprise instance of the SAME slug
+                                     -- and store collapse to one row (§4.6's `dissemination`
+                                     -- already carries this column for the same reason)
+  holder_store    text  NOT NULL,   -- read-model / index / cache / object-store / trace name
+  destroyed_at    timestamptz NULL, -- set at phase 5 (EXECUTE), per §6.3's leaves-inward order
+  PRIMARY KEY (purge_id, record_id, holder_slug, holder_node, holder_store)
 );
--- Written at phase 3 (ENUMERATE), one row per (record, holder, store) in the
+-- Written at phase 3 (ENUMERATE), one row per (record, holder, node, store) in the
 -- sealed closure -- "nothing is destroyed before the list of what will be
 -- destroyed is durable and signed" (§6.2). Re-validated and re-sealed at
 -- phase 4 (ADJUDICATE); a closure that grew aborts the purge (§6.1).
@@ -824,10 +929,13 @@ CREATE TABLE purge_receipt (
   receipt_id    uuid        PRIMARY KEY,
   purge_id      uuid        NOT NULL REFERENCES purge(purge_id),
   holder_slug   text        NOT NULL,
+  holder_node   text        NOT NULL,   -- see purge_target.holder_node above -- without it, an
+                                         -- edge and an enterprise receipt for the same slug and
+                                         -- store collide on the UNIQUE constraint below
   holder_store  text        NOT NULL,
   signed_at     timestamptz NOT NULL,
   signature     bytea       NOT NULL,   -- the holder's own signed purge receipt (§6.2 phase 5)
-  UNIQUE (purge_id, holder_slug, holder_store)
+  UNIQUE (purge_id, holder_slug, holder_node, holder_store)
 );
 ```
 
@@ -846,8 +954,12 @@ CREATE TABLE purge_receipt (
 
  3 ENUMERATE  Compute the closure: reverse reachability over provenance_edge (§4.5)
               ∪ the dissemination ledger (§4.6) ∪ topic/compaction-key locations.
-              SEAL it: write purge_target rows for every (record, holder, store)
-              triple. Nothing is destroyed before the list of what will be destroyed
+              SEAL it: write purge_target rows for every (record, holder, node, store)
+              quadruple, each carrying that record's purge_group_id, record_type,
+              classification label, and payload_hmac (§6.1a). `holder_node`
+              distinguishes an edge instance of a slug/store from the enterprise
+              instance of the same slug/store -- without it the two collapse onto
+              one row. Nothing is destroyed before the list of what will be destroyed
               is durable and signed. Publish nothing yet.
 
  4 ADJUDICATE Dual control per §6.1, with claim + If-Match (03 §7.2). Re-validate:
@@ -1145,15 +1257,15 @@ Why the storage shape matters, and it is not a stylistic preference:
 
 ### 8.4 Audit's admission countersignature
 
-Audit countersigns every admitted record with its own key, over: `record_id, admitted_node_id, admitted_seq, admitted_hlc, ingest_time, chain_prev_hash, producer_signature (or its absence), payload_hmac, key_class, purge_group_id`.
+Audit countersigns every admitted record with its own key, over: `record_id, admitted_node_id, admitted_seq, admitted_hlc, ingest_time, chain_prev_hash, producer_signature (or its absence), payload_hmac`.
 
 Three things this buys that the producer signature cannot:
 
 1. **An independent time anchor.** If a producer's clock is contested, audit's admission order — a gap-free monotonic sequence on a node with its own attested `sync_quality` — is a second, independently signed ordering. Two contestable clocks are far better than one, because their disagreement is itself measurable.
-2. **Proof of admission**, distinct from proof of authorship. A producer can prove it wrote a record; only audit can prove the record was admitted, when, in what order, and under which key class.
+2. **Proof of admission**, distinct from proof of authorship. A producer can prove it wrote a record; only audit can prove the record was admitted, when, and in what order.
 3. **Coverage of unverifiable records.** A record whose producer signature fails is quarantined and countersigned anyway, so the *fact of the failure* is non-repudiable even though the record is not.
 
-`wrapped_dek` is deliberately **excluded** from the countersigned set, so re-wrap (§5.10) and key rotation do not invalidate it. Stated in both places because an implementer who adds it "for completeness" breaks reclassification.
+**[CORRECTED]** `wrapped_dek`, `key_class`, and `purge_group_id` are deliberately **excluded** from the countersigned set, so re-wrap (§5.10) and key rotation do not invalidate it. This was previously stated for `wrapped_dek` alone while `key_class` and `purge_group_id` remained in the signed field set above — which meant re-wrap, which changes exactly those two columns (§5.4, §5.10), silently broke the admission countersignature it was supposed to leave intact, contradicting `test_signature_still_verifies_after_rewrap` (§12.4). Excluding all three, consistently, is what makes that test true rather than aspirational: **the record's integrity must be independent of which key currently wraps it and which purge group currently owns it**, or reclassification and key rotation would both be indistinguishable from tampering. What the countersignature still proves is admission — the record existed, in this order, at this time, with this payload HMAC — not the current state of its key routing, which §5.4's per-group HSM policy already governs.
 
 ### 8.5 `payload_hmac`, not `payload_sha256`, in the audit store
 
@@ -1476,6 +1588,7 @@ Companion cases, each required:
 | `test_purge_requires_dual_control_and_if_match` | Single adjudicator → refused; missing `If-Match` → `428`; concurrent adjudication → `412` (D16) |
 | `test_agent_principal_cannot_propose_or_adjudicate_purge` | `accountable_autonomous` and any `agent_id` refused (§6.1, D14) |
 | `test_purge_resumable_at_every_injection_point` | Document 11 §11.1's matrix over the purge state machine: never half-applied, always resumable, key destruction only after every prior phase is durable |
+| **`test_counter_sign_required_at_class_and_fleet_scope_only`** **[AMENDMENT]** | Item/asset-scope purges reach phase 5 (EXECUTE) without any counter-signature. Class/fleet-scope purges block at phase 4a until a THIRD, distinct `fleet_authority` calls `POST /purges/{id}/counter-sign`; a counter-signature attempt by either of the two `security_officer` adjudicators is refused `403`; a second counter-sign attempt is refused `409 already-counter-signed`; a counter-sign attempt at item/asset scope is refused `422 counter-signature-not-required` (§6.1, §6.2 phase 4a, §10.5) |
 | `test_dissemination_dominance_filters_undominated_rows` | **[AMENDMENT]** A `GET /dissemination` row whose `key_class` the caller's clearance does not dominate is never returned, never counted, and never advances the cursor (§10.5, §10.6) |
 | `test_warning_lead_time_coverage_discloses_restricted_contributors` | **[AMENDMENT]** `GET /effectiveness/warning-lead-time-coverage` sets `restricted_contributors_present` and `excluded_count` when the population includes compartmented members, and the coverage fraction excludes them rather than silently renormalizing (§10.7, §10.6 last row) |
 
@@ -1497,7 +1610,7 @@ Companion cases, each required:
 | `test_tampered_payload_quarantined_not_dropped` | Content retained, `unverifiable`, `integrity.signature_verification_failed` published, page fired (document 11 DO-NOT 21) |
 | **`test_tampered_sync_quality_fails_verification`** | Flip `step_occurred`, then `dispersion_ms`, then `time_source`; each fails. **This is the test that proves `sync_quality` is inside the signature** and that document 08 §3.3's "skew is indistinguishable from tampering" is closed (document 11 §10.2) |
 | `test_signature_still_verifies_after_crypto_shred` | Shred, then verify: passes. Because the signature is over `payload_sha256` (§8.1). **The single most important interaction in this document** |
-| `test_signature_still_verifies_after_rewrap` | Re-wrap changes `wrapped_dek` only; producer signature, countersignature, and chain all verify (§5.10, §8.4) |
+| `test_signature_still_verifies_after_rewrap` | **[CORRECTED]** Re-wrap re-encrypts `payload_ciphertext` under a fresh DEK and AAD and updates `key_class`, `classification`, `purge_group_id`, `wrapped_dek*`; producer signature, admission countersignature, and chain all still verify, because none of them is computed over the fields that changed (§5.10, §8.1, §8.4) |
 | `test_infinite_dispersion_round_trips_byte_identically` | `dispersion_ms = +inf` survives storage and verification (§4.4, §8.3) |
 | `test_admission_countersignature_independent_of_producer` | A record with an absent producer signature is still countersigned and chained (§8.4) |
 | `test_chain_break_is_detected_never_repaired` | Discontinuity → out-of-band checkpoint + page; no repair path exists (§8.6) |
@@ -1509,8 +1622,8 @@ Document 11 §11.5's nine gates apply in full, plus:
 
 1. **No `ExportKey`, `clone`, `backup`, or `derive-to-external` call for any Tier-1 or Tier-2 key.** §5.2 Decision 2 — this is the gate that makes §5.9 proof 3 an architectural claim rather than a hope.
 2. **No plaintext payload column, no plaintext payload log line, no plaintext in any exception message or problem `detail`.**
-3. **No insert into `audit_record` outside `AuditWriter.admit()`** — bypassing it would skip verification, countersignature, chain extension, and encryption.
-4. **No `DELETE` or content-column `UPDATE` on `audit_record`** anywhere in the codebase. The only permitted `UPDATE` targets are `purged_by`, `purged_at`, `wrapped_dek`, `wrapped_dek_key_id`, `key_class`, `rewrapped_from_key_class`, and `legal_hold`, asserted column-by-column.
+3. **No insert into `audit_record` outside `AuditWriter.admit()`**, and no `UPDATE` of `payload_ciphertext`, `payload_aad_sha256`, `key_class`, `classification`, or `purge_group_id` outside the `rewrap()` procedure of §5.10 — bypassing `admit()` would skip verification, countersignature, chain extension, and encryption; bypassing `rewrap()` for those columns is exactly how the previous, uncorrected version of this document produced an undecryptable record (§5.10).
+4. **No `DELETE` or content-column `UPDATE` on `audit_record`** anywhere in the codebase, outside the two sanctioned write paths named in gate 3. **[CORRECTED]** The only permitted `UPDATE` targets are `purged_by`, `purged_at`, `wrapped_dek`, `wrapped_dek_key_id`, `key_class`, `classification`, `purge_group_id`, `rewrapped_from_key_class`, `payload_ciphertext`, `payload_aad_sha256`, and `legal_hold`, asserted column-by-column — and of those, `payload_ciphertext`, `payload_aad_sha256`, `key_class`, `classification`, and `purge_group_id` may be written **only** by `rewrap()`, asserted by call site, not merely by column. The previous version of this list omitted `payload_ciphertext`, `payload_aad_sha256`, `classification`, and `purge_group_id`, which made §5.10's own necessary re-encryption an UPDATE this gate would have failed — the gate is widened here for exactly the one sanctioned procedure that needs it, not weakened generally: an UPDATE of these columns from anywhere other than `rewrap()` still fails the gate.
 5. **No `x-agent-eligible: true` on any audit operation** (§14 item 9).
 6. **No SoftHSM key id valid in a non-dev `Settings`** — asserted at startup, not only in CI.
 7. **No post-filtering**: no Python-side classification filtering after a query; the dominance predicate must appear in SQL (D13).
@@ -1648,7 +1761,7 @@ Each item carries the finding or citation that makes it a defect rather than a p
 25. **Do not use "FOUO" or "U//FOUO", and do not put a caveat outside the ten authorized Limited Dissemination Controls into a label or a `key_class`.** Retired markings; lint rule `FTH005` rejects them as literals. *(08 §5.5; 03 §7.3, 10 §4.8)*
 26. **Do not invent quantities.** Retention periods, attestation volumes, and storage envelopes come from document 06 §7 or are recorded as open questions. *(**D37**; 09 DO-NOT 31)*
 27. **Do not make audit read-only when its divergence budget breaches.** Refusing audit writes stops the accountability record for every service on the hull. Alert and degrade. *(§6.7)*
-28. **Do not use a wildcard subscription** to implement the broad consumption of §11.2. Enumerate all forty-nine event types, and fix document 03 §6's catalog instead of weakening the check that caught C3–C5. *(**C38**; 09 DO-NOT 14)*
+28. **Do not use a wildcard subscription** to implement the broad consumption of §11.2. Enumerate all fifty-two event types (42 domain event types + 10 proposal topics, **[CORRECTED]** was miscounted here as forty-nine, the superseded 40+9 figure §11.2 and §15.5 already moved past), and fix document 03 §6's catalog instead of weakening the check that caught C3–C5. *(**C38**; 09 DO-NOT 14)*
 
 ---
 
@@ -1679,8 +1792,8 @@ Each item carries the finding or citation that makes it a defect rather than a p
 
 ### 15.3 Purge protocol
 
-- [ ] All seven phases implemented, with containment at **claim** rather than at adjudication. *(§6.2)*
-- [ ] `security_officer` authority class, two-person integrity, and `fleet_authority` counter-signature at class/fleet scope. *(§6.1; amendment 03-1)*
+- [ ] All seven phases implemented, plus phase 4a (COUNTER-SIGN) at class/fleet scope, with containment at **claim** rather than at adjudication; `purge.phase` and `purge.state` are separate columns. *(§6.2, §6.1a)*
+- [ ] `security_officer` authority class, two-person integrity, and `fleet_authority` counter-signature at class/fleet scope, recorded on `purge.counter_signed_at`/`counter_signed_by`/`counter_signature`; `test_counter_sign_required_at_class_and_fleet_scope_only` green. *(§6.1; amendment 03-1; §12.2)*
 - [ ] A purge is a `Proposal` with claim, `If-Match`, dual control, re-validation, and `valid_until`; closure growth aborts. *(§6.1, §6.2; **D16**)*
 - [ ] `POST /remediations` and `GET /remediations/{id}` implemented **by audit against its own store**, through the same contract every other service implements. *(§6.4, §10.5)*
 - [ ] All four proofs of §5.9 produced for every purge; a certificate cannot seal without negative unwrap evidence. *(§5.9)*
@@ -1694,7 +1807,7 @@ Each item carries the finding or citation that makes it a defect rather than a p
 - [ ] Redacted-replacement publication at the compaction key, plus the null tombstone only where the key is the spillage. *(§7.1)*
 - [ ] Forced compaction with the four-step verification and configuration restoration, recorded in the receipt. *(§7.2)*
 - [ ] Producer signature verified over document 11 §10.2's exact field set and stored verbatim with its key id. *(§8.2)*
-- [ ] Admission countersignature excludes `wrapped_dek`, so re-wrap and rotation do not invalidate it. *(§8.4)*
+- [ ] Admission countersignature excludes `wrapped_dek`, `key_class`, and `purge_group_id`, so re-wrap and rotation do not invalidate it. *(§8.4)*
 - [ ] `payload_hmac` is keyed and its key dies with the group; no bare hash of purged plaintext is retained, indexed, or projected. *(§8.5)*
 - [ ] Hash chain per node, Merkle checkpoints at least hourly, cross-anchored on reconnection; no repair path. *(§4.7, §8.6)*
 - [ ] Gap register populated, gaps re-requested, `unrecoverable` gaps surfaced on `/readyz`, in metrics, and in a signed checkpoint. *(§9.2; AU-6(3))*
