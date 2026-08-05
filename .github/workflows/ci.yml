@@ -1,0 +1,111 @@
+name: ci
+
+# 09-monorepo-and-conventions.md §6.1: self-hosted runners (production target is
+# self-managed OpenShift / air-gapped, so a cloud-hosted runner cannot reach the
+# private registry). All logic lives in `make` targets; this file only checks
+# out, sets up, and calls `make <target>`.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+env:
+  UV_VERSION: "0.5"
+
+jobs:
+  lint:
+    runs-on: [self-hosted, fathom]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with: { version: "${{ env.UV_VERSION }}" }
+      - run: make lint
+
+  typecheck:
+    runs-on: [self-hosted, fathom]
+    strategy:
+      matrix:
+        slug: [pdm]   # extend as services land
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with: { version: "${{ env.UV_VERSION }}" }
+      - run: make typecheck SLUG=${{ matrix.slug }}
+
+  test:
+    runs-on: [self-hosted, fathom]
+    strategy:
+      matrix:
+        slug: [pdm]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with: { version: "${{ env.UV_VERSION }}" }
+      - run: make test SLUG=${{ matrix.slug }}
+
+  contract:
+    runs-on: [self-hosted, fathom]
+    strategy:
+      matrix:
+        slug: [pdm]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with: { version: "${{ env.UV_VERSION }}" }
+      - run: make contract SLUG=${{ matrix.slug }}
+
+  conformance:
+    runs-on: [self-hosted, fathom]
+    strategy:
+      matrix:
+        slug: [pdm]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with: { version: "${{ env.UV_VERSION }}" }
+      - run: make conformance SLUG=${{ matrix.slug }}
+
+  event-catalog:
+    runs-on: [self-hosted, fathom]
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 tools/check_event_catalog.py
+      - run: make check-service-events
+
+  schema-check:
+    runs-on: [self-hosted, fathom]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with: { version: "${{ env.UV_VERSION }}" }
+      - run: make schema-check
+
+  charts:
+    runs-on: [self-hosted, fathom]
+    strategy:
+      matrix:
+        slug: [pdm]
+    steps:
+      - uses: actions/checkout@v4
+      - run: make charts SLUG=${{ matrix.slug }}
+
+  manifests:
+    runs-on: [self-hosted, fathom]
+    strategy:
+      matrix:
+        slug: [pdm]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with: { version: "${{ env.UV_VERSION }}" }
+      - run: make manifests SLUG=${{ matrix.slug }}
+
+  build:
+    runs-on: [self-hosted, fathom]
+    strategy:
+      matrix:
+        slug: [pdm]
+    steps:
+      - uses: actions/checkout@v4
+      - run: make image SLUG=${{ matrix.slug }}

@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.venv/
+venv/
+*.sqlite3
+
+# uv / pip
+.uv/
+uv.lock.tmp
+
+# Node / pnpm (apps/web, apps/practitioner, packages/ts-common, packages/ui)
+node_modules/
+dist/
+.vite/
+*.tsbuildinfo
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Terraform (deploy/terraform)
+.terraform/
+*.tfstate
+*.tfstate.backup
+
+# Generated/local-only artifacts
+*.local
+.env

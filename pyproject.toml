@@ -1,0 +1,29 @@
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E","W","F","I","N","UP","B","A","C4","DTZ","T20","SIM","TCH","PTH","RUF",
+          "ASYNC","S","BLE","FBT","ANN","ARG","PL","TRY","ERA"]
+ignore = ["ANN401", "PLR0913"]
+# DTZ is mandatory and not to be relaxed: it is what forbids naive datetimes,
+# which document 03 §4 (RFC 3339 with explicit offset) requires.
+# T20 forbids print(); all output is structlog (09 §4.8).
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "ANN", "PLR2004"]           # asserts and magic numbers are fine in tests
+"**/migrations/versions/*" = ["ANN", "ERA", "E501"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+disallow_any_explicit = false                      # Pydantic and SQLAlchemy internals need Any
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = ["confluent_kafka.*", "testcontainers.*"]
+ignore_missing_imports = true                      # the ONLY sanctioned override category
+
+[tool.pytest.ini_options]
+asyncio_mode = "strict"
