@@ -9,7 +9,7 @@
 | **Binding contracts** | [03 §4](../architecture/03-integration-contracts.md) (REST conventions — the gateway sits in front of every one of them), [03 §5](../architecture/03-integration-contracts.md) (event backbone), [03 §6](../architecture/03-integration-contracts.md) ("Proposals — a convention"), [03 §7.2 / §7.2.1](../architecture/03-integration-contracts.md) (Proposal and the adjudication authority table), [03 §7.3](../architecture/03-integration-contracts.md) (ClassificationLabel), [03 §8](../architecture/03-integration-contracts.md) (agent authority and tool surfaces), [03 §12](../architecture/03-integration-contracts.md) (classification posture), [03 §13](../architecture/03-integration-contracts.md) (data remediation — names gateway-held read models explicitly), [03 §15](../architecture/03-integration-contracts.md) (obligations) |
 | **Assigned by** | [04 §11](../architecture/04-subapplication-architectures.md) "API Gateway / BFF"; [01 §3](../architecture/01-system-architecture.md) (Sustainment Plane), [01 §4](../architecture/01-system-architecture.md) (system context), [01 §5](../architecture/01-system-architecture.md) (platform inventory), [01 §8.4](../architecture/01-system-architecture.md), [01 §8.5](../architecture/01-system-architecture.md) |
 | **Conventions** | [09 — Monorepo and Conventions](09-monorepo-and-conventions.md) in full: scaffold §4, API rules §5, DoD §8, DO-NOT §9. [10 — Shared Packages](10-shared-packages.md) for `Proposal`, `ClassificationLabel`, `EventEnvelope`, `topics`. [11 — Outbox & Sync Library](11-outbox-sync-library.md) for the inbox, clock discipline, and provisional-identity resolution |
-| **Quantities** | Every figure is cited from [06 §6](../architecture/06-demo-decisions-and-assumptions.md) or [06 §7](../architecture/06-demo-decisions-and-assumptions.md). None is invented (09 §9.5 item 31) |
+| **Quantities** | Every figure is cited from [06 §6](../architecture/06-demo-decisions-and-assumptions.md) or [06 §7](../architecture/06-demo-decisions-and-assumptions.md). None is invented (09 §9.5 item 31) — with one disclosed exception: `redesign_case_detail`'s view budget (§3.2) has no 06 §7 figure at all and is recorded as borrowed by analogy rather than presented as sourced |
 | **Classification** | Internal. The service operates single-level at `U` for the synthetic demonstration (03 §12, 06 §5), by **configuration**, not by assumption — see §7 |
 | **Verification note** | Following 09's convention: library and protocol selections were verified against documents 01/03 as of a **January 2026 knowledge cutoff**. RFC 8693 support in the chosen identity provider (§5.3) is a **dependency to confirm at implementation time**, not a settled fact |
 
@@ -125,7 +125,7 @@ There is a second, independent payoff. Because the projection holds no `rational
 
 **Property 2 — the projection is non-authoritative, and nothing depends on it being correct.** No decision is taken from the read model. Authority-versus-blast-radius (03 §7.2.1) is checked by the owning sub-application at adjudication; the read model carries `authority_class` and `blast_radius` so a UI can *route and filter*, which is presentation. Staleness (`valid_until`, `baseline_epoch`) is re-validated by the owner at adjudication, per 03 §7.2's mandatory re-validation rule; the read model carries them so the queue can *warn*, not so it can *reject*. The claim lease is the owner's; the read model reflects it. If the projection is stale, wrong, or empty, no proposal is mis-adjudicated — the queue is merely a worse index. This is the property that makes the state safe, and §10's `test_d32_stale_projection_cannot_cause_a_wrong_adjudication` asserts it by adjudicating against a deliberately-poisoned row and confirming the owner's re-validation rejects it.
 
-**Property 3 — the projection is rebuildable from `changed_since` reads, so deleting it loses nothing.** Document 03 §4 requires every sub-application to expose `GET /{collection}?changed_since=&cursor=` over every aggregate a consumer projects, and D5 makes that the rebuild path because the event bus is not one. The gateway's rebuild is a per-owner `changed_since` sweep over `/api/v1/{slug}/proposals` (§4.7). `test_d32_read_model_rebuild_with_bus_down` truncates the table, rebuilds with Redpanda stopped, and asserts the result is identical — the same property 11's DoD item 16 requires of every consumer, here doing double duty as the D32 guard and the D15 purge path.
+**Property 3 — the projection is rebuildable from `changed_since` reads, so deleting it loses nothing.** Document 03 §4 requires every sub-application to expose `GET /{collection}?changed_since=&cursor=` over every aggregate a consumer projects, and D5 makes that the rebuild path because the event bus is not one. The gateway's rebuild is a per-owner `changed_since` sweep over `/api/v1/{slug}/proposals` (§4.7). `test_d32_read_model_rebuild_with_bus_down` truncates the table, rebuilds with Redpanda stopped, and asserts the result is identical modulo `projection_seq` and the four envelope-only bookkeeping columns (§2.4) that a REST rebuild has no envelope to populate — the same property 11's DoD item 16 requires of every consumer, here doing double duty as the D32 guard and the D15 purge path.
 
 **Property 4 — the gateway derives and publishes nothing.** The gateway computes no derived domain value from the projection beyond counts and orderings, performs no join between proposals and predictions, readiness, or configuration, and **publishes no events at all** (§9.2). This closes the mechanism by which an "all-domain consumer" becomes a cross-domain authority: under 03 §7.3 and principle 7, a derived value carries the union of its inputs' labels, and a component that derives across nine domains manufactures union-classified facts. The gateway does not derive across domains. It concatenates fragments for presentation and sets `X-Classification` to the union for that one response (§7.3), and persists neither.
 
@@ -177,6 +177,13 @@ CREATE TABLE proposal_queue (
   niin                       text        NULL,
   class_id                   text        NULL,
   mission_id                 uuid        NULL,
+  tycom_id                   text        NULL,                     -- [AMENDMENT] the eighth `scope` value —
+                                                                    --   §4.5's `subject` rendering already
+                                                                    --   named `tycom_id` (10-shared-packages.md
+                                                                    --   §4's SCOPE_SUBJECT_FIELD) with no column
+                                                                    --   to back it; a `tycom`-scoped proposal
+                                                                    --   failed `proposal_queue_subject_matches_scope`
+                                                                    --   below on every producer until this was added
   subject_provisional        boolean     NOT NULL DEFAULT false,   -- edge-minted id, 11 §8; resolved on read
 
   -- ── lifecycle, for warning and filtering.  NOT for deciding ──────────────
@@ -215,13 +222,32 @@ CREATE TABLE proposal_queue (
   classification             jsonb       NOT NULL,                 -- serialized ClassificationLabel
 
   -- ── projection bookkeeping ───────────────────────────────────────────────
+  -- [AMENDMENT] `producer_node_id`, `last_monotonic_seq`, `announced_recorded_at`,
+  -- and `announced_dispersion_ms` are NULLable. All four are facts about the
+  -- KAFKA ENVELOPE the event arrived on (11 §4.2, 03 §5.4's clock block) — they
+  -- describe how the fact was delivered, not the Proposal resource itself, so
+  -- the REST rebuild path (§4.7's `GET .../proposals?changed_since=`) has no
+  -- value to put in them: it reads the owner's current resource state, never
+  -- an event envelope. Were these NOT NULL, `test_d32_read_model_rebuild_with_bus_down`
+  -- could never pass, and D5's whole reason for existing — rebuilding when the
+  -- bus itself is down — would be unsatisfiable for every row rebuilt this way.
+  -- Semantics: NULL means "not yet observed on the live feed," corrected the
+  -- moment the same proposal's next event is consumed (§4.3 rule 1 already
+  -- treats a NULL producer_node_id/last_monotonic_seq as "not comparable," the
+  -- same fallback defined for a producer-node change, so no new branch is
+  -- needed there). `producer_slug` and `source_topic` are NOT relaxed: both
+  -- are fully determined by which `{slug}` the rebuild sweep is iterating over
+  -- (§4.7) — `source_topic` is mechanically 'fathom.' || slug || '.proposal.v1'
+  -- — so a REST rebuild populates them exactly as the event path would, and
+  -- `proposal_queue_owner_is_producer` stays meaningful for every row
+  -- regardless of which path produced it.
   projection_seq             bigint      GENERATED ALWAYS AS IDENTITY,  -- gateway-local total order (§4.4)
   source_topic               text        NOT NULL,
   producer_slug              text        NOT NULL,
-  producer_node_id           text        NOT NULL,                 -- 11 §4.2; "enterprise" | "edge:<asset_id>"
-  last_monotonic_seq         bigint      NOT NULL,                 -- THE precedence key (03 §5.4, D29)
-  announced_recorded_at      timestamptz NOT NULL,                 -- DISPLAY ONLY.  Never a sort or merge key
-  announced_dispersion_ms    integer     NOT NULL,                 -- clock.sync_quality.dispersion_ms (03 §5.4)
+  producer_node_id           text        NULL,                     -- 11 §4.2; "enterprise" | "edge:<asset_id>" | NULL (REST-rebuilt, not yet seen live)
+  last_monotonic_seq         bigint      NULL,                     -- THE precedence key (03 §5.4, D29); NULL carries the same meaning as producer_node_id above
+  announced_recorded_at      timestamptz NULL,                     -- DISPLAY ONLY.  Never a sort or merge key. NULL until the live feed supplies one
+  announced_dispersion_ms    integer     NULL,                     -- clock.sync_quality.dispersion_ms (03 §5.4); NULL alongside announced_recorded_at, never one without the other
 
   -- The owner of a proposal is the publisher of the event announcing it.
   -- 03 §6: "Every sub-application accepting agent proposals publishes to
@@ -271,6 +297,7 @@ CREATE TABLE proposal_queue (
     (scope = 'niin'           AND niin              IS NOT NULL) OR
     (scope = 'class'          AND class_id          IS NOT NULL) OR
     (scope = 'mission'        AND mission_id        IS NOT NULL) OR
+    (scope = 'tycom'          AND tycom_id          IS NOT NULL) OR  -- [AMENDMENT]
     (scope = 'fleet')
   )
 );
@@ -307,7 +334,8 @@ PROJECTED_COLUMNS: frozenset[str] = frozenset({
     "kind", "authority_class", "blast_radius", "requires_dual_control",
     "requires_counter_signature",                     # [AMENDMENT] 32-audit.md §6.1
     "scope", "asset_id", "system_id", "installed_item_id", "niin",
-    "class_id", "mission_id", "subject_provisional",
+    "class_id", "mission_id", "tycom_id",              # [AMENDMENT] the eighth scope value
+    "subject_provisional",
     "status", "valid_until", "baseline_id", "baseline_epoch",
     "claimed_by", "claimed_until", "adjudicated_by", "second_adjudicator",
     "counter_signature_by", "counter_signature_at",   # [AMENDMENT] 03 §7.2
@@ -380,7 +408,7 @@ D32 is closed when all five hold. Each maps to a named test in §10.
 | 1 | The projection's column set equals the declared allowlist, and no forbidden field appears anywhere in the gateway's ORM metadata | `test_d32_read_model_column_allowlist`, `test_d32_forbidden_fields_absent_from_all_models` |
 | 2 | A proposal's `payload` and `evidence[].excerpt` do not appear anywhere in the gateway's database after real end-to-end projection | `test_d32_projection_discards_payload_from_the_wire` |
 | 3 | The subscription is an explicit list confined to the deployment's declared level; nothing above it is received, projected, or served; no `^`-prefixed pattern is passed to the broker client | `test_d32_subscription_confined_to_declared_level`, `test_d32_no_broker_pattern_subscription` |
-| 4 | The projection is rebuildable from `changed_since` reads with the event bus down, and the rebuild is identical to the projected state | `test_d32_read_model_rebuild_with_bus_down` |
+| 4 | The projection is rebuildable from `changed_since` reads with the event bus down, and the rebuild is identical to the projected state modulo `projection_seq` and the four envelope-only bookkeeping columns a REST response cannot supply (§2.4) | `test_d32_read_model_rebuild_with_bus_down` |
 | 5 | The gateway publishes no events, owns no outbox, and takes no decision from the projection — a poisoned row cannot cause a wrong adjudication | `test_d32_gateway_publishes_nothing`, `test_d32_stale_projection_cannot_cause_a_wrong_adjudication` |
 
 ### 2.7 What this document decides that the architecture did not
@@ -466,9 +494,11 @@ The registry, with every budget cited:
 | `asset_detail` | `/views/asset/{asset_id}` | 1500 ms | 06 §7 | `asset` (registry · **required** · 0); `configuration_baseline` (registry · **required** · 0); `readiness` (fleet-status · optional · 0); `predictions` (pdm · optional · 0); `open_work` (maintenance · optional · 0); `parts_position` (supply · optional · 0); `open_proposals` (**local read model** · optional · 0); `installed_items` (registry · optional · **1**) |
 | `installed_item_detail` | `/views/installed-item/{installed_item_id}` | 1500 ms | 06 §7 | `installed_item` (registry · **required** · 0); `prediction` (pdm · optional · 0); `health_indicators` (telemetry · optional · 0); `usage_counters` (telemetry · optional · 0); `maintenance_history` (maintenance · optional · 0); `failure_modes` (failure-intel · optional · 0) |
 | `explanation_decomposition` | `/views/explanation/{prediction_id}` | 4000 ms | 06 §7 *"< 4 s for explanation decomposition"* | `prediction` (pdm · **required** · 0); `contributing_factors` (pdm · **required** · 0); `feature_observations` (telemetry · optional · **1**); `causal_findings` (failure-intel · optional · 1); `procedure_references` (knowledge-retrieval · optional · 1) |
-| `redesign_case_detail` **[AMENDMENT]** | `/views/redesign-case/{case_id}` | 4000 ms, **[NOT SOURCED — see note]** | No figure exists in 06 §7 for this view; `explanation_decomposition`'s budget is borrowed by analogy (same order of composition: a multi-hop dependency/causal chain, not a single-slug lookup) | `redesign_case` (design-advisory · **required** · 0); `dossier` (design-advisory · **required** · 0); `impact_snapshot` (design-advisory · optional · 0); `cost_estimate` (design-advisory · optional · 0); `gate_decision` (design-advisory · optional · 0); `causal_findings` (failure-intel · optional · **1**) |
+| `redesign_case_detail` **[AMENDMENT]** | `/views/redesign-case/{case_id}` | 4000 ms, **[ESTABLISHED HERE, by analogy — see note]** | No figure exists in 06 §7 for this view; `explanation_decomposition`'s budget is borrowed by analogy (same order of composition: a multi-hop dependency/causal chain, not a single-slug lookup) | `redesign_case` (design-advisory · **required** · 0); `dossier` (design-advisory · **required** · 0); `impact_snapshot` (design-advisory · optional · 0); `cost_estimate` (design-advisory · optional · 0); `gate_decision` (design-advisory · optional · 0); `causal_findings` (failure-intel · optional · **1**) |
 
 **`redesign_case_detail` closes `42-redesign-case-builder.md` §18 item 13**: *"An adjudicator opening a `redesign_case` from the queue has no composed drill-down, though the case's value is entirely in its evidence chain."* `28-design-advisory.md` §2's claim that this composition *"is composed by the gateway"* had no implementation until this row. The budget is flagged rather than asserted as settled — `42`'s own §18 item 20 separately records that 06 §6 has no adjudication-effort figure for a `redesign_case` at all, so this view's timing budget shares that same open dependency rather than resolving it. **Phase 1's `causal_findings` fragment is the drill-down into Failure Intelligence** the same document's §18 item 13 describes as absent from every existing `ViewSpec` fragment list.
+
+**On the marker.** This row previously read `[NOT SOURCED]`, which read as an unresolved gap against the traceability table's blanket *"[e]very figure is cited from 06 §6 or 06 §7… [n]one is invented"* and the §13.2 DoD item of the same shape — a build document is not supposed to carry an item that is both required and admittedly missing. It is neither: the analogy is a deliberate, recorded engineering decision, not an omission, so it carries **[ESTABLISHED HERE]** like every other locally-decided figure in this document, with "by analogy" naming what grounds it in place of a 06 §7 citation. The traceability table (front matter) and the §13.2 DoD item both name this one disclosed exception explicitly rather than leaving the blanket claim false.
 
 **The `gate_decision` fragment was added by a later amendment** `[closes 52-practitioner-apps.md §13 correction 7, blocking]` — the wireframe's cost box draws the two-stage gate, and `28-design-advisory.md` §5.5's `failed_conditions`/`remedy` are the actionable part of a gate failure; without this fragment, rendering the gate region required a second client call this view exists to avoid.
 
@@ -481,13 +511,13 @@ The registry, with every budget cited:
 | `fleet_overview` | `readiness_rollup` | `fleet_status_get_readiness` | `GET /readiness?scope=fleet` (`27-fleet-status.md` §10.1) |
 | | `asset_status` | `registry_get_assets` | `GET /assets?...` (`20-registry.md` §9.1, list form) |
 | | `open_casrep_risk` | `fleet_status_get_risk_flags` | `GET /risk-flags?severity=&horizon_days=` (`27-fleet-status.md`) |
-| | `availability_windows` | `scheduling_get_availabilities` | `GET /availabilities?asset_id=` (`24-scheduling.md` §9.1) |
+| | `availability_windows` | `maintenance_get_availabilities` | `GET /availabilities?asset_id=` (`24-scheduling.md` §9.1) |
 | | `proposal_counts` | none — the local `proposal_queue` read model (§9.3), not an upstream call | — |
 | `asset_detail` | `asset` | `registry_get_asset` | `GET /assets/{asset_id}` (`20-registry.md` §9.1) |
 | | `configuration_baseline` | `registry_get_asset_configuration` | `GET /assets/{asset_id}/configuration` (`20-registry.md` §9.1) |
 | | `readiness` | `fleet_status_get_readiness` **(same operation as `readiness_rollup` above, `scope=asset&asset_id=` instead)** | `GET /readiness?scope=asset&asset_id=` (`27-fleet-status.md` §10.1) |
 | | `predictions` | `pdm_get_predictions` | `GET /predictions?asset_id=` (`22-pdm.md` §10) |
-| | `open_work` | `scheduling_get_work_orders` | `GET /work-orders?asset_id=&status=open` (`24-scheduling.md` §9.1) |
+| | `open_work` | `maintenance_get_work_orders` | `GET /work-orders?asset_id=&status=open` (`24-scheduling.md` §9.1) |
 | | `parts_position` | `supply_get_availability` | `GET /availability?asset_id=` (`26-supply.md` §7) |
 | | `open_proposals` | none — the local read model, same as `proposal_counts` above | — |
 | | `installed_items` | `registry_get_asset_installed_items` | `GET /assets/{asset_id}/installed-items` (`20-registry.md` §9.1) |
@@ -495,7 +525,7 @@ The registry, with every budget cited:
 | | `prediction` | `pdm_get_predictions` **(same operation as `asset_detail`'s `predictions` above, filtered by `installed_item_id` instead of `asset_id`)** | `GET /predictions?installed_item_id=` (`22-pdm.md` §10) |
 | | `health_indicators` | `telemetry_get_health_indicators` | `GET /health-indicators?installed_item_id=&from=&to=&as_of=&as_known_at=` (`21-telemetry.md` §9.1) |
 | | `usage_counters` | `telemetry_get_usage_counters` | `GET /usage-counters?installed_item_id=&as_of=` (`21-telemetry.md` §9.1) |
-| | `maintenance_history` | `scheduling_get_maintenance_history` | `GET /maintenance-history?installed_item_id=&niin=` (`24-scheduling.md` §9.1, amended) |
+| | `maintenance_history` | `maintenance_get_maintenance_history` | `GET /maintenance-history?installed_item_id=&niin=` (`24-scheduling.md` §9.1, amended) |
 | | `failure_modes` | `failure_intel_get_failure_modes` | `GET /failure-modes?equipment_class=&taxonomy_version=` (`25-failure-intelligence.md` §8.1) — resolved from the installed item's `equipment_family`, itself read off its `PartRef`. **[VERIFY]**: this fragment may be better served by `failure_intel_get_attributions` (`GET /attributions?installed_item_id=`, attributed findings, item-scoped) than by the class-level annotation surface; the two answer different questions and the wireframe's box (04 §3's per-item view) reads as the latter |
 | `explanation_decomposition` | `prediction` | `pdm_get_prediction` **(the single-resource form, distinct from `pdm_get_predictions` above)** | `GET /predictions/{id}` (`22-pdm.md` §10) |
 | | `contributing_factors` | `pdm_get_prediction_provenance` | `GET /predictions/{id}/provenance` (`22-pdm.md` §10) |
@@ -677,7 +707,7 @@ The gateway therefore treats an anomalous fragment latency as an upstream defect
 
 ### 4.1 The subscription — exactly how
 
-Nine topics, named explicitly, at the deployment's declared classification level (§2.5, D32-R2).
+**[AMENDMENT — corrected; said "Nine" where the code and every other count of this same subscription in this document say ten (§9.1).]** Ten topics — the nine `SubAppSlug` topics plus `AUDIT_PROPOSAL_TOPIC`'s platform-service exception, below — named explicitly, at the deployment's declared classification level (§2.5, D32-R2).
 
 ```python
 # platform/gateway/src/fathom_gateway/events/catalog.py
@@ -863,7 +893,7 @@ EVENT_HANDLERS: dict[str, Handler] = {
 
 Five projector rules, each with its finding:
 
-1. **Precedence is `(producer_slug, producer_node_id, monotonic_seq)`, never a timestamp.** A `proposal.adjudicated` arriving before the `proposal.created` it follows — possible across a partition, and certain when a hull reconnects and drains a six-week outbox (06 §4) — must not be overwritten by the later-arriving `created`. The upsert therefore applies only when `excluded.last_monotonic_seq > proposal_queue.last_monotonic_seq` for the same `(producer_slug, producer_node_id)`. Where the pair differs, the row is not comparable and the event is projected as a distinct fact only if it strictly advances `status` along the 03 §7.2 lifecycle. `announced_recorded_at` is stored and **never compared**, per 11 §11.5's static gate 4, which forbids any sort or comparison key over `recorded_at`.
+1. **Precedence is `(producer_slug, producer_node_id, monotonic_seq)`, never a timestamp.** A `proposal.adjudicated` arriving before the `proposal.created` it follows — possible across a partition, and certain when a hull reconnects and drains a six-week outbox (06 §4) — must not be overwritten by the later-arriving `created`. The upsert therefore applies only when `excluded.last_monotonic_seq > proposal_queue.last_monotonic_seq` for the same `(producer_slug, producer_node_id)`. Where the pair differs, the row is not comparable and the event is projected as a distinct fact only if it strictly advances `status` along the 03 §7.2 lifecycle. `announced_recorded_at` is stored and **never compared**, per 11 §11.5's static gate 4, which forbids any sort or comparison key over `recorded_at`. **[AMENDMENT]** A row whose `producer_node_id`/`last_monotonic_seq` are `NULL` — a row that reached the queue only through the §4.7 REST rebuild path, never yet through a live event — is **not comparable** by construction, exactly like a `producer_node_id` mismatch above: SQL's `NULL > x` is unknown, not false, so the comparison is written to treat NULL on either side as "not comparable" explicitly rather than relying on that behaviour silently, and the incoming live event projects as a distinct fact once it strictly advances `status`. The first live event for a given proposal after a rebuild therefore always supersedes the rebuilt row's bookkeeping columns, which is the mechanism that turns "unknown, pending Kafka catch-up" back into a real value.
 
 2. **Epoch fencing does not apply, and this is a deliberate exception with a reason.** 11 §3.5 fences any event whose `baseline_epoch` exceeds the consumer's configuration read model. The gateway holds no configuration read model — by D32-R1, it holds no domain read model at all — so there is nothing to fence against, and fetching Registry `changed_since` to build one would be exactly the D32 defect. Instead, `baseline_epoch` is stored verbatim and surfaced as a warning; the authoritative staleness check is the owner's mandatory re-validation at adjudication (03 §7.2, D16). **Recorded explicitly** because 09 §8.3's checklist item ("antecedent rule implemented") would otherwise read as unmet: it is met by not needing it, and §13 says so.
 
@@ -909,7 +939,7 @@ Base path `/api/v1/gateway/`. All operations `x-substitution: internal` (§8.3).
 | `blast_radius` | repeatable; `item\|asset\|class\|fleet` | 03 §7.2 [D16] |
 | `requires_dual_control` | boolean | 03 §7.2 rule 4 |
 | `awaiting_second_signature` | boolean — `requires_dual_control` and one signature present | 03 §7.2 |
-| `asset_id`, `system_id`, `installed_item_id`, `niin`, `class_id`, `mission_id` | canonical identifiers only | 03 §3.3 |
+| `asset_id`, `system_id`, `installed_item_id`, `niin`, `class_id`, `mission_id`, `tycom_id` | canonical identifiers only | 03 §3.3 |
 | `expires_before` | RFC 3339 | 03 §7.2 |
 | `epoch_superseded` | boolean — the staleness **warning** flag, not a filter the owner honours | 03 §7.2 [D16] |
 | `claimed` | `any\|none\|me\|other` | 03 §7.2 [D16] |
@@ -920,7 +950,7 @@ Base path `/api/v1/gateway/`. All operations `x-substitution: internal` (§8.3).
 
 Filtering is by explicit named parameters only — no general-purpose query language on the public surface (03 §4).
 
-Response, per row, is exactly the `PROJECTED_COLUMNS` allowlist rendered as wire fields, plus three computed presentation flags and no domain content:
+**[AMENDMENT — corrected.]** Response, per row, was previously claimed as "exactly the `PROJECTED_COLUMNS` allowlist rendered as wire fields" — true for most of the allowlist, but not literally: the six scope-identifier columns (`asset_id`, `system_id`, `installed_item_id`, `niin`, `class_id`, `mission_id`, and now `tycom_id`) fold into the single `subject` object below rather than appearing under their own names, and `detail_fetch_path` is rendered as `detail.href` rather than as a raw path string — both are deliberate presentation transforms, not omissions, and are documented where each is introduced. What was genuinely omitted, with no transform and no mention, is `projection_seq`, `producer_slug`, `producer_node_id`, and `last_monotonic_seq` — gateway-local ordering and precedence bookkeeping (§2.4, §4.3) that exists to resolve conflicting upserts, not to answer a caller's question, and is never rendered. `source_topic` is omitted for a sharper reason and is called out explicitly here rather than left as a silent gap: §2.5 item 3 treats a Kafka topic *name* as a classification-adjacent disclosure, because a topic name encodes slug, level, and compartment — putting `source_topic` on the wire would hand a caller exactly the kind of structural information that section exists to keep unlearnable. It is therefore excluded from every response by design, not merely absent from this example. The response is: `PROJECTED_COLUMNS`, rendered directly except for the two named transforms above, minus the four bookkeeping-only columns and `source_topic`, plus three computed presentation flags (`expires_within_hours`, `second_signature_outstanding`, and `detail`) and no domain content:
 
 ```json
 {
@@ -1045,11 +1075,16 @@ CREATE TABLE queue_rebuild_watermark (
 for slug in (*SubAppSlug, "audit"):            # the nine, 03 §3.1 / 10 §4.2, plus
                                                 # the AUDIT_PROPOSAL_TOPIC exception (§4.1)
     GET /api/v1/{slug}/proposals?changed_since=<watermark>&cursor=<cursor>
-    upsert each row into proposal_queue, projecting ONLY PROJECTED_COLUMNS
+    upsert each row into proposal_queue, projecting ONLY PROJECTED_COLUMNS,
+        producer_slug=slug, source_topic=f"fathom.{slug}.proposal.v1",   # derived from the
+                                                                          # loop variable, not
+                                                                          # from the response body
+        producer_node_id=NULL, last_monotonic_seq=NULL,                 # no envelope to read one from
+        announced_recorded_at=NULL, announced_dispersion_ms=NULL        # (§2.4's projection-bookkeeping note)
     advance the watermark and cursor in the same transaction as the upserts
 ```
 
-The projection function is the **same** function the event path uses — one `project(proposal) -> ProposalQueueRow` — so the two paths cannot diverge and the allowlist is enforced once. This is what makes `test_d32_read_model_rebuild_with_bus_down` a meaningful equality assertion rather than a comparison of two implementations.
+The projection function is the **same** function the event path uses — one `project(proposal) -> ProposalQueueRow` — so the two paths cannot diverge and the allowlist is enforced once. **[AMENDMENT]** The two paths differ only in what they have to give that function: the event path always supplies a full envelope, the REST path supplies the four envelope-only bookkeeping fields as `NULL` because a `changed_since` response is the owner's current resource state, not a record of the event that last changed it. This is what makes `test_d32_read_model_rebuild_with_bus_down`'s equality assertion honest rather than trivially true — see §10.1's revised description of that test.
 
 Note the reciprocal obligation this places on the nine, **and on `audit`**: each must expose `GET /proposals?changed_since=&cursor=` because the gateway is a declared consumer that projects the aggregate (03 §4, obligation 5). **[AMENDMENT]** `audit`'s own build document (`32-audit.md`) declared `GET /records?changed_since=&cursor=` for its audit-record aggregate but no equivalent for the `Proposal` aggregate its `POST /proposals` operation creates — closed there by adding `GET /proposals?changed_since=&cursor=` alongside it. The gateway contributes the consumer-driven conformance test that proves it for all ten (§10.4), which is how the obligation becomes enforceable rather than aspirational.
 
@@ -1087,11 +1122,11 @@ Document 03 §4: *"Authentication — OIDC bearer tokens. Service-to-service cal
 |---|---|
 | Algorithms | Asymmetric only — `RS256`, `RS512`, `ES256`, `ES384`. An **allowlist**, not a denylist: `alg: none` and every HMAC family are rejected because the key material is asymmetric and an HMAC-accepting validator can be attacked with the public key |
 | Key material | JWKS from `auth` (Keycloak, federated with Domino's Keycloak per 04 §11). Cached; **forced refresh on an unknown `kid`**, rate-limited so an attacker cannot drive JWKS fetches with fabricated `kid` values. A validation failure after a forced refresh is terminal |
-| Claims validated | `iss` (exact match against configured issuer), `aud` (must be non-empty) **[AMENDMENT — was "must contain `gateway`", which no token in the corpus ever carries: every worked example (31-auth.md §3.1/§3.2, this document's own §5.3) sets `aud` to the caller's downstream target slugs — `pdm`, `registry`, `telemetry`, and so on — never `gateway` itself. The gateway is a pass-through proxy, not a resource server any token is issued for; requiring its own presence in `aud` would 401 every request. `aud`-to-target validation is each downstream service's own concern, unchanged by this correction]**, `exp`, `nbf`, `sub` present and non-empty, `typ` is an access token |
+| Claims validated | `iss` (exact match against configured issuer), `aud` (must be non-empty) **[AMENDMENT — was "must contain `gateway`", which no token on *this* path — the primary inbound `Authorization` header, used for every pass-through and view-composition call — ever carries: every worked example (31-auth.md §3.1/§3.2, this document's own §5.3) sets `aud` to the caller's downstream target slugs — `pdm`, `registry`, `telemetry`, and so on — never `gateway` itself. The gateway is a pass-through proxy, not a resource server any *ordinary* token is issued for; requiring its own presence in `aud` here would 401 every request. `aud`-to-target validation is each downstream service's own concern, unchanged by this correction. **This is not the same check as §5.6's**: the Domino Endpoint proxy's `X-Fathom-Caller-Authorization` header carries a token that *does* require `gateway` in `aud`, and only that token, and only when its manifest selected an `x-domino-endpoint` operation (31-auth.md §5.3, §5.4) — §5.6 validates that header separately and is where that check lives now]**, `exp`, `nbf`, `sub` present and non-empty, `typ` is an access token |
 | Claims **not** interpreted | Roles, groups, clearance, caveats, compartments, unit, billet, qualification. The gateway reads none of them. §5.7 |
 | Transport | TLS terminated at program ingress; in-cluster hops over the cluster's transport security. The token is never logged, never placed in a URL, never in a problem-detail body (09 §4.8) |
 | Failure | `401` RFC 9457 `urn:fathom:problem:gateway:unauthenticated`, with `WWW-Authenticate: Bearer`. The `detail` member states the *class* of failure and never which claim failed or what value was expected — 03 §4 makes `detail` non-control-flow, and a validator that reports why it rejected a token is an oracle |
-| Unauthenticated surface | Exactly `/healthz`, `/readyz`, `/metrics`. Nothing else, in any environment. `docs_url` and `redoc_url` are `None` (09 §4.6) |
+| Unauthenticated surface | **[AMENDMENT — corrected; widened from three to five.]** Exactly `/healthz`, `/readyz`, `/metrics`, plus the two operations §8.1.2 adds to reach them: `GET /api/v1/gateway/session/login` and `GET /api/v1/gateway/session/callback`. Nothing else, in any environment. `docs_url` and `redoc_url` are `None` (09 §4.6). The addition is not optional: §8.1.2's `GET /api/v1/gateway/session` is a **cookie-only** lookup — it reads the session cookie's server-side store and never accepts a bearer token — so nothing in the previously-declared three-path unauthenticated surface gave a browser any way to *obtain* that cookie in the first place. A session is established by these two operations, which by construction run before any session exists and so cannot themselves require one |
 
 ### 5.2 The one sanctioned wall-clock read, declared
 
@@ -1233,18 +1268,37 @@ The gateway is that service.
 **[AMENDMENT — real defect, found in adversarial review and reconciled here: this section and `31-auth.md` §5.2 each independently established a *different* operation for the identical need — this document a path-parameterized `POST /api/v1/gateway/inference/{domino_endpoint_name}`, `31-auth.md` a manifest-resolved `POST /api/v1/gateway/domino/endpoint-invocations` — with no cross-reference between them. `31-auth.md`'s shape is adopted as canonical below, because it independently closes a defect this document's own path-parameter shape had: a caller-supplied `domino_endpoint_name` with no allowlist anywhere lets any caller point the gateway's one static, non-rotating Endpoint credential at any Domino Endpoint the deployment has. Manifest resolution makes that structurally impossible — the endpoint name is never caller-supplied at all.]**
 
 ```
-POST /api/v1/gateway/domino/endpoint-invocations
-    { operation_id }              # the CALLING operation's own OpenAPI operationId,
-                                  # e.g. "pdm_what_if" -- never a raw endpoint name
-    x-substitution: internal
-    x-side-effects: none          # interactive inference: tier-3 what-if (01 §3 correction 2)
-    x-agent-eligible: false       # an agent reaches inference through a sub-application's
-                                  # x-side-effects:none computational operation (03 §8.2's
-                                  # pdm-whatif manifest), not through this route
-    Idempotency-Key: required     # 09 §5.3
+POST /api/v1/gateway/domino/endpoint-invocations        x-side-effects: none
+                                                        x-substitution: internal
+                                                        x-agent-eligible: false
+                                                        Idempotency-Key: required   # 09 §5.3
 ```
 
-**How the endpoint name is resolved, closing the allowlist gap.** The gateway already parses every upstream `openapi.json` at startup to generate pass-through routes (§8.2 DECISION G-3), and each parse already extracts `x-side-effects`/`x-substitution`/`x-agent-eligible` verbatim per operation. The same parse now also extracts `x-domino-endpoint` (`31-auth.md` §5.3's annotation) into a small, build-time-fixed, in-memory map `{operation_id: domino_endpoint_name}`. `POST .../endpoint-invocations` looks up `operation_id` in that map — `404` `urn:fathom:problem:gateway:unknown-operation` if absent, which also rejects an operation that never declared `x-domino-endpoint` in the first place — and calls **that** endpoint name, never one the request body could name directly. `PdM's own `/what-if` handler passes its own `operation_id` ("pdm_what_if"), not the endpoint name it happens to know; the gateway is the sole authority on which endpoint that operation is allowed to reach.
+**[AMENDMENT — real defect, found in the same adversarial review: this document adopted `31-auth.md` §5.2's operation shape above but never actually carried the rest of `31-auth.md` §5.4's wire shape for it — the two-credential header pair and the full request body. This section previously showed only `{ operation_id }` as the body, which is not enough to forward anything to a Domino Endpoint at all, and said nothing about `X-Fathom-Caller-Authorization` — the header `31-auth.md` §5.4 calls out by name and the header §5.1's `aud`-non-empty correction does *not* apply to. Both are corrected below to match `31-auth.md` §5.4 exactly, which is what "adopted as canonical" above was always supposed to mean.]**
+
+```http
+POST /api/v1/gateway/domino/endpoint-invocations HTTP/1.1
+Authorization: Bearer <the CALLING SERVICE's workload token>       ◀── who is calling the proxy
+X-Fathom-Caller-Authorization: Bearer <the delegated/autonomous token>
+                                                                   ◀── on whose authority
+X-Correlation-Id: 0f2c8f5a-…
+Idempotency-Key: 8fd1…
+Content-Type: application/json
+
+{
+  "domino_endpoint": "pdm-tier3-whatif",
+  "operation_id": "pdm_what_if",
+  "payload": { … },
+  "deadline_ms": 55000,
+  "classification": { "level": "CUI", "…": "…" }
+}
+```
+
+**How the endpoint name is resolved, closing the allowlist gap.** The gateway already parses every upstream `openapi.json` at startup to generate pass-through routes (§8.2 DECISION G-3), and each parse already extracts `x-side-effects`/`x-substitution`/`x-agent-eligible` verbatim per operation. The same parse now also extracts `x-domino-endpoint` (`31-auth.md` §5.3's annotation) into a small, build-time-fixed, in-memory map `{operation_id: domino_endpoint_name}`. `POST .../endpoint-invocations` looks up the body's `operation_id` in that map — `404` `urn:fathom:problem:gateway:unknown-operation` if absent, which also rejects an operation that never declared `x-domino-endpoint` in the first place — and calls **that** endpoint name. `operation_id` is the only field the gateway trusts for this resolution; the body's own `domino_endpoint` value is never used for routing — it is accepted because it matches the calling sub-application's own contract annotation (`31-auth.md` §5.3's example: `pdm`'s own code names `"pdm-tier3-whatif"` as its `x-domino-endpoint`), so the field is informational and audit-friendly, not authoritative. `payload` is forwarded to the resolved Endpoint verbatim; `deadline_ms` bounds the monotonic deadline below the ceiling this section sets; `classification` is asserted by the caller and validated against §7's segregation rules before the call is attempted. `PdM's own `/what-if` handler passes its own `operation_id` ("pdm_what_if"), not a raw endpoint name it happens to know; the gateway is the sole authority on which endpoint that operation is allowed to reach.
+
+**Two credentials, validated differently — this is what was missing.** `Authorization` is the calling sub-application's own workload token, validated exactly as §5.1 validates any bearer token (asymmetric alg, JWKS, `iss`, non-empty `aud`, `exp`/`nbf`, `sub`) — it establishes *which service* is entitled to call the proxy at all. `X-Fathom-Caller-Authorization` carries the delegated or accountable-autonomous token whose authority the call is made *on*, and it is validated fully and separately (`31-auth.md` §5.4): signature, `iss`, `exp`, **`aud` containing `gateway`**, `sfx:none` present, and delegation liveness via `auth` introspection. Its failure is `403 urn:fathom:problem:gateway:audience-mismatch`; the first credential's failure is the ordinary `401 urn:fathom:problem:gateway:unauthenticated` of §5.1. The identity that lands in the audit record's `caller` block (§5.5's `DominoEndpointInvocation.caller`) is this second credential's, never the first's.
+
+**Why this `aud` requirement is not the one §5.1 removed.** §5.1's correction was about the primary inbound `Authorization` header used for every pass-through and view-composition call, where no token in the corpus ever carries `gateway` in `aud` — the gateway is a pass-through proxy, not a resource server. `X-Fathom-Caller-Authorization`'s token is different in kind: `31-auth.md` §5.3's `x-domino-endpoint` contract annotation causes `auth`'s exchange (§4.1 step 4d) to add `gateway` to `aud` *specifically and only* when the delegated token's manifest selected an operation requiring this proxy. A token whose manifest has no such operation never carries `gateway` in `aud` and is correctly rejected here — `31-auth.md` §5.4 calls this "what makes this tight," and this is the one place in this document where requiring `gateway`'s own presence in `aud` is the correct check, not the one §5.1 was right to remove.
 
 | Rule | Reason |
 |---|---|
@@ -1285,7 +1339,7 @@ Document 03 §8.5: *"Tool invocations, with full request and response, are recor
 
 | Recorded | Content |
 |---|---|
-| Every agent tool call through the pass-through surface | `principal_id` (`sub`), the full nested `act` chain, `fathom.agent.agent_version` (carried on `act.fathom.agent_version`), `fathom.agent.llm_version`, `fathom.agent.manifest`, `trace_ref`, `correlation_id`, method, resolved upstream operation, request and response bodies, status, `X-Classification`, duration (`time.monotonic()`, per 09 §4.8) |
+| Every agent tool call through the pass-through surface | `principal_id` (`sub`), the full nested `act` chain, `act.fathom.agent_version`, `act.fathom.llm_version` **[AMENDMENT — corrected; previously named `fathom.agent.llm_version`, a claim path that does not exist — §5.3's own token shape (the source of truth) nests both `agent_version` and `llm_version` under `act.fathom`, never under the top-level `fathom.agent` object, which carries only `authority`, `run_id`, `delegation_id`, `manifest`, `manifest_version`, `api_major`, and `trace_ref`]**, `fathom.agent.manifest`, `trace_ref`, `correlation_id`, method, resolved upstream operation, request and response bodies, status, `X-Classification`, duration (`time.monotonic()`, per 09 §4.8) |
 | Every Domino Endpoint proxy call | §5.6 |
 | Every `accountable_autonomous` request | Plus `fathom.accountable_owner` (03 §8.3; 31 §3.3) |
 | Every proposal claim and adjudication proxied | Plus `proposal_id`, `target_sub_app`, `If-Match` presence, and the outcome. The owning sub-application also records its own; the gateway's record is the *invocation*, the owner's is the *decision* |
@@ -1321,8 +1375,9 @@ The key is not simply `sub`, and the reason is 03 §8.3's two authority classes:
 | Agent, delegated (§5.3) | `("delegated", sub, act.sub)` — **the user *and* the agent** | A looping agent acting for a maintainer must not consume the maintainer's own interactive budget. Separate buckets mean the human's fleet view still loads while their copilot is being throttled |
 | Agent, accountable autonomous (§5.4) | `("autonomous", sub, accountable_owner)` | The owner is in the key so a per-owner budget is expressible, per 03 §8.3's accountability requirement |
 | Workload — Domino scoring Jobs, practitioner Apps | `("workload", sub)` | 09 §4.4.2's `domino-compute → gateway` edge. Batch ingest is bursty by design and gets its own declared limit |
+| `GET /session/login`, `GET /session/callback` (§8.1.2) **[AMENDMENT]** | `("anonymous", client_ip)` | Unauthenticated by construction (§5.1) — there is no `sub` yet to key on — but reachable by anyone, unlike the three exempt paths below. A flood of either is an unauthenticated attack surface against `auth`/Keycloak, not a benign probe, so it gets its own IP-keyed bucket rather than the health-check exemption |
 
-Unauthenticated requests are rejected at §5.1 before any bucket is consulted, so there is no anonymous bucket and no anonymous-flood surface. `/healthz`, `/readyz`, and `/metrics` are exempt — a rate-limited readiness probe produces a restart storm.
+Unauthenticated requests are otherwise rejected at §5.1 before any bucket is consulted. **[AMENDMENT — corrected; this previously read "there is no anonymous bucket and no anonymous-flood surface," which stopped being true the moment §5.1/§8.1.2 added `/session/login` and `/session/callback` to the unauthenticated surface — the row above is the anonymous bucket that addition requires.]** `/healthz`, `/readyz`, and `/metrics` remain exempt from rate limiting entirely — a rate-limited readiness probe produces a restart storm, and neither invokes Keycloak or any other upstream.
 
 ### 6.3 The algorithm and where the state lives
 
@@ -1584,12 +1639,16 @@ CREATE TABLE agent_run (
 
 **[AMENDMENT — closes a BLOCKING gap.]** `31-auth.md` §4.1 step 1 establishes the BFF shape (*"the user's access token never leaves the server. `apps/web` holds a session cookie"*), which means `apps/web` cannot read the user's roles from a token it never has — yet §8.1.1's shape-1 flow, the Persona Hub, and the queue's client-side `authority_class` filter (OQ-9, corrected above) all need those roles somewhere in the browser. Nothing in this document exposed them, and nothing anywhere specifies a sign-out. Flagged by `50-ui-design-system.md` §13 correction 7.
 
+**[AMENDMENT — closes a second gap the same review found: a cookie-only session lookup with no declared way to obtain the cookie.]** `GET /api/v1/gateway/session` is deliberately **cookie-only** — it never accepts a bearer token, because the whole point of the BFF shape is that the browser holds no token to present. But the unauthenticated surface (§5.1) previously enumerated only `/healthz`, `/readyz`, `/metrics`, and neither this table nor that list named any operation by which a browser could *acquire* `fathom_session` in the first place. Two operations close that: both must be reachable with no session and no bearer token, because establishing one is their entire job.
+
 | Operation | `x-side-effects` | `x-substitution` | `x-agent-eligible` | Notes |
 |---|---|---|---|---|
+| `GET /api/v1/gateway/session/login` | `none` | `internal` | **false** | **Unauthenticated** (§5.1). Generates a PKCE code verifier/challenge and an anti-forgery `state`, holds them in a short-lived (5 min), signed, `HttpOnly` cookie of their own (never the session cookie), and issues `302` to Keycloak's `/authorize` for the `fathom` realm — `31-auth.md` §4.1 step 1's *"authorization code + PKCE"*, initiated here because `apps/web` never talks to Keycloak directly (it has no client secret and is not a public client either; the gateway is the confidential client) |
+| `GET /api/v1/gateway/session/callback` | `state-changing` | `internal` | **false** | **Unauthenticated** (§5.1) — it is the request that *creates* the authenticated state everything else depends on, so it cannot itself require one. The OIDC `redirect_uri`. Validates `state` against the cookie from `/login` (rejecting a mismatch with `400 urn:fathom:problem:gateway:oidc-state-mismatch`, no session created), exchanges `code` for tokens with Keycloak using the stored PKCE verifier, inserts the `gateway_session` row (below), sets `fathom_session`, deletes the transient `/login` cookie, and issues `302` to `apps/web`'s landing route. Never reachable from an agent or a bulk path, so no `Idempotency-Key` is required (09 §5.3's mandate is scoped to exactly those reachability classes) |
 | `GET /api/v1/gateway/session` | `none` | `internal` | **false** | Returns the session's identity block (`fathom.identity`, byte-identical to §3.2's token shape) and its six `authority_classes`, read from the session cookie's server-side session store — never from a token the browser holds, because it holds none. `404` if no session. **[amendment, closes `52-practitioner-apps.md` §13 correction 3]** `apps/practitioner`'s co-resident host calls this operation exactly as `apps/web` does, with its own `fathom`-realm delegated token obtained from `31-auth.md` §5.8's `POST /api/v1/auth/practitioner-exchange` — **no caller-authority-borne variant is needed**; §5.8 was corrected to eliminate the second credential shape rather than add a second code path here |
 | `POST /api/v1/gateway/session/logout` | `state-changing` | `internal` | **false** | Destroys the server-side session and its cookie. **RP-initiated logout** at the identity provider is triggered server-side in the same call, per `31-auth.md` §2's Keycloak binding — there is no client-side `end_session_endpoint` redirect, because the browser holds no `id_token` to present to one. Not applicable to `apps/practitioner`, which has no session cookie to destroy (§4.7 of `52-practitioner-apps.md`) |
 
-**The session store and cookie, stated because §1.3 of `31-auth.md` deferred them to this wave:** an opaque session identifier in a cookie named **`fathom_session`** — `HttpOnly`, `Secure`, `SameSite=Lax` — keyed against a server-side store holding the actual tokens, TTL-bound to the underlying token's remaining life. **[AMENDMENT — corrected.]** This originally specified Redis for that store, directly contradicting this document's own **DECISION G-5** (§6.3): *"[t]here is no shared cache in the 01 §11 inventory. Adding Redis… is a new infrastructure component, a change to 09 §2."* The session store is instead a table in the gateway's **own CloudNativePG database** — `gateway_session(session_id, tokens_jsonb, expires_at, created_at)` — on the identical precedent 09 §5.3 already set for idempotency records: a service's own database, not a shared cache, for exactly this reason. Expiry is enforced two ways: a lookup rejects (`404`, matching a missing session) any row past `expires_at`, and a `pg_cron` job (or the same `pre-upgrade` Job pattern §8.6 uses elsewhere) deletes expired rows on a bounded interval so the table does not grow unboundedly between logins. This is a genuine cost relative to Redis — a database round-trip on every authenticated request instead of a cache lookup — but it is the cost G-5 already decided was acceptable for idempotency keys on the same request path, and introducing Redis for sessions alone would still be the new infrastructure component G-5 rejects. CSRF: `SameSite=Lax` plus a double-submit token, cookie **`fathom_csrf`** (readable by JavaScript, unlike the session cookie) echoed on header **`X-Fathom-CSRF`**, required and matched on every state-changing gateway-owned operation, checked in the middleware order of §8.6 immediately after authentication. **[amendment, closes `51-operator-console.md` UI-OQ-1]** Neither name was previously stated; both are needed before a console can construct the header.
+**The session store and cookie, stated because §1.3 of `31-auth.md` deferred them to this wave:** an opaque session identifier in a cookie named **`fathom_session`** — `HttpOnly`, `Secure`, `SameSite=Lax` — keyed against a server-side store, TTL-bound to the underlying token's remaining life. **[AMENDMENT — corrected.]** This originally specified Redis for that store, directly contradicting this document's own **DECISION G-5** (§6.3): *"[t]here is no shared cache in the 01 §11 inventory. Adding Redis… is a new infrastructure component, a change to 09 §2."* The session store is instead a table in the gateway's **own CloudNativePG database** — `gateway_session(session_id, access_token, expires_at, created_at)` — on the identical precedent 09 §5.3 already set for idempotency records: a service's own database, not a shared cache, for exactly this reason. **[AMENDMENT — corrected; `tokens_jsonb` (plural) was ambiguous about what it held, and a security review read it as potentially including a refresh token.]** The column is `access_token`, singular, and holds **only** the user's own OIDC access token obtained at `/session/callback` — the credential the BFF forwards as `Authorization` when it calls `POST /api/v1/auth/delegations` on the user's behalf (§5.3: *"the user's own access token, verbatim as received"*). It never holds a refresh token: `/session/callback` requests no `offline_access`/refresh grant from Keycloak in the first place, so there is none to store, consistent with §5.3's own *"[the gateway] holds no refresh token for any user, ever"* and DO-NOT item 20 below — a session simply expires, and the user re-authenticates through `/session/login`, when its access token's life runs out. It is **not** the exchanged delegation token of §5.3: that token is minted per agent turn, forwarded unchanged, and per §5.3's own table is never cached, persisted, or logged anywhere, including here — `test_delegation_token_never_cached_or_persisted` asserts its absence from every table in this database, `gateway_session` included. Expiry is enforced two ways: a lookup rejects (`404`, matching a missing session) any row past `expires_at`, and a `pg_cron` job (or the same `pre-upgrade` Job pattern §8.6 uses elsewhere) deletes expired rows on a bounded interval so the table does not grow unboundedly between logins. This is a genuine cost relative to Redis — a database round-trip on every authenticated request instead of a cache lookup — but it is the cost G-5 already decided was acceptable for idempotency keys on the same request path, and introducing Redis for sessions alone would still be the new infrastructure component G-5 rejects. CSRF: `SameSite=Lax` plus a double-submit token, cookie **`fathom_csrf`** (readable by JavaScript, unlike the session cookie) echoed on header **`X-Fathom-CSRF`**, required and matched on every state-changing gateway-owned operation, checked in the middleware order of §8.6 immediately after authentication (§8.6 now names the position explicitly). **[amendment, closes `51-operator-console.md` UI-OQ-1]** Neither name was previously stated; both are needed before a console can construct the header.
 
 ### 8.2 How pass-through routes are constructed
 
@@ -1611,7 +1670,7 @@ The cost, stated: a new upstream operation is not reachable until the ConfigMap 
 | `x-substitution` | `internal` on **every** gateway operation | 03 §4.1's annotation governs whether a *substituting sub-application implementation* must provide the operation (03 §10). The substitution protocol covers the nine disciplines; no partner assumes the gateway. Declared rather than omitted, because 09 §8.1 requires the annotation on every operation |
 | `x-side-effects` | `none` on reads and views; `state-changing` on `claim`, `adjudicate`, and the pass-through of upstream state-changing operations; `none` on the Domino Endpoint proxy | 03 §4.1 |
 | `x-agent-eligible` | **`false` everywhere on the gateway's own surface** | §4.5's closing paragraph. Agents obtain state through sub-application tools (03 §6, C19); the queue is not a domain, and an agent reading adjudication outcomes is an unadjudicated feedback channel (D23) |
-| `x-naming-carve-outs` | `/proposals/summary`, `/views/*`, `/inference/{name}` | 03 §4's singleton and query-projection carve-out, which must be *enumerated in the specification* (C23, 09 §8.1) |
+| `x-naming-carve-outs` | `/proposals/summary`, `/views/*` **[AMENDMENT — corrected; `/inference/{name}` removed]** | 03 §4's singleton and query-projection carve-out, which must be *enumerated in the specification* (C23, 09 §8.1). `/inference/{name}` was the path-parameterized shape §5.6 rejected in favour of `POST /api/v1/gateway/domino/endpoint-invocations` (31-auth.md §5.2); that path never carries a caller-supplied name and is an ordinary collection `POST`, so it needs no carve-out at all — the entry was stale, not replaced |
 
 ### 8.4 Pass-through transparency, as a contract
 
@@ -1624,13 +1683,36 @@ The gateway is a proxy, and a proxy that changes things is a source of defects n
 | Request → upstream | **Dropped:** the human's original browser-session cookie (never forwarded past the BFF boundary, §5.1), `Host`/hop-by-hop headers. There is no `X-Fathom-Delegation` header to drop — §5.3's amendment removed it along with the second exchange it existed to carry |
 | Upstream → response | Status code, `Content-Type`, body **byte-identical**. `ETag`, `Location`, `Retry-After`, `Deprecation`, `Sunset`, `X-Classification`, `Idempotency-Replayed` forwarded verbatim |
 | Upstream → response | **Never rewritten:** RFC 9457 problem bodies. An upstream's `urn:fathom:problem:pdm:…` reaches the client unchanged; the gateway does not re-wrap it as a gateway problem. A re-wrapped problem detail destroys the stable-`type` contract 03 §4 establishes |
-| Upstream → response | The gateway's **own** problem types are used only for conditions the gateway itself detected — `unauthenticated`, `rate-limit-exceeded`, `owner-unavailable`, `classification-fault`, `required-fragment-unavailable`, `authority-unknown`, `accountable-owner-absent`, `delegated-authority-lapsed`, `autonomous-state-change-refused`, `cursor-generation-stale`, `audit-unavailable`, and the two `Idempotency-Key` conditions of 09 §5.3. **`delegation-actor-mismatch` is retired** — it existed only to catch a mismatch between the two credentials §5.3's superseded two-hop model presented; with one forwarded token there is nothing to compare |
+| Upstream → response | The gateway's **own** problem types are used only for conditions the gateway itself detected — `unauthenticated`, `rate-limit-exceeded`, `upstream-rate-limit-exceeded`, `owner-unavailable`, `classification-fault`, `required-fragment-unavailable`, `authority-unknown`, `accountable-owner-absent`, `delegated-authority-lapsed`, `autonomous-state-change-refused`, `cursor-generation-stale`, `audit-unavailable`, `unknown-operation`, `endpoint-payload-too-large`, `audience-mismatch`, `oidc-state-mismatch`, and the two `Idempotency-Key` conditions of 09 §5.3 (`urn:fathom:problem:common:*`, not this service's own). **[AMENDMENT — corrected; three of these (`upstream-rate-limit-exceeded`, `unknown-operation`, `endpoint-payload-too-large`) were already in use elsewhere in this document but missing from this enumeration, and `audience-mismatch`/`oidc-state-mismatch` are new with §5.6/§8.1.2's amendments — §8.5 now carries the full table this row summarizes.]** **`delegation-actor-mismatch` is retired** — it existed only to catch a mismatch between the two credentials §5.3's superseded two-hop model presented; with one forwarded token there is nothing to compare |
 
 `ETag` forwarding is load-bearing for D16: 03 §7.2 rule 3 requires adjudication to carry `If-Match` on the *claimed* ETag. A gateway that regenerated ETags would break the claim mechanism while appearing to work — the same defect as synthesizing `If-Match` (§4.6), from the other end.
 
 ### 8.5 Problem types
 
 All under `urn:fathom:problem:gateway:<code>`, declared in `schemas/problems.py` and present in the spec's `responses` (09 §8.1). The `type` URI is a URN, never an `https://` URL — 09 DO-NOT 26 prohibits a dereferenceable problem type, because someone will dereference it and the gateway may not reach the public internet.
+
+**[AMENDMENT — this section previously named the registry but did not carry it; three codes already in use elsewhere in the document (`unknown-operation`, `endpoint-payload-too-large`, `upstream-rate-limit-exceeded`) were consequently never enumerated anywhere, which is exactly the drift this table exists to prevent.]** Every `urn:fathom:problem:gateway:<code>` used anywhere in this document, enumerated once:
+
+| Code | Status | Origin |
+|---|---|---|
+| `unauthenticated` | `401` | §5.1 |
+| `rate-limit-exceeded` | `429` | §6.5 (per-caller bucket) |
+| `upstream-rate-limit-exceeded` | `429` | §6.5 (per-sub-application bucket) |
+| `required-fragment-unavailable` | `503` | §3.4 |
+| `classification-fault` | `502` | §3.4, §7.3 |
+| `cursor-generation-stale` | `400` | §4.4 |
+| `owner-unavailable` | `503` | §4.6 |
+| `authority-unknown` | `403` | §5.4 |
+| `accountable-owner-absent` | `403` | §5.4 |
+| `autonomous-state-change-refused` | `403` | §5.4 |
+| `delegated-authority-lapsed` | `401` | §5.5 |
+| `unknown-operation` | `404` | §5.6 — `operation_id` not in the `x-domino-endpoint` map |
+| `endpoint-payload-too-large` | `413` | §5.6 |
+| `audience-mismatch` | `403` | §5.6 — `X-Fathom-Caller-Authorization`'s `aud` lacks `gateway` (`31-auth.md` §5.4, T-3e) |
+| `audit-unavailable` | `503` | §5.8 |
+| `oidc-state-mismatch` | `400` | §8.1.2 — `/session/callback`'s `state` does not match the `/session/login` cookie |
+
+**Not this service's own:** the two `Idempotency-Key` conditions are `urn:fathom:problem:common:idempotency-key-required` and `urn:fathom:problem:common:idempotency-key-reuse` (09 §5.3) — shared codes, not `gateway:`-namespaced, and not repeated here. **Retired:** `delegation-actor-mismatch` (§8.4).
 
 ### 8.6 Middleware order
 
@@ -1642,11 +1724,12 @@ Fixed by 09 §5.7 and extended here. Registered in `create_app` in this order:
 | 2 | Problem handlers | 09 §5.2 | RFC 9457 for anything raised deeper |
 | 3 | Classification | 09 §5.5, §7.3 | Sets `X-Classification` on the way out |
 | 4 | **Authentication** | §5.1 — **gateway-specific** | After correlation so a `401` is correlated; before rate limiting so the bucket key exists |
-| 5 | **Rate limiting** | §6 — **gateway-specific** | After authentication (needs the principal), **before** idempotency (§6.5's poisoning rule) |
-| 6 | Idempotency | 09 §5.3 | After routing has matched, so it can read `x-side-effects` (decision G-3) |
+| 5 | **CSRF** **[AMENDMENT — added; a real gap the review found]** | §8.1.2 — **gateway-specific** | Immediately after authentication/session resolution, on every `state-changing` gateway-owned operation that carries a session cookie: the double-submit check (`X-Fathom-CSRF` header must equal the `fathom_csrf` cookie's value). §8.1.2 already stated this position in prose (*"checked in the middleware order of §8.6 immediately after authentication"*) without §8.6 ever carrying a row for it — this closes that gap. A cookie-authenticated session is exactly the case CSRF exists for, because the cookie is sent automatically on a cross-site request and the caller's *browser* does not decide whether to attach it; a bearer-token request (agent, workload, `apps/practitioner`) carries no cookie and this check is a no-op for it. `/session/login` and `/session/callback` (§8.1.2) are exempt for the same reason they are exempt from authentication: neither yet has a `fathom_csrf` cookie to check against, since establishing one is what `/callback` does. `/callback`'s own `state`-parameter check (§8.1.2) is the equivalent protection for that one request |
+| 6 | **Rate limiting** | §6 — **gateway-specific** | After authentication (needs the principal), **before** idempotency (§6.5's poisoning rule) |
+| 7 | Idempotency | 09 §5.3 | After routing has matched, so it can read `x-side-effects` (decision G-3) |
 | — | Authorization | — | **Absent.** 09 §5.5 makes it a per-operation dependency in the *receiving* service. The gateway has none. §5.7 |
 
-Positions 4 and 5 are additions to 09 §5.7's list, which does not contemplate a service that authenticates on behalf of an ingress. Flagged at §14 item 5.
+Positions 4, 5, and 6 are additions to 09 §5.7's list, which does not contemplate a service that authenticates on behalf of an ingress or that carries a cookie-based session. Flagged at §14 item 5.
 
 ---
 
@@ -1665,10 +1748,11 @@ Positions 4 and 5 are additions to 09 §5.7's list, which does not contemplate a
 | `fathom.pma.proposal.v1` | " | " | " |
 | `fathom.failure-intel.proposal.v1` | " | " | " |
 | `fathom.design-advisory.proposal.v1` | " | " | " |
+| `fathom.audit.proposal.v1` | " | " | `AUDIT_PROPOSAL_TOPIC`, §4.1 — the platform-service exception, `purge`/`rewrap` |
 
-Nine topics, enumerated (§4.1), confined to the deployment's classification level (§7.1). Consumer group `fathom-gateway-v1` (09 §7.1).
+**[AMENDMENT — corrected; this table previously stopped at nine rows and the line below it said "Nine topics," contradicting every other count of this same subscription elsewhere in this document (§4.2's "TEN, ENUMERATED," §7.1's "ten-topic list," §11.3's Kafka ACL "exactly the ten topics," §13.1's "ten producers").]** Ten topics — the nine `SubAppSlug` rows above, plus `audit`'s exception row — enumerated (§4.1), confined to the deployment's classification level (§7.1). Consumer group `fathom-gateway-v1` (09 §7.1).
 
-**Two notes on the catalog, both flagged at §14:** 03 §6 does not list `gateway` as a consumer of `proposal.adjudicated`, which the queue requires or approved proposals remain pending forever (§14 item 1). And a sub-application that accepts no agent proposals publishes no proposal topic; 03 §6's convention says *"every sub-application accepting agent proposals"*, and 03 §7.2's six `kind` values map to fewer than nine owners. The gateway subscribes to all nine anyway — a subscription to a topic with no messages is inert, whereas an enumeration that varies by which sub-applications happen to accept proposals would need maintaining in two places and would silently miss a sub-application that started accepting them. `test_subscription_tolerates_empty_topic` covers it.
+**Two notes on the catalog, both flagged at §14:** 03 §6 does not list `gateway` as a consumer of `proposal.adjudicated`, which the queue requires or approved proposals remain pending forever (§14 item 1). And a sub-application that accepts no agent proposals publishes no proposal topic; 03 §6's convention says *"every sub-application accepting agent proposals"*, and 03 §7.2's six `kind` values map to fewer than nine owners. The gateway subscribes to all nine (plus `audit`) anyway — a subscription to a topic with no messages is inert, whereas an enumeration that varies by which sub-applications happen to accept proposals would need maintaining in two places and would silently miss a sub-application that started accepting them. `test_subscription_tolerates_empty_topic` covers it.
 
 ### 9.2 Published: none
 
@@ -1710,7 +1794,7 @@ Four tiers per 09 §4.7 — unit, integration, contract, conformance — plus th
 | `test_d32_subscription_confined_to_declared_level` | With proposal topics registered at two levels, `deploymentLevel=U`: the subscription set equals the enumerated `U` list; a proposal published on an above-level topic is **never** projected and appears in **no** queue response | 3 |
 | `test_d32_no_broker_pattern_subscription` | No argument passed to `Consumer.subscribe()` begins with `^` (§4.2) | 3 |
 | `test_g1_enumerated_list_equals_pattern_expansion` | `CONSUMES` equals `PROPOSAL_TOPIC_PATTERN` expanded over `SubAppSlug` plus `AUDIT_PROPOSAL_TOPIC`, and has ten members (§4.2) | 3 |
-| `test_d32_read_model_rebuild_with_bus_down` | Project N proposals; snapshot; `TRUNCATE proposal_queue`; **stop Redpanda**; rebuild from `changed_since` against stub owners; assert the result is identical to the snapshot modulo `projection_seq` | 4 |
+| `test_d32_read_model_rebuild_with_bus_down` | Project N proposals; snapshot; `TRUNCATE proposal_queue`; **stop Redpanda**; rebuild from `changed_since` against stub owners; assert the result is identical to the snapshot modulo `projection_seq`, `producer_node_id`, `last_monotonic_seq`, `announced_recorded_at`, and `announced_dispersion_ms` — the four columns a REST rebuild leaves `NULL` (§2.4, §4.7) | 4 |
 | `test_d32_purge_is_truncate_and_rebuild` | The declared purge procedure of §4.7 executes end to end and leaves no trace of the purged `proposal_id` in any column of any table | 4 |
 | `test_d32_gateway_publishes_nothing` | `PUBLISHES == frozenset()`; no `outbox` table at migration head; no Kafka producer constructed anywhere in the service | 5 |
 | `test_d32_stale_projection_cannot_cause_a_wrong_adjudication` | Poison a row (`baseline_epoch` low, `status='proposed'`, `authority_class` wrong, `valid_until` future), then adjudicate through the gateway against a stub owner enforcing 03 §7.2's re-validation; assert the owner rejects and the gateway forwards the rejection unaltered | 5 |
@@ -1750,6 +1834,7 @@ The last of these is the guard with the longest reach: it makes "the gateway hol
 | `test_d12_autonomous_state_change_refused` | `accountable_autonomous` against a `state-changing` route yields `403`, with no upstream call (§5.4) |
 | `test_d12_accountable_owner_required` | An autonomous token without `fathom.accountable_owner` yields `403` |
 | `test_d12_domino_endpoint_audit_written_before_response` | Killing the process between the Domino call and the response leaves the audit record present; the caller's token never reaches Domino (§5.6) |
+| `test_domino_proxy_requires_audience_gateway` **[AMENDMENT — added]** | A `X-Fathom-Caller-Authorization` token whose manifest selected no `x-domino-endpoint` operation — so `aud` lacks `gateway` — is refused `403 audience-mismatch` before the Endpoint is called; a token whose manifest did select one succeeds (§5.6, mirrors `31-auth.md` T-3e) |
 | `test_gateway_has_no_policy_engine` | Neither OPA nor Cedar is a dependency of `platform/gateway/pyproject.toml` (§5.7) |
 | `test_gateway_forwards_an_authority_violation` | A proposal whose `authority_class` the caller does not hold is **forwarded** and rejected by the owner; the gateway does not pre-reject (§4.6, §5.7) |
 | `test_gateway_never_synthesizes_if_match` | Adjudication without `If-Match` yields `428`; no outbound request carries an `If-Match` absent inbound (§4.6, D16) |
@@ -2090,14 +2175,14 @@ Two edges need attention:
 - [ ] `test_d32_projection_discards_payload_from_the_wire` green — the canary scan finds neither canary in **any** text or JSONB column of the gateway database, after real end-to-end projection through Redpanda and PostgreSQL.
 - [ ] `test_d32_queue_response_contains_no_free_text` green.
 - [ ] `test_d32_subscription_confined_to_declared_level` green against a broker holding proposal topics at two levels; `test_d32_no_broker_pattern_subscription` and `test_g1_enumerated_list_equals_pattern_expansion` green.
-- [ ] `test_d32_read_model_rebuild_with_bus_down` green — rebuild identical to projection, with Redpanda stopped.
+- [ ] `test_d32_read_model_rebuild_with_bus_down` green — rebuild identical to projection modulo `projection_seq` and the four envelope-only bookkeeping columns (§2.4), with Redpanda stopped.
 - [ ] `test_d32_purge_is_truncate_and_rebuild` green; the §4.7 purge protocol documented in the README with a named owner *(03 §13 item 2, D15)*.
 - [ ] `test_d32_gateway_publishes_nothing`, `test_d32_no_domain_readmodel_other_than_the_queue`, `test_d32_stale_projection_cannot_cause_a_wrong_adjudication`, `test_no_cross_level_read_path` green.
 - [ ] The `proposal_queue` DDL carries all five CHECK constraints of §2.4 **[AMENDMENT — was four; `proposal_queue_counter_signature_at_scope` added]**, including `proposal_queue_owner_is_producer`.
 
 **Composition (§3)**
 
-- [ ] Every view in the registry declares its budget from **06 §7** and cites it. No invented budget *(09 DO-NOT 31)*.
+- [ ] Every view in the registry declares its budget from **06 §7** and cites it, with one disclosed exception: `redesign_case_detail` (§3.2), whose budget is recorded as borrowed by analogy because no 06 §7 figure exists for it. No *undisclosed* invented budget *(09 DO-NOT 31)*.
 - [ ] `test_fanout_is_concurrent_not_sequential`, `test_view_phase_count_bounded_at_two`, `test_fragment_has_exactly_one_upstream` green.
 - [ ] Partial-failure suite green: `test_partial_failure_is_rendered_not_dropped`, `test_required_fragment_failure_returns_503_with_no_partial_body`, `test_forbidden_fragment_does_not_fail_the_view`.
 - [ ] `test_read_timeout_is_not_retried`, `test_fragment_deadline_clamped_to_view_deadline` green.
