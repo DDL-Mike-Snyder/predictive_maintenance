@@ -9,9 +9,12 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import httpx
 from fastapi import FastAPI, Request, Response
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from fathom_py_common import (
     assert_operation_annotations,
     configure_logging,
@@ -103,6 +106,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     install_health_routes(app, checks=register_checks(engine))
 
     assert_operation_annotations(app)  # 5. fail fast, in-process, not only in CI
+
+    # [ADDITIVE, opt-in -- see config.py's own AppSettings.static_dir
+    # docstring] Registered LAST, deliberately: Starlette tries routes in
+    # registration order, so every API route/health route above still
+    # wins on an exact match; this only catches what nothing else claimed.
+    # Mounting apps/web's build here (rather than a separate reverse
+    # proxy in front of it) makes gateway + UI one same-origin Domino App
+    # -- no CORS, no cross-origin cookie story to solve.
+    if settings.app.static_dir:
+        static_dir = Path(settings.app.static_dir)
+        index_html = static_dir / "index.html"
+        assets_dir = static_dir / "assets"
+        if assets_dir.is_dir():
+            app.mount("/assets", StaticFiles(directory=assets_dir), name="web-assets")
+
+        @app.get("/{full_path:path}", include_in_schema=False)
+        async def _serve_web_spa(full_path: str) -> Response:  # noqa: ARG001 -- SPA fallback, path unused
+            return FileResponse(index_html)
+
     return app
 
 

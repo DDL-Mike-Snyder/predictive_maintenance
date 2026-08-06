@@ -10,6 +10,13 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class AppSettings(BaseModel):
     log_level: str = "INFO"
+    # [ADDITIVE, opt-in] When set, main.py mounts apps/web's own build
+    # (its `dist/` directory) and serves it same-origin from this same
+    # process -- the Domino-App-hosting path. `None` (the default) leaves
+    # every existing local/dev deployment (a separately-run `vite dev`
+    # server) completely unaffected; nothing about the current working
+    # setup changes unless this is explicitly set.
+    static_dir: str | None = None
 
 
 class DatabaseSettings(BaseModel):
