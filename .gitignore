@@ -24,6 +24,9 @@ dist/
 .vite/
 *.tsbuildinfo
 
+# app.sh's own runtime data (deploy/domino-demo) -- recreated fresh every start
+.demo-data/
+
 # Editors / OS
 .DS_Store
 .idea/
