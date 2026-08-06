@@ -53,6 +53,133 @@ this file said it wasn't; that was true when written and is stale now.
 map, but always verify against those two before trusting a paragraph like
 this one that describes commit state.
 
+## RUN THE DEMO — start here tomorrow morning
+
+Stopped for the night on 2026-08-05 with the demo built but not running
+(everything below was verified piece-by-piece, then torn down — nothing
+is currently up). This is the exact sequence to bring it back up. Every
+command assumes you're at the repo root unless a `cd` is shown. Each
+service needs its own terminal (or run with `&`/`nohup` as shown).
+
+**0. Prerequisites (should already be true from this session, verify first):**
+```bash
+docker ps --filter name=fathom-pdm-test-pg   # should show a running postgres:16-alpine container on 15432
+# If it's not running: docker start fathom-pdm-test-pg (or see "if the Postgres container is gone" below)
+```
+
+**1. Start PdM** (real Postgres, already-migrated `pdm` database):
+```bash
+cd services/pdm
+FATHOM_DATABASE__URL="postgresql+asyncpg://pdm:pdm@localhost:15432/pdm" \
+FATHOM_EVENTS__BROKERS="test-broker:9093" \
+FATHOM_EVENTS__SCHEMA_REGISTRY="http://test-schema-registry" \
+FATHOM_EVENTS__CONSUMER_GROUP="fathom-pdm-v1" \
+FATHOM_AUTH__ISSUER="https://test-issuer" \
+FATHOM_AUTH__JWKS_URL="https://test-issuer/jwks" \
+FATHOM_AUDIT__BASE_URL="http://test-audit" \
+FATHOM_REFERENCE_DATA__BASE_URL="http://test-reference-data" \
+FATHOM_OTEL__ENABLED="false" \
+.venv/bin/uvicorn fathom_pdm.main:app --host 127.0.0.1 --port 8001
+```
+Verify: `curl http://localhost:8001/healthz` → `{"status":"ok"}`.
+
+**2. Seed demo predictions** (idempotency keys are randomized per run, so
+re-running adds MORE rows rather than erroring — fine for a demo, but if
+you want a clean slate first: `docker exec fathom-pdm-test-pg psql -U pdm
+-d pdm -c "DELETE FROM pdm.prediction WHERE model_version='demo-seed-v1';"`):
+```bash
+cd services/pdm
+PDM_BASE_URL=http://localhost:8001 .venv/bin/python scripts/seed_demo_predictions.py
+```
+Verify: `curl http://localhost:8001/api/v1/pdm/predictions -H "X-Fathom-Principal: demo"` returns 5 predictions.
+
+**3. Start a real Keycloak** for the actual login flow (not the session-
+row bypass this session's own verification used — this gets you a real
+"click Sign in, log in, land in the app" demo):
+```bash
+docker run -d --name fathom-keycloak-demo -p 8082:8080 \
+  -e KEYCLOAK_ADMIN=admin -e KEYCLOAK_ADMIN_PASSWORD=admin \
+  -e KC_HEALTH_ENABLED=true \
+  -v "$(pwd)/platform/gateway/tests/integration/fixtures/fathom-realm.json":/opt/keycloak/data/import/fathom-realm.json:ro \
+  quay.io/keycloak/keycloak:25.0.4 start-dev --import-realm
+```
+Wait ~15s, then verify: `curl http://localhost:8082/realms/fathom/.well-known/openid-configuration`
+should return real JSON. **Login credentials: username `testuser`,
+password `testpass`.** The realm-import fixture already has the
+`gateway` client's redirect URIs covering `http://localhost:8000/...`
+(added this session specifically so this same fixture drives both the
+automated e2e test AND this manual demo) — no edits needed.
+
+**4. Set up and start the gateway** (its own Postgres database, migrated
+fresh each time since nothing persists it):
+```bash
+docker exec fathom-pdm-test-pg psql -U pdm -d pdm -c "CREATE DATABASE gateway_demo;"
+cd platform/gateway
+FATHOM_DATABASE__URL="postgresql+asyncpg://pdm:pdm@localhost:15432/gateway_demo" \
+FATHOM_OIDC__ISSUER="http://localhost:8082/realms/fathom" \
+FATHOM_OIDC__CLIENT_ID="gateway" \
+FATHOM_OIDC__CLIENT_SECRET="gateway-test-secret" \
+FATHOM_OIDC__REDIRECT_URI="http://localhost:8000/api/v1/gateway/session/callback" \
+FATHOM_SESSION__COOKIE_SIGNING_KEY="demo-signing-key" \
+FATHOM_SESSION__LANDING_URL="http://localhost:5173/pdm" \
+FATHOM_PDM__BASE_URL="http://localhost:8001" \
+FATHOM_PDM__OPENAPI_PATH="../../services/pdm/openapi.json" \
+.venv/bin/alembic -c alembic.ini upgrade head
+```
+Then start it (same env vars, swap the alembic command for uvicorn):
+```bash
+FATHOM_DATABASE__URL="postgresql+asyncpg://pdm:pdm@localhost:15432/gateway_demo" \
+FATHOM_OIDC__ISSUER="http://localhost:8082/realms/fathom" \
+FATHOM_OIDC__CLIENT_ID="gateway" \
+FATHOM_OIDC__CLIENT_SECRET="gateway-test-secret" \
+FATHOM_OIDC__REDIRECT_URI="http://localhost:8000/api/v1/gateway/session/callback" \
+FATHOM_SESSION__COOKIE_SIGNING_KEY="demo-signing-key" \
+FATHOM_SESSION__LANDING_URL="http://localhost:5173/pdm" \
+FATHOM_PDM__BASE_URL="http://localhost:8001" \
+FATHOM_PDM__OPENAPI_PATH="../../services/pdm/openapi.json" \
+.venv/bin/uvicorn fathom_gateway.main:app --host 127.0.0.1 --port 8000
+```
+Verify: `curl http://localhost:8000/healthz` → `{"status":"ok"}`.
+
+**5. Start apps/web:**
+```bash
+cd apps/web
+pnpm dev --port 5173
+```
+
+**6. Open the browser at `http://localhost:5173/` — use the hostname
+`localhost`, not `127.0.0.1`.** This matters: every cookie the gateway
+sets (`fathom_login`, `fathom_session`, `fathom_csrf`) carries
+`secure=True`. Modern Chrome/Firefox treat `http://localhost` (the exact
+hostname) as a secure context and will store/send Secure cookies over
+plain HTTP for it — but this was NOT verified live in a real browser this
+session (only via curl, which doesn't enforce the same-origin Secure-flag
+rules a real browser does). **If login appears to succeed but the app
+still shows "Sign in" afterward, or a cookie silently isn't being sent,
+this Secure-cookie-over-http nuance is the first thing to check** —
+either confirm you're on `localhost` not `127.0.0.1`, or drop `secure=
+True` to `secure=False` in `api/v1/session.py`'s three `set_cookie` calls
+as a local-only workaround (revert before anything real).
+
+Click "Sign in" in the app shell → real Keycloak login page → `testuser`
+/`testpass` → redirected back → land on `/pdm` (per `FATHOM_SESSION__
+LANDING_URL` above) → the real Fleet-Risk Triage screen with the 5 seeded
+predictions.
+
+**If the Postgres container is gone** (`docker ps` shows nothing): you'll
+need a fresh one with PdM's own migrations applied, including the RLS
+roles — this is a bigger lift than this runbook covers (see "How to run
+tests" further down for the general shape, or just re-run PdM's own
+Alembic migrations against a fresh `postgres:16-alpine` container as
+superuser). Worth doing this check FIRST thing tomorrow, before anything
+else, since it's the one step that could eat real time if the container
+was removed rather than just stopped.
+
+**Teardown when done:** `pkill -f uvicorn`, `docker stop fathom-keycloak-demo
+fathom-pdm-test-pg` (or `docker rm -f fathom-keycloak-demo` if you don't
+need Keycloak again), `docker exec fathom-pdm-test-pg psql -U pdm -d pdm
+-c "DROP DATABASE gateway_demo;"`.
+
 ## Where things stand, in one paragraph
 
 The spec corpus (`docs/architecture/`, `docs/build/`) is **done** — two full
