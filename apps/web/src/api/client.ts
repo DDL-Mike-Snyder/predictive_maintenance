@@ -7,13 +7,28 @@ import { correlationId } from "./correlation";
 // gateway's real, committed openapi.json (unlike that illustrative example)
 // already includes the full "/api/v1/<slug>/..." prefix in every path key
 // (fathom_operation_id/build_router's own convention, services/pdm's
-// openapi.json does the same) -- so baseUrl is "", and every call site
-// below uses the full path, matching `paths`' real generated keys exactly.
-// `paths` is generated (openapi-typescript, `pnpm generate:types`) from the
-// REAL, committed `platform/gateway/openapi.json` -- 09 §2.6/50 §10.2's
-// "no hand-written wire type" rule, satisfied for real, not asserted.
+// openapi.json does the same) -- so every call site below uses the full
+// path, matching `paths`' real generated keys exactly. `paths` is
+// generated (openapi-typescript, `pnpm generate:types`) from the REAL,
+// committed `platform/gateway/openapi.json` -- 09 §2.6/50 §10.2's "no
+// hand-written wire type" rule, satisfied for real, not asserted.
+//
+// [Real bug, found by actually running this hosted at a real sub-path,
+// not just in local dev.] `baseUrl` used to be a hardcoded "" -- correct
+// for local dev (served at "/"), but wrong the moment this app is hosted
+// under a real path prefix (e.g. Domino's own `/apps-internal/<appId>/`):
+// every domain-absolute `fetch("/api/v1/...")` call went to the DOMAIN
+// ROOT, missing that prefix entirely, so every API call 404'd silently
+// against whatever Domino's own proxy does with an unmatched root path --
+// the exact same class of bug `main.tsx`'s own `VITE_BASE_URL` handling
+// already fixed for static assets. `import.meta.env.BASE_URL` is that
+// same build-time value; trimming its trailing slash reproduces the old
+// "" behavior for local dev (BASE_URL="/") and produces the real prefix
+// once deployed (BASE_URL="/apps-internal/<appId>/").
+const baseUrl = import.meta.env.BASE_URL.replace(/\/$/, "");
+
 export const client = createClient<paths>({
-  baseUrl: "",
+  baseUrl,
   credentials: "same-origin",
 });
 

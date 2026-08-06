@@ -36,7 +36,11 @@ export function IdentityBlock() {
     });
     // §4.3: clear the entire query cache, navigate to `/`.
     await queryClient.clear();
-    window.location.href = "/";
+    // Real bug, same class as client.ts's own -- a domain-absolute "/"
+    // would drop this app's own base path (e.g. Domino's own
+    // /apps-internal/<appId>/) the instant this is hosted anywhere but
+    // the domain root.
+    window.location.href = import.meta.env.BASE_URL;
   }
 
   if (session.isLoading) {
@@ -46,7 +50,7 @@ export function IdentityBlock() {
   const status = (session.error as { status?: number } | undefined)?.status;
   if (status === 404 || status === 401) {
     return (
-      <a className="btn primary" href="/api/v1/gateway/session/login">
+      <a className="btn primary" href={`${import.meta.env.BASE_URL}api/v1/gateway/session/login`}>
         Sign in
       </a>
     );
