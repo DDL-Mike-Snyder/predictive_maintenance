@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import base64
 import datetime as dt
+import json
+import uuid
 
-from fastapi import Cookie, Depends, Header, Request
+from fastapi import Cookie, Depends, Header, Request, Response
 from fathom_py_common import ProblemException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -37,8 +40,46 @@ def get_oidc_client(request: Request) -> OidcClient:
     return request.app.state.oidc_client
 
 
+async def _auto_provision_demo_session(
+    session: AsyncSession, response: Response
+) -> GatewaySessionRow:
+    """[ADDITIVE, opt-in -- `SessionSettings.demo_auto_login`, default
+    `False`.] Real Keycloak+OIDC login needs a Keycloak reachable from
+    BOTH the gateway process and an arbitrary end-user's own browser --
+    for a Domino-App-hosted demo, that means a second public-facing App
+    just to expose Keycloak, real infrastructure this demo doesn't need.
+    This mints a session with no login step at all, so a Domino-hosted
+    demo has *something* rather than a login screen with nowhere real to
+    redirect to. `access_token` is a well-formed-but-unsigned JWT shape
+    (matches `oidc.py::principal_id_from_access_token`'s own decode-only
+    contract) carrying a fixed demo `sub` -- never checked against a real
+    issuer, because there is no real issuer in this mode."""
+    session_id = str(uuid.uuid4())
+    now = dt.datetime.now(dt.UTC)
+    header = base64.urlsafe_b64encode(b'{"alg":"none"}').decode().rstrip("=")
+    payload = (
+        base64.urlsafe_b64encode(json.dumps({"sub": "domino-demo-user"}).encode())
+        .decode()
+        .rstrip("=")
+    )
+    row = GatewaySessionRow(
+        session_id=session_id,
+        access_token=f"{header}.{payload}.sig",
+        expires_at=now + dt.timedelta(hours=8),
+        created_at=now,
+    )
+    session.add(row)
+    await session.flush()
+    response.set_cookie(
+        "fathom_session", session_id, max_age=28800, httponly=True, secure=True, samesite="lax"
+    )
+    return row
+
+
 async def current_gateway_session(
+    response: Response,
     session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
     fathom_session: str | None = Cookie(default=None),
 ) -> GatewaySessionRow:
     """30-gateway.md §8.1.2: `GET /session` (and the pass-through proxy,
@@ -48,6 +89,8 @@ async def current_gateway_session(
     matching a missing resource -- not `401`, since the caller did nothing
     wrong by not (yet) having authenticated."""
     if fathom_session is None:
+        if settings.session.demo_auto_login:
+            return await _auto_provision_demo_session(session, response)
         raise ProblemException(
             type="urn:fathom:problem:gateway:no-session",
             title="No active session",

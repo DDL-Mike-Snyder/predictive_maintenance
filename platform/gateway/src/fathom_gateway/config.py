@@ -51,6 +51,13 @@ class SessionSettings(BaseModel):
     cookie_signing_key: str
     session_ttl_seconds: int = 28800  # 8h, 31-auth.md's own default extended-identity window
     landing_url: str = "/"
+    # [ADDITIVE, opt-in, default False] See deps.py::_auto_provision_demo
+    # _session's own docstring -- a Domino-App-hosted demo has no
+    # Keycloak reachable from both the gateway and an arbitrary browser,
+    # so this mode mints a session with no login step at all rather than
+    # standing up a second public App just to expose Keycloak. Every
+    # existing deployment (this flag unset) is unaffected.
+    demo_auto_login: bool = False
 
 
 class OtelSettings(BaseModel):
