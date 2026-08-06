@@ -8,11 +8,36 @@
 # has no Keycloak reachable from both the gateway and an arbitrary
 # browser). SQLite, not the real CloudNativePG Postgres every other
 # deployment in this repo uses -- a demo doesn't need RLS.
+#
+# [REAL, FOUND BY ACTUALLY RUNNING THIS AS A REGISTERED APP, not just in
+# an interactive workspace] A Domino App gets its OWN fresh `git clone`
+# of the repo in its own container -- NOT the same filesystem as any
+# interactive workspace, even one that already has venvs/build output
+# sitting in the identical-looking /mnt/code path. This script is
+# self-sufficient because of that: it builds both services' venvs from
+# scratch every start (no Node.js in this environment either, which is
+# why apps/web's static build is a COMMITTED snapshot -- see
+# deploy/domino-demo/web-dist/'s own note -- rather than built here).
 set -e
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DATA_DIR="$REPO_ROOT/.demo-data"
 mkdir -p "$DATA_DIR"
+
+echo "=== FATHOM demo: installing Python 3.12 ==="
+uv python install 3.12
+
+echo "=== FATHOM demo: setting up PdM's venv ==="
+cd "$REPO_ROOT/services/pdm"
+uv venv --python 3.12 .venv
+uv pip install -e . --python .venv/bin/python
+uv pip install aiosqlite --python .venv/bin/python
+
+echo "=== FATHOM demo: setting up gateway's venv ==="
+cd "$REPO_ROOT/platform/gateway"
+uv venv --python 3.12 .venv
+uv pip install -e . --python .venv/bin/python
+uv pip install aiosqlite --python .venv/bin/python
 
 echo "=== FATHOM demo: initializing schemas ==="
 PDM_DB_PATH="$DATA_DIR/pdm.db" "$REPO_ROOT/services/pdm/.venv/bin/python" \
@@ -61,5 +86,5 @@ export FATHOM_SESSION__DEMO_AUTO_LOGIN="true"
 export FATHOM_SESSION__LANDING_URL="/pdm"
 export FATHOM_PDM__BASE_URL="http://localhost:8001"
 export FATHOM_PDM__OPENAPI_PATH="$REPO_ROOT/services/pdm/openapi.json"
-export FATHOM_APP__STATIC_DIR="$REPO_ROOT/apps/web/dist"
+export FATHOM_APP__STATIC_DIR="$REPO_ROOT/deploy/domino-demo/web-dist"
 exec .venv/bin/uvicorn fathom_gateway.main:app --host 0.0.0.0 --port 8889
