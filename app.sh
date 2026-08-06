@@ -49,7 +49,7 @@ if [ "$EXISTING" = "0" ]; then
     "$REPO_ROOT/services/pdm/scripts/seed_demo_predictions.py"
 fi
 
-echo "=== FATHOM demo: starting gateway (foreground, port 8888) ==="
+echo "=== FATHOM demo: starting gateway (foreground, port 8889) ==="
 cd "$REPO_ROOT/platform/gateway"
 export FATHOM_DATABASE__URL="sqlite+aiosqlite:///$DATA_DIR/gateway.db"
 export FATHOM_OIDC__ISSUER="https://demo-issuer/realms/fathom"
@@ -62,4 +62,4 @@ export FATHOM_SESSION__LANDING_URL="/pdm"
 export FATHOM_PDM__BASE_URL="http://localhost:8001"
 export FATHOM_PDM__OPENAPI_PATH="$REPO_ROOT/services/pdm/openapi.json"
 export FATHOM_APP__STATIC_DIR="$REPO_ROOT/apps/web/dist"
-exec .venv/bin/uvicorn fathom_gateway.main:app --host 0.0.0.0 --port 8888
+exec .venv/bin/uvicorn fathom_gateway.main:app --host 0.0.0.0 --port 8889
