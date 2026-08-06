@@ -1,0 +1,233 @@
+# platform/gateway/helm/values.yaml
+# 09-monorepo-and-conventions.md §4.4.1 -- the mandatory shape, adapted to
+# what platform/gateway/src ACTUALLY is today, not 30-gateway.md's full
+# target design. Two things make this chart genuinely smaller than
+# services/pdm/helm's own:
+#
+#   1. config.py's `Settings` has exactly six sections: app, database,
+#      oidc, session, otel, pdm. No auth/audit/referenceData/domino
+#      sections (services/pdm/helm/values.yaml has all four) -- gateway's
+#      own code never reads any of those env vars, so this chart never
+#      renders them. Every FATHOM_<SECTION>__<FIELD> below corresponds to
+#      a real field on a real Settings model in config.py -- checked
+#      field-by-field, not assumed from services/pdm's own shape.
+#   2. Gateway has NO `fathom-sync` dependency at all (pyproject.toml;
+#      observability/readiness.py's own docstring: "it has no fathom_sync
+#      dependency at all"; main.py's own docstring: "differs from
+#      services/pdm's own main.py in owning no outbox/broker"). No
+#      `events:` block, no Redpanda egress, no publishes/consumes list --
+#      unlike every domain service's chart, including pdm's.
+#
+# 30-gateway.md §9-§11 describes a much larger gateway than this: DECISION
+# G-2's two Deployments (an HTTP API plus a `gateway-projector` proposal
+# consumer, KEDA-scaled on lag), a nine-sub-application-plus-platform-service
+# fan-out (§11.1's own `toServices` list has fifteen entries), and
+# consumption of ten producers' `*.proposal.v1` events. NONE of that exists
+# in platform/gateway/src as built: main.py wires exactly one Deployment,
+# one upstream (`pdm`, via PdmUpstreamSettings -- DECISION G-3, "this
+# vertical slice proxies only pdm, the one real backend that exists"), and
+# zero event consumption. This chart matches the real code. Every place
+# below where the full spec's value differs from what's rendered here is
+# called out inline, not silently narrowed.
+
+# ---- identity ---------------------------------------------------------------
+slug: gateway                          # canonical slug, 03 §3.1
+apiMajor: 1
+
+image:
+  repository: registry.internal/fathom/gateway
+  digest: ""                           # sha256:... -- set by CI on merge. PLACEHOLDER until CI publishes a real digest
+  tag: ""
+  pullPolicy: IfNotPresent
+  pullSecrets: [fathom-registry]
+
+replicaCount: 2
+
+# ---- workload -----------------------------------------------------------------
+resources:
+  requests: { cpu: 100m, memory: 256Mi }
+  limits:   { cpu: "1",  memory: 512Mi }
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile: { type: RuntimeDefault }
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities: { drop: ["ALL"] }
+
+nodeSelector:
+  fathom.navy/pool: program            # program workloads on their own pool, 01 §11 -- gateway is a Sustainment Plane service like the nine domain services, same pool
+tolerations: []
+terminationGracePeriodSeconds: 30
+
+# ---- probes -------------------------------------------------------------------
+probes:
+  liveness:  { path: /healthz, initialDelaySeconds: 5,  periodSeconds: 10, failureThreshold: 3 }
+  readiness: { path: /readyz,  initialDelaySeconds: 3,  periodSeconds: 5,  failureThreshold: 3 }
+
+# ---- application config (becomes FATHOM_* env vars; see §4.5) ---------------
+# config.py's AppSettings has ONLY log_level -- no staleness_bound_seconds,
+# no cors_allowed_origins (both are real fields on services/pdm's own
+# AppSettings, neither exists on gateway's). Do not carry those two over.
+app:
+  logLevel: INFO
+
+# ---- owned datastore ----------------------------------------------------------
+# 30-gateway.md §11.1's own real values block for this cluster (poolSize: 20,
+# not pdm's 10) -- DECISION G-5 (no Redis) means every session lookup on
+# every authenticated request is a DB round trip, so this pool needs more
+# headroom than pdm's request-shaped-but-less-frequent database access.
+database:
+  clusterName: fathom-gateway-pg       # CloudNativePG Cluster in fathom-data. Exactly one
+  name: gateway
+  secretRef: fathom-gateway-pg-app     # the app's own role. Created by External Secrets, never in the chart
+  migrationSecretRef: fathom-gateway-pg-migrate  # distinct owner/DDL-privilege role -- see migration-job.yaml's own docstring for why this is still a real, separate credential even though (unlike PdM) this schema has no RLS/BYPASSRLS requirement
+  poolSize: 20
+  maxOverflow: 10
+
+  # CloudNativePG Cluster CR itself -- see postgres-cluster.yaml's own
+  # docstring for the collision-avoidance reasoning (identical to PdM's).
+  provisionCluster: true               # false if a platform-level pipeline provisions this Cluster instead, or the CNPG operator's CRDs aren't installed yet (e.g. a smoke-test sandbox)
+  instances: 3                         # real HA. Single instance is a values-dev.yaml/values-smoke-test.yaml override, not the default
+  storageSize: 10Gi                    # gateway_session + idempotency_keys only, no domain data -- smaller than pdm's 20Gi
+  storageClassName: ""                 # "" = cluster's own default StorageClass
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits:   { cpu: "1",  memory: 1Gi }
+
+migrations:
+  enabled: true                        # rendered as a pre-install,pre-upgrade Helm hook Job, 01 §11
+  backoffLimit: 0                      # fail the release rather than retry a partial migration
+
+# Escape hatches for an environment missing the corresponding operator's
+# CRDs -- both default true; every real environment has them.
+externalSecret:
+  enabled: true
+serviceMonitor:
+  enabled: true
+
+# ---- OIDC (FATHOM_OIDC__*, config.py OidcSettings) ---------------------------
+# issuer/clientId/redirectUri are non-secret (configmap.yaml). client_secret
+# is genuinely secret -- config.py's own docstring: "the gateway's own
+# confidential-client credential" -- and is projected via secrets.appSecretRef
+# below (externalsecret.yaml), never a chart value.
+oidc:
+  issuer: https://keycloak.internal/realms/fathom      # 31-auth.md §2's Keycloak binding -- includes the realm segment already, matching services/pdm's own auth.issuer shape
+  clientId: fathom-gateway
+  redirectUri: https://fathom.internal/api/v1/gateway/session/callback
+
+# ---- session (FATHOM_SESSION__*, config.py SessionSettings) -----------------
+# cookie_signing_key is ALSO genuinely secret (signs the short-lived
+# PKCE/state cookie config.py's own docstring describes) -- same
+# secrets.appSecretRef Secret as oidc.client_secret below, not a separate
+# one; see externalsecret.yaml's own docstring for why one Secret, two keys.
+session:
+  sessionTtlSeconds: 28800             # 8h, 31-auth.md's own default extended-identity window (config.py's own default, restated explicitly rather than left to the Settings-class default so this chart is the visible source of truth)
+  landingUrl: "/"
+
+# ---- otel (FATHOM_OTEL__*, config.py OtelSettings) ---------------------------
+otel:
+  enabled: false
+
+# ---- PdM upstream (FATHOM_PDM__*, config.py PdmUpstreamSettings) ------------
+# DECISION G-3 / proxy.py's own module docstring: the pass-through surface
+# this vertical slice actually builds is PdM alone, not the nine
+# sub-applications 30-gateway.md's full spec describes. base_url points at
+# PdM's own in-namespace Service (services/pdm/helm/templates/service.yaml);
+# openapi_path is the committed copy baked into this image at build time
+# (09 §4.2's monorepo layout), not a path on PdM's own filesystem.
+pdm:
+  baseUrl: http://pdm.fathom-sustainment.svc.cluster.local:8000
+  openapiPath: /app/openapi/pdm.json
+
+# ---- non-database secrets (FATHOM_OIDC__CLIENT_SECRET, FATHOM_SESSION__COOKIE_SIGNING_KEY) --
+# [JUDGMENT CALL -- documented here since no build doc specifies this.]
+# Reuses the SAME ExternalSecret-backed pattern database.secretRef/
+# migrationSecretRef already establishes, generalized to a SECOND Secret
+# name for the two non-database secret values config.py needs
+# (OidcSettings.client_secret, SessionSettings.cookie_signing_key). One
+# Secret, two keys, one ExternalSecret CR with two `data` entries (see
+# externalsecret.yaml) -- not two separate Secrets/ExternalSecrets, since
+# both values are consumed by the same one Deployment and neither is ever
+# needed by the migration Job, unlike the DB credential's real
+# app-vs-migration privilege split.
+secrets:
+  appSecretRef: fathom-gateway-app-secrets
+
+# ---- scaling ------------------------------------------------------------------
+# hpa is the right default for the same reason PdM's is: main.py builds one
+# synchronous request/response FastAPI app, not an event worker. Unlike
+# 30-gateway.md §11.2's full DECISION G-2 (a second `gateway-projector`
+# Deployment, KEDA-scaled on consumer lag, for a proposal consumer that
+# doesn't exist in this vertical slice's code at all -- no events dependency,
+# see this file's own header comment) -- this chart renders exactly one
+# Deployment, so `keda` mode has nothing to scale yet. Left available as a
+# mode (matching pdm's own autoscaling.mode enum) rather than removed, so
+# adding the projector Deployment later doesn't also require re-adding this.
+autoscaling:
+  mode: hpa                            # hpa | keda | none
+  minReplicas: 2
+  maxReplicas: 6
+  targetRequestsPerSecond: 50
+
+# ---- network boundary (see §4.4.2; 30-gateway.md §11.3 has gateway's OWN
+# full-spec edge table, narrowed here to what this vertical slice's code
+# actually calls -- see the two [JUDGMENT CALL] comments below) -------------
+networkPolicy:
+  enabled: true                        # NEVER false in any environment
+  ingress:
+    # [JUDGMENT CALL] 30-gateway.md §11.3's own full-spec value is
+    # `fromServices: [pma, pdm]` (pma's evidence-materialisation edge, 09
+    # §4.4.2's `pma -> gateway` row; PdM's Domino Endpoint proxy edge, the
+    # `pdm -> gateway` row). Neither exists in this vertical slice's actual
+    # code: no `pma` service is built anywhere in this repo, and PdM's own
+    # services/pdm/helm/values.yaml declares networkPolicy.egress.toServices
+    # as `[auth, audit, reference-data]` -- NOT `gateway` -- so PdM never
+    # actually calls gateway today. Left empty rather than carried over from
+    # the full spec, so the CI-tested ingress set matches only real traffic.
+    fromServices: []
+    # [JUDGMENT CALL] 30-gateway.md §11.3's own full-spec value is
+    # `fromNamespaces: [ingress-nginx, domino-compute]`. `ingress-nginx` (the
+    # program's own ingress controller) is kept -- it's the real front door
+    # for this vertical slice's actual browser-facing /session/login flow,
+    # not a guess. `domino-compute` is 09 §4.4.2's sanctioned
+    # "domino-compute namespace -> gateway" row for batch-scoring writes
+    # routed through the gateway -- but that is NOT how this vertical
+    # slice's own code works today: models/tier0-historical/entrypoint.py
+    # POSTs directly to PdM's own bulk-ingest API (see CLAUDE.md's "AWS
+    # smoke-test deployment" / Domino Job entrypoint sections), bypassing
+    # gateway entirely. Omitted here for the same "match real traffic, not
+    # the full target spec" reason as fromServices above -- add back if
+    # that path is ever rebuilt to actually route through gateway, per the
+    # sanctioned edge it already has.
+    fromNamespaces: [ingress-nginx]
+    allowPrometheusScrape: true
+  egress:
+    toOwnDatabase: true                 # -> fathom-data, this service's cluster only
+    # [JUDGMENT CALL, see values.yaml's own oidc/session comments above.]
+    # Keycloak is deployed as a StatefulSet inside the `auth` chart
+    # (31-auth.md §2.1: "platform/auth/keycloak/, deployed by the auth
+    # chart as a StatefulSet"), in the SAME fathom-sustainment namespace as
+    # gateway -- the identical footing 09 §4.4.2's already-sanctioned "any
+    # service -> auth" edge stands on. But it is a DISTINCT pod from
+    # `auth`'s own API Deployment, so it does not carry the
+    # `fathom.navy/service: auth` label networkPolicy.egress.toServices
+    # matches on. [ESTABLISHED HERE, same footing as toKeyService/
+    # toObjectStore's own precedent in 09 §4.4.2 for exactly this shape of
+    # edge -- a named boolean for a peer outside the toServices/toNamespaces
+    # peer-set assumptions]: a new toOidcIssuer boolean, matching pods
+    # labelled `app.kubernetes.io/name: keycloak` in-namespace (no
+    # namespaceSelector -- same namespace as gateway), port 8443 (Keycloak's
+    # own default HTTPS listener; no build doc names this port, so this is
+    # a concrete choice made here so the chart has something real to render
+    # and lint, same footing as externalsecret.yaml's own `fathom-vault`
+    # SecretStore-name assumption).
+    toOidcIssuer: true
+    toServices: [pdm]                   # the ONE real upstream this vertical slice proxies to (DECISION G-3) -- NOT 30-gateway.md §11.1's full fifteen-entry list
+    toNamespaces: []                    # cross-namespace egress beyond the two named booleans above. Empty -- no Domino Endpoint proxy (§5.6) is built in this vertical slice
+    allowDNS: true

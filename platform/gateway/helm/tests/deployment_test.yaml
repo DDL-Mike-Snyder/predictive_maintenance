@@ -1,0 +1,66 @@
+suite: Deployment
+templates:
+  - deployment.yaml
+tests:
+  - it: is a Deployment wired to the shared ConfigMap, the DB Secret, and the app-secrets Secret -- never a literal secret value
+    asserts:
+      - isKind:
+          of: Deployment
+      - equal:
+          path: spec.template.spec.containers[0].envFrom
+          value:
+            - configMapRef:
+                name: RELEASE-NAME-gateway
+            - secretRef:
+                name: fathom-gateway-pg-app
+            - secretRef:
+                name: fathom-gateway-app-secrets
+      - notExists:
+          path: spec.template.spec.containers[0].env
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem
+          value: true
+      - equal:
+          path: spec.template.spec.securityContext.runAsNonRoot
+          value: true
+
+  - it: uses the digest when CI has set one, not the mutable tag
+    set:
+      image.repository: registry.internal/fathom/gateway
+      image.digest: sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef
+      image.tag: v1.2.3
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: registry.internal/fathom/gateway@sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef
+
+  - it: falls back to the tag only when no digest is set (local dev)
+    set:
+      image.digest: ""
+      image.tag: dev-local
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: registry.internal/fathom/gateway:dev-local
+
+  - it: matches values.yaml's replicaCount by default
+    asserts:
+      - equal:
+          path: spec.replicas
+          value: 2
+
+  - it: "honors values-dev.yaml's replicaCount: 1"
+    values:
+      - ../values-dev.yaml
+    asserts:
+      - equal:
+          path: spec.replicas
+          value: 1
+
+  - it: follows secrets.appSecretRef when overridden, not a hardcoded name
+    set:
+      secrets.appSecretRef: some-other-app-secrets
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].envFrom[2].secretRef.name
+          value: some-other-app-secrets

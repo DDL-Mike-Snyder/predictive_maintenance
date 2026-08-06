@@ -1,0 +1,55 @@
+# 09-monorepo-and-conventions.md §4.5: every non-secret env var
+# platform/gateway/src/fathom_gateway/config.py's Settings needs, rendered
+# as its own key so the Deployment's plain envFrom/configMapRef projects it
+# verbatim. FATHOM_DATABASE__URL, FATHOM_OIDC__CLIENT_SECRET, and
+# FATHOM_SESSION__COOKIE_SIGNING_KEY are all deliberately absent -- see
+# externalsecret_test.yaml. config.py's own AppSettings has ONLY log_level
+# (no staleness_bound_seconds/cors_allowed_origins, unlike PdM's) -- this
+# suite pins that down too, not just what IS present.
+suite: ConfigMap carries every non-secret Settings field, and nothing PdM-shaped that doesn't exist on gateway's own Settings
+templates:
+  - configmap.yaml
+tests:
+  - it: renders one key per non-secret Settings field, with no secret value present
+    asserts:
+      - isKind:
+          of: ConfigMap
+      - equal:
+          path: data
+          value:
+            FATHOM_APP__LOG_LEVEL: "INFO"
+            FATHOM_DATABASE__POOL_SIZE: "20"
+            FATHOM_DATABASE__MAX_OVERFLOW: "10"
+            FATHOM_OIDC__ISSUER: "https://keycloak.internal/realms/fathom"
+            FATHOM_OIDC__CLIENT_ID: "fathom-gateway"
+            FATHOM_OIDC__REDIRECT_URI: "https://fathom.internal/api/v1/gateway/session/callback"
+            FATHOM_SESSION__SESSION_TTL_SECONDS: "28800"
+            FATHOM_SESSION__LANDING_URL: "/"
+            FATHOM_OTEL__ENABLED: "false"
+            FATHOM_PDM__BASE_URL: "http://pdm.fathom-sustainment.svc.cluster.local:8000"
+            FATHOM_PDM__OPENAPI_PATH: "/app/openapi/pdm.json"
+      - notExists:
+          path: data.FATHOM_DATABASE__URL
+      - notExists:
+          path: data.FATHOM_OIDC__CLIENT_SECRET
+      - notExists:
+          path: data.FATHOM_SESSION__COOKIE_SIGNING_KEY
+      # gateway's own AppSettings has no staleness_bound_seconds/
+      # cors_allowed_origins field at all -- PdM's does. Assert these
+      # never get carried over by mistake.
+      - notExists:
+          path: data.FATHOM_APP__STALENESS_BOUND_SECONDS
+      - notExists:
+          path: data.FATHOM_APP__CORS_ALLOWED_ORIGINS
+      # gateway has no auth/audit/referenceData/domino/events sections on
+      # its Settings class at all.
+      - notExists:
+          path: data.FATHOM_AUTH__ISSUER
+      - notExists:
+          path: data.FATHOM_AUDIT__BASE_URL
+      - notExists:
+          path: data.FATHOM_REFERENCE_DATA__BASE_URL
+      - notExists:
+          path: data.FATHOM_DOMINO__API_HOST
+      - notExists:
+          path: data.FATHOM_EVENTS__BROKERS

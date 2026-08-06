@@ -1,0 +1,16 @@
+{{/*
+Skipped below 2 replicas (values-dev.yaml's replicaCount: 1): minAvailable:1
+against a single replica would block all voluntary eviction, not protect it.
+Identical shape to services/pdm/helm's own poddisruptionbudget.yaml.
+*/}}
+{{- if gt (int .Values.replicaCount) 1 }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "fathom.fullname" . }}
+  labels: {{- include "fathom.labels" . | nindent 4 }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: {{- include "fathom.selectorLabels" . | nindent 6 }}
+{{- end }}

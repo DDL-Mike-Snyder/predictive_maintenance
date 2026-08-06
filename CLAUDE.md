@@ -1233,6 +1233,64 @@ real step per the architecture's own dependency order: `apps/web` (the
 operator UI) can now be built against a real, working BFF instead of a
 throwaway auth shim.
 
+## 2026-08-06 — platform/gateway's Dockerfile + Helm chart
+
+Per the model-allocation policy's own named example ("Parallelizing
+genuinely independent build tasks (e.g. Dockerfile + Helm chart)"), these
+two were built by two parallel Sonnet 5 subagents, each independently
+re-verified afterward with real commands (not trusted from either
+subagent's own self-report) — same discipline as PdM's own Dockerfile +
+Helm chart build.
+
+**Dockerfile**: mirrors `services/pdm/Dockerfile`'s multi-stage `uv`
+build exactly (same digest-pinned base image and `uv` version, verbatim —
+not re-derived), adapted for gateway's own path depth
+(`/build/platform/gateway`, not `/build/services/pdm`) and its smaller
+dependency set — three shared packages (`canonical-schemas`, `contracts`,
+`py-common`), not PdM's four, since gateway has no `fathom-sync`
+dependency at all (no outbox, no broker). `platform/gateway/uv.lock`
+didn't exist yet and was generated as part of this pass. **Verified for
+real**: `docker build` succeeds, the container actually runs, and
+`/healthz`/`/readyz` both return real 200s against a real Postgres
+(readyz correctly went 503→200 when the test database was created,
+proving the check is real, not a stub).
+
+**Helm chart** (`platform/gateway/helm/`): mirrors `services/pdm/helm/`'s
+file structure, but every value was checked field-by-field against
+gateway's own `config.py`/`main.py`/`migrations/env.py`/`observability
+/readiness.py` rather than assumed from PdM's shape — no `events:`/
+Redpanda block, no `auth`/`audit`/`referenceData`/`domino` sections
+(gateway's `Settings` has none of those). Two real judgment calls, both
+documented inline in `values.yaml`: (1) NetworkPolicy ingress — 30-gateway
+.md §11.3's own full-spec value (`fromNamespaces: [ingress-nginx,
+domino-compute]`) was found and then deliberately narrowed to
+`[ingress-nginx]` only, since the `domino-compute` batch-scoring path
+this vertical slice actually has POSTs directly to PdM's own bulk-ingest
+API (`models/tier0-historical/entrypoint.py`), bypassing gateway
+entirely — the chart matches real traffic, not the eventual full-spec
+target; (2) OIDC's `client_secret` + session's `cookie_signing_key` are
+projected via a third `ExternalSecret` document (`secrets.appSecretRef`,
+one Secret, two keys), alongside the existing DB app/migration split —
+three `ExternalSecret` documents total, not PdM's one. A new
+`toOidcIssuer` egress boolean was added (matching `toKeyService`/
+`toObjectStore`'s own established precedent) since Keycloak runs as a
+separate pod inside the `auth` chart, not behind the generic
+`toServices` peer-set. **Independently re-verified, not just trusted**:
+`helm lint`/`helm template` clean against all three values files
+(default, dev, smoke-test — smoke-test correctly omits the CNPG Cluster/
+migration Job/ExternalSecret/HPA/PDB/ServiceMonitor, matching PdM's own
+escape-hatch pattern), and `helm unittest .` → 28/28 passing across 7
+suites, re-run from scratch after the subagent's own build (not the same
+process's output taken on faith).
+
+**Still not done for `platform/gateway`**: no real CNPG operator or
+Vault paths have ever been exercised for this chart (same caveat as
+PdM's own chart before it had a real cluster to deploy against); the
+`toOidcIssuer` port choice (Keycloak's 8443) is a concrete, working
+assumption, not sourced from a build doc that names it. Next real step
+unchanged from before this pass: `apps/web`, now buildable against a
+gateway with both a working BFF and a real deployable chart.
+
 ## Where to find more context
 
 - `git log --oneline` — every commit this session (and the many before it)

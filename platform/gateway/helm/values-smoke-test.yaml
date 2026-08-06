@@ -1,0 +1,61 @@
+# platform/gateway/helm/values-smoke-test.yaml
+#
+# IMPORTANT DIFFERENCE FROM services/pdm/helm/values-smoke-test.yaml: that
+# file is a historical record of a real AWS smoke-test deployment that
+# actually happened (see CLAUDE.md's "AWS smoke-test deployment" section).
+# platform/gateway has NEVER been deployed anywhere, real or sandboxed --
+# this file mirrors the SHAPE of PdM's own override (same escape hatches,
+# same reasoning for each one) as a starting point for whoever runs
+# gateway's own first smoke test, not a record of what was actually done.
+# Update this file's own comments after a real smoke test the same way
+# PdM's own file was updated -- point at the real registry/cluster/sandbox
+# namespace once one exists, rather than leaving these placeholders in
+# place and assumed-current.
+
+image:
+  repository: registry.internal/fathom/gateway   # PLACEHOLDER -- point at the real sandbox ECR/registry repo once a real smoke test picks one, same as PdM's own override did
+  tag: smoke-test
+  pullPolicy: Always       # a reused "smoke-test" tag needs Always, not IfNotPresent, the same reasoning as PdM's own override
+  pullSecrets: []          # PLACEHOLDER -- depends on the sandbox's own image-pull setup, unknown until one exists
+
+replicaCount: 1
+
+nodeSelector: null          # {} deep-merges and doesn't clear the base value -- PLACEHOLDER, matches PdM's own note that the real fathom.navy/pool: program node pool may not exist in a given sandbox cluster
+
+# Same reasoning as PdM's own override: migrations need owner privileges
+# distinct from the app's own restricted role (migration-job.yaml's own
+# docstring); if a sandbox's CNPG operator/ExternalSecrets aren't wired up
+# yet, run `alembic upgrade head` by hand against an owner DSN instead and
+# disable this.
+migrations:
+  enabled: false
+
+database:
+  secretRef: fathom-gateway-pg-app
+  clusterName: gateway-postgres   # PLACEHOLDER -- not a real CloudNativePG Cluster name; substitute whatever hand-rolled Postgres a CNPG-operator-less sandbox actually uses
+  provisionCluster: false         # PLACEHOLDER -- true once a real sandbox with the CNPG operator installed is chosen
+
+oidc:
+  issuer: "http://unused.invalid"          # PLACEHOLDER -- no real Keycloak realm has been stood up against this service; a real smoke test needs a real fathom realm reachable from wherever this is deployed
+  redirectUri: "http://unused.invalid/api/v1/gateway/session/callback"
+
+autoscaling:
+  mode: none
+  minReplicas: 1
+  maxReplicas: 1
+
+# NEVER false in a real environment (values.yaml's own comment) -- true
+# here only as a placeholder for a sandbox where gateway's real peers
+# (ingress-nginx, PdM, Keycloak) may not exist yet. Explicitly scoped to a
+# hypothetical smoke test; do not carry this override forward without
+# checking it against whatever sandbox actually gets used.
+networkPolicy:
+  enabled: false
+
+# PLACEHOLDER -- true/false depends on whether the eventual sandbox cluster
+# has the External Secrets Operator / Prometheus Operator CRDs installed,
+# unknown until one is chosen.
+externalSecret:
+  enabled: false
+serviceMonitor:
+  enabled: false

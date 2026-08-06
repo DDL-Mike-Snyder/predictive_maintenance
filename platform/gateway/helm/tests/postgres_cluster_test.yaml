@@ -1,0 +1,75 @@
+# 09-monorepo-and-conventions.md §4.4.1/§4.4.2: every service gets its own
+# CloudNativePG Cluster, named fathom-<slug>-pg, that the NetworkPolicy
+# template already assumes exists. Same coverage as
+# services/pdm/helm/tests/postgres_cluster_test.yaml, renamed for gateway.
+suite: CloudNativePG Cluster is provisioned with real HA and collision-free secret names
+templates:
+  - postgres-cluster.yaml
+tests:
+  - it: is a Cluster named after database.clusterName, digest-pinned image, real superuser access, matching database.instances
+    asserts:
+      - isAPIVersion:
+          of: postgresql.cnpg.io/v1
+      - isKind:
+          of: Cluster
+      - equal:
+          path: metadata.name
+          value: fathom-gateway-pg
+      - equal:
+          path: spec.instances
+          value: 3
+      - equal:
+          path: spec.enableSuperuserAccess
+          value: true
+      - matchRegex:
+          path: spec.imageName
+          pattern: "@sha256:[0-9a-f]{64}$"
+
+  - it: redirects CNPG's own bootstrap and superuser secrets away from the names this chart's ExternalSecrets manage, so the two controllers never fight over one Secret
+    asserts:
+      - notEqual:
+          path: spec.bootstrap.initdb.secret.name
+          value: fathom-gateway-pg-app
+      - notEqual:
+          path: spec.bootstrap.initdb.secret.name
+          value: fathom-gateway-pg-migrate
+      - notEqual:
+          path: spec.superuserSecret.name
+          value: fathom-gateway-pg-app
+      - notEqual:
+          path: spec.superuserSecret.name
+          value: fathom-gateway-pg-migrate
+      - notEqual:
+          path: spec.bootstrap.initdb.secret.name
+          value: spec.superuserSecret.name
+
+  - it: sizes storage from database.storageSize and omits storageClass when database.storageClassName is empty
+    asserts:
+      - equal:
+          path: spec.storage.size
+          value: 10Gi
+      - notExists:
+          path: spec.storage.storageClass
+
+  - it: sets storageClass when database.storageClassName is overridden
+    set:
+      database.storageClassName: gp3-encrypted
+    asserts:
+      - equal:
+          path: spec.storage.storageClass
+          value: gp3-encrypted
+
+  - it: gates the CNPG PodMonitor on serviceMonitor.enabled, the same Prometheus Operator CRD assumption every other monitoring resource in this chart makes
+    set:
+      serviceMonitor.enabled: false
+    asserts:
+      - equal:
+          path: spec.monitoring.enablePodMonitor
+          value: false
+
+  - it: renders nothing when database.provisionCluster is false -- a platform pipeline or a CNPG-operator-less sandbox provisions Postgres some other way
+    set:
+      database.provisionCluster: false
+    asserts:
+      - hasDocuments:
+          count: 0

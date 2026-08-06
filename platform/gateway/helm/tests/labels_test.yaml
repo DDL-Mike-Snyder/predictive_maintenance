@@ -1,0 +1,41 @@
+# fathom.labels/fathom.selectorLabels (deploy/helm/_fathom-common) key off
+# .Values.slug, not a release-name-derived value, so NetworkPolicy peer
+# selectors like `fathom.navy/service: gateway` match identically across
+# every resource in this chart and every other service's chart. Assert that
+# fathom.navy/service is literally "gateway" everywhere it appears. Same
+# structure as services/pdm/helm/tests/labels_test.yaml.
+suite: fathom.navy/service label is the plain slug everywhere, consistently
+templates:
+  - deployment.yaml
+  - service.yaml
+  - networkpolicy.yaml
+  - servicemonitor.yaml
+  - poddisruptionbudget.yaml
+tests:
+  - it: "labels and selectors all carry fathom.navy/service: gateway"
+    set:
+      replicaCount: 2
+    asserts:
+      - equal:
+          path: metadata.labels["fathom.navy/service"]
+          value: gateway
+      - equal:
+          path: spec.selector["fathom.navy/service"]
+          value: gateway
+        template: service.yaml
+      - equal:
+          path: spec.podSelector.matchLabels["fathom.navy/service"]
+          value: gateway
+        template: networkpolicy.yaml
+      - equal:
+          path: spec.selector.matchLabels["fathom.navy/service"]
+          value: gateway
+        template: deployment.yaml
+      - equal:
+          path: spec.selector.matchLabels["fathom.navy/service"]
+          value: gateway
+        template: servicemonitor.yaml
+      - equal:
+          path: spec.selector.matchLabels["fathom.navy/service"]
+          value: gateway
+        template: poddisruptionbudget.yaml

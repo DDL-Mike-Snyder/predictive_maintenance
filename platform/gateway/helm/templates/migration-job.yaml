@@ -1,0 +1,67 @@
+{{/*
+09-monorepo-and-conventions.md §4.2/§4.4.1: rendered as a pre-install,
+pre-upgrade Helm hook Job, not a normal workload -- Helm deletes and
+recreates it on every install/upgrade (hook-delete-policy below) rather
+than it ever being reconciled as part of the Deployment's steady state.
+backoffLimit: 0 so a partial migration fails the release instead of retrying
+into a worse partial state. Identical shape to services/pdm/helm's own
+migration-job.yaml.
+
+Uses database.migrationSecretRef, NOT database.secretRef (the app
+Deployment's own secret) -- same least-privilege split PdM's chart makes,
+but for a DIFFERENT reason than PdM's own docstring gives: PdM's migration
+needs CREATE ROLE/SCHEMA and ownership of a BYPASSRLS SECURITY DEFINER
+function, none of which this service's own migration
+(20260805165723_gateway_gateway_initial_schema.py) requires -- gateway's
+schema has no RLS and no role-creation statements at all, only two plain
+`CREATE TABLE`s. The split is followed here anyway on the general
+least-privilege principle 09 §4.4.1 establishes for every service's chart
+(the running app role should never hold DDL rights on its own tables, even
+absent an RLS-specific reason) -- not because this migration has PdM's own
+BYPASSRLS requirement. Worth being honest that this is a convention-driven
+split, not (yet) a privilege-enforcing one the way PdM's is, since this
+migration itself grants no roles at all.
+*/}}
+{{- if .Values.migrations.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "fathom.fullname" . }}-migrate
+  labels: {{- include "fathom.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ .Values.migrations.backoffLimit }}
+  template:
+    metadata:
+      labels: {{- include "fathom.selectorLabels" . | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      {{- if .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- range .Values.image.pullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      securityContext: {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: migrate
+          image: {{ include "gateway.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext: {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          command: ["alembic", "upgrade", "head"]
+          envFrom:
+            - configMapRef:
+                name: {{ include "fathom.fullname" . }}
+            - secretRef:
+                name: {{ .Values.database.migrationSecretRef }}
+          resources: {{- toYaml .Values.resources | nindent 12 }}
+{{- end }}

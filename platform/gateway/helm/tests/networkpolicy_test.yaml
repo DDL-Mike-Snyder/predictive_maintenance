@@ -1,0 +1,98 @@
+# 09-monorepo-and-conventions.md §4.2/§4.4.2: "the rendered policy's egress
+# peer set must equal values.networkPolicy.egress exactly and contain
+# nothing else" -- the mandatory, CI-testable invariant, same as every
+# other service's chart. Gateway's own default set is smaller than PdM's
+# (no event bus, no key-service/object-store) and has one entry PdM's
+# doesn't (toOidcIssuer) -- see values.yaml's own [JUDGMENT CALL]/
+# [ESTABLISHED HERE] comments for why.
+suite: NetworkPolicy egress peer-set equality, and gateway's narrower ingress source
+templates:
+  - networkpolicy.yaml
+tests:
+  - it: renders exactly the default values.yaml egress peer set and nothing else
+    asserts:
+      - isKind:
+          of: NetworkPolicy
+      - equal:
+          path: spec.egress
+          value:
+            - to:
+                - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }
+                  podSelector: { matchLabels: { k8s-app: kube-dns } }
+              ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]
+            - to:
+                - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: fathom-data } }
+                  podSelector:
+                    matchLabels: { cnpg.io/cluster: fathom-gateway-pg }
+              ports: [{ protocol: TCP, port: 5432 }]
+            - to:
+                - podSelector:
+                    matchLabels: { app.kubernetes.io/name: keycloak }
+              ports: [{ protocol: TCP, port: 8443 }]
+            - to:
+                - podSelector:
+                    matchLabels: { fathom.navy/service: pdm }
+              ports: [{ protocol: TCP, port: 8000 }]
+      - lengthEqual:
+          path: spec.egress
+          count: 4
+
+  - it: tracks a different values.networkPolicy.egress exactly, proving the template is values-driven not hardcoded
+    set:
+      networkPolicy.egress.allowDNS: false
+      networkPolicy.egress.toOwnDatabase: true
+      networkPolicy.egress.toOidcIssuer: false
+      networkPolicy.egress.toServices: []
+      networkPolicy.egress.toNamespaces: [fathom-data]
+    asserts:
+      - equal:
+          path: spec.egress
+          value:
+            - to:
+                - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: fathom-data } }
+                  podSelector:
+                    matchLabels: { cnpg.io/cluster: fathom-gateway-pg }
+              ports: [{ protocol: TCP, port: 5432 }]
+            - to:
+                - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: fathom-data } }
+      - lengthEqual:
+          path: spec.egress
+          count: 2
+
+  - it: ingress fromNamespaces comes from values, not a hardcoded ingress-nginx-only assumption
+    set:
+      networkPolicy.ingress.fromNamespaces: [ingress-nginx, domino-compute]
+      networkPolicy.ingress.allowPrometheusScrape: false
+    asserts:
+      - lengthEqual:
+          path: spec.ingress
+          count: 2
+      - contains:
+          path: spec.ingress
+          content:
+            from:
+              - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: ingress-nginx } }
+            ports: [{ protocol: TCP, port: 8000 }]
+      - contains:
+          path: spec.ingress
+          content:
+            from:
+              - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: domino-compute } }
+            ports: [{ protocol: TCP, port: 8000 }]
+
+  - it: ingress fromServices renders from values too, even though the default is empty (no in-namespace peer calls gateway in this vertical slice)
+    set:
+      networkPolicy.ingress.fromServices: [pma]
+      networkPolicy.ingress.fromNamespaces: []
+      networkPolicy.ingress.allowPrometheusScrape: false
+    asserts:
+      - lengthEqual:
+          path: spec.ingress
+          count: 1
+      - contains:
+          path: spec.ingress
+          content:
+            from:
+              - podSelector:
+                  matchLabels: { fathom.navy/service: pma }
+            ports: [{ protocol: TCP, port: 8000 }]

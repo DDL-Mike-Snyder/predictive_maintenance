@@ -1,0 +1,6 @@
+dependencies:
+- name: fathom-common
+  repository: file://../../../deploy/helm/_fathom-common
+  version: 0.1.0
+digest: sha256:605327577462c4e0b1b2209a5cf9e1c521843886a27caef48c0207ec9f3d7097
+generated: "2026-08-05T20:07:29.03375-05:00"

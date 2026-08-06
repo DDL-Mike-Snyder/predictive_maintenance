@@ -1,0 +1,18 @@
+apiVersion: v2
+name: gateway
+description: >-
+  FATHOM API Gateway chart (docs/build/30-gateway.md, 09-monorepo-and-conventions.md
+  §4.4). Depends on the shared _fathom-common library chart for name/label
+  templates so `fathom.navy/service` matches across every service's
+  NetworkPolicy peer selectors -- the same dependency services/pdm/helm
+  uses. Scoped to what platform/gateway/src actually is today: OIDC/PKCE
+  session login against Keycloak plus a pass-through proxy to PdM alone
+  (DECISION G-3) -- NOT 30-gateway.md's full nine-sub-application,
+  two-Deployment target shape. See values.yaml's own header comment.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+dependencies:
+  - name: fathom-common
+    version: "0.1.0"
+    repository: "file://../../../deploy/helm/_fathom-common"

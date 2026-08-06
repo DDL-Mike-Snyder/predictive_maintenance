@@ -1,0 +1,85 @@
+{{/*
+09-monorepo-and-conventions.md §4.4.1/§4.4.2 says every service gets "a
+CloudNativePG Cluster in fathom-data, named fathom-<slug>-pg" and the
+NetworkPolicy template already assumes one exists -- its egress rule
+matches pods labelled `cnpg.io/cluster: {{ .Values.database.clusterName }}`,
+a label the CNPG operator applies automatically to pods it creates for a
+Cluster of that name. Identical mechanism to services/pdm/helm's own
+postgres-cluster.yaml; the differences below are all about privilege level,
+not structure.
+
+provisionCluster exists as an escape hatch (default true) for an
+environment where CNPG Clusters are provisioned by a separate
+platform-level GitOps pipeline rather than each service's own chart, and
+for one where the CNPG operator's CRDs simply aren't installed yet.
+
+Same collision-avoidance reasoning as PdM's chart, restated for gateway's
+own names: CNPG's own default convention names the initdb-bootstrap-owner's
+auto-generated Secret "<cluster-name>-app" and the superuser's
+"<cluster-name>-superuser". This chart's own two ExternalSecret-managed
+Secrets (database.secretRef, "fathom-gateway-pg-app", and
+database.migrationSecretRef, "fathom-gateway-pg-migrate") are NOT sourced
+from CNPG at all -- they're populated from Vault -- but if this Cluster
+rendered with CNPG's bootstrap secret left at ITS default name,
+"fathom-gateway-pg-app" (== database.clusterName + "-app"), it would
+COLLIDE with our own ExternalSecret's identically-named target Secret. Both
+of CNPG's own generated secrets are redirected below to names nothing else
+in this chart ever references, for the identical reason PdM's chart already
+established.
+
+Difference from PdM's own docstring here, stated plainly rather than
+copied over unchanged: PdM's migration needs `enableSuperuserAccess: true`
+because it creates a BYPASSRLS SECURITY DEFINER function (22-pdm.md §4.5) --
+a real Postgres superuser requirement, not a convention. This service's own
+migration (20260805165723_gateway_gateway_initial_schema.py) has no RLS and
+creates no roles at all, so there is no equivalent hard requirement here.
+`enableSuperuserAccess: true` is kept anyway for two reasons that are NOT
+"because PdM has it": (1) symmetry with the migrationSecretRef split this
+chart already makes for least-privilege reasons (migration-job.yaml's own
+docstring), and (2) it costs nothing to provision and leaves room for a
+future migration that DOES need it (e.g. if this schema ever grows a
+restricted `fathom_gateway_serving` role the way PdM's did) without a
+Cluster-spec change at that point. Worth reconsidering if a real deployment
+wants to run this Cluster with the smallest possible blast radius instead.
+
+Image: same ghcr.io/cloudnative-pg/postgresql:16 multi-arch-INDEX digest
+PdM's own Cluster uses, verbatim, not re-derived -- it's the same Postgres
+16 image either way, and re-deriving it a second time would just be a
+second chance to get the digest-vs-sub-manifest distinction wrong (the
+exact bug CLAUDE.md's #16 already found once in this repo's Dockerfiles).
+*/}}
+{{- if .Values.database.provisionCluster }}
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: {{ .Values.database.clusterName }}
+  labels: {{- include "fathom.labels" . | nindent 4 }}
+spec:
+  instances: {{ .Values.database.instances }}
+  imageName: "ghcr.io/cloudnative-pg/postgresql:16@sha256:d9942fd46669234d39c5e6152e23a973bd38df4d2e2eddb6b69bb71b76625ce1"
+
+  enableSuperuserAccess: true
+  superuserSecret:
+    name: {{ .Values.database.clusterName }}-cnpg-superuser
+
+  bootstrap:
+    initdb:
+      database: {{ .Values.database.name }}
+      owner: {{ .Values.database.name }}
+      # Redirected away from CNPG's own default ("<clusterName>-app") for
+      # the same collision reason -- this Secret is CNPG's bookkeeping
+      # only, never referenced by deployment.yaml or migration-job.yaml.
+      secret:
+        name: {{ .Values.database.clusterName }}-cnpg-bootstrap
+
+  storage:
+    size: {{ .Values.database.storageSize }}
+    {{- if .Values.database.storageClassName }}
+    storageClass: {{ .Values.database.storageClassName }}
+    {{- end }}
+
+  resources: {{- toYaml .Values.database.resources | nindent 4 }}
+
+  monitoring:
+    enablePodMonitor: {{ .Values.serviceMonitor.enabled }}
+{{- end }}

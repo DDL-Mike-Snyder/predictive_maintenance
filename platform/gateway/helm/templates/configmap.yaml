@@ -1,0 +1,45 @@
+{{/*
+09-monorepo-and-conventions.md §4.5: config.py is the only reader of the
+environment; everything here is non-secret. Three genuinely secret values
+are deliberately NOT here -- FATHOM_DATABASE__URL, FATHOM_OIDC__CLIENT_SECRET,
+FATHOM_SESSION__COOKIE_SIGNING_KEY -- see externalsecret.yaml, projected into
+the Deployment via envFrom/secretRef, never a chart value.
+
+Each field below is written out explicitly, one values.yaml field to one
+FATHOM_<SECTION>__<FIELD> env var, matching
+platform/gateway/src/fathom_gateway/config.py's Settings exactly (both
+directions, per §4.5) -- checked field-by-field against config.py, not
+copied from services/pdm/helm's own configmap.yaml. Settings has six
+sections (app, database, oidc, session, otel, pdm); there is no
+auth/audit/referenceData/domino/events section on this Settings class at
+all, so none of those keys appear below, unlike PdM's.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "fathom.fullname" . }}
+  labels: {{- include "fathom.labels" . | nindent 4 }}
+data:
+  # app (AppSettings) -- log_level only. No staleness_bound_seconds/
+  # cors_allowed_origins: neither field exists on this service's AppSettings.
+  FATHOM_APP__LOG_LEVEL: {{ .Values.app.logLevel | quote }}
+
+  # database (DatabaseSettings) -- everything except .url, which is secret
+  FATHOM_DATABASE__POOL_SIZE: {{ .Values.database.poolSize | quote }}
+  FATHOM_DATABASE__MAX_OVERFLOW: {{ .Values.database.maxOverflow | quote }}
+
+  # oidc (OidcSettings) -- everything except .client_secret, which is secret
+  FATHOM_OIDC__ISSUER: {{ .Values.oidc.issuer | quote }}
+  FATHOM_OIDC__CLIENT_ID: {{ .Values.oidc.clientId | quote }}
+  FATHOM_OIDC__REDIRECT_URI: {{ .Values.oidc.redirectUri | quote }}
+
+  # session (SessionSettings) -- everything except .cookie_signing_key, which is secret
+  FATHOM_SESSION__SESSION_TTL_SECONDS: {{ .Values.session.sessionTtlSeconds | quote }}
+  FATHOM_SESSION__LANDING_URL: {{ .Values.session.landingUrl | quote }}
+
+  # otel (OtelSettings)
+  FATHOM_OTEL__ENABLED: {{ .Values.otel.enabled | quote }}
+
+  # pdm (PdmUpstreamSettings)
+  FATHOM_PDM__BASE_URL: {{ .Values.pdm.baseUrl | quote }}
+  FATHOM_PDM__OPENAPI_PATH: {{ .Values.pdm.openapiPath | quote }}
