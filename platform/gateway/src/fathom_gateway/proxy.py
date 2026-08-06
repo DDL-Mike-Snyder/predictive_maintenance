@@ -19,14 +19,22 @@ the exact same Idempotency-Key contract at the gateway boundary that the
 upstream service itself declared for that operation, not a laxer or
 stricter one invented here.
 
-[SCOPE, this vertical slice] Path/query parameters are forwarded via
-Starlette's own `{param}` template matching and `request.query_params`
-passthrough -- they are NOT individually declared as FastAPI `Parameter`
-objects, so the gateway's own generated OpenAPI schema for these routes
-lacks per-parameter type/required metadata (functionally irrelevant here
-since `docs_url`/`redoc_url` are both disabled, per every service's own
-`main.py`). Worth building properly if the gateway's own OpenAPI document
-ever needs to be consumed by a codegen step, the same way PdM's is.
+Path/query parameters are still forwarded functionally via Starlette's own
+`{param}` template matching and `request.query_params` passthrough (the
+handler signature declares neither) -- but each operation's `path`/`query`
+`parameters` entries are copied verbatim from the upstream's own openapi.json
+into the generated route's `openapi_extra["parameters"]`, so the gateway's
+OWN generated schema carries real per-parameter type/required metadata too
+-- confirmed load-bearing, not cosmetic: `apps/web`'s `openapi-typescript`
+codegen against this document is a real consumer (found the first time this
+gap was hit, generating a typed client against a route with no declared path
+parameter -- see `apps/web/src/features/pdm/PredictionLookup.tsx`'s own
+history). `header` parameters (`Idempotency-Key`, `X-Fathom-Principal`) are
+deliberately excluded from this copy -- both are handled generically by the
+handler's own header-forwarding logic below, and `X-Fathom-Principal`
+specifically is a header the GATEWAY substitutes, never one a caller
+supplies, so declaring it as a caller-facing parameter would be actively
+misleading.
 """
 
 from __future__ import annotations
@@ -37,7 +45,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, FastAPI, Request, Response
 
 from fathom_gateway.config import PdmUpstreamSettings
 from fathom_gateway.deps import current_gateway_session
@@ -123,11 +131,42 @@ def _make_handler(
     return _handler
 
 
+def _install_upstream_components(app: FastAPI, spec: dict[str, Any]) -> None:
+    """Some upstream `parameters`/`schemas` reference sibling component
+    definitions via `$ref` (e.g. PdM's `expected-consequence` operation's
+    `risk_posture` query param: `{"$ref": "#/components/schemas
+    /RiskPosture"}`) -- copying `parameters` alone (as `build_passthrough
+    _router` does, above) produces a dangling ref in the GATEWAY's own
+    document, since that component only exists in the upstream's. Found
+    only by actually running a real OpenAPI consumer (`openapi-typescript`,
+    from `apps/web`) against the gateway's generated document -- it failed
+    to resolve the ref; FastAPI itself never validates this at startup.
+    Fixed by merging the upstream's own `components.schemas` into the
+    gateway's, wrapping `app.openapi()` so the merge applies to the SAME
+    cached schema dict every service's own `main.py` calls at `--emit-
+    openapi` time and `assert_operation_annotations` inspects.
+    `setdefault` deliberately never overwrites an existing gateway-native
+    component of the same name (there are no known collisions today, but a
+    silent overwrite would be a worse failure mode than a merge no-op)."""
+    original_openapi = app.openapi
+
+    def _patched_openapi() -> dict[str, Any]:
+        schema = original_openapi()
+        upstream_schemas = spec.get("components", {}).get("schemas", {})
+        target = schema.setdefault("components", {}).setdefault("schemas", {})
+        for name, definition in upstream_schemas.items():
+            target.setdefault(name, definition)
+        return schema
+
+    app.openapi = _patched_openapi  # type: ignore[method-assign]
+
+
 def build_passthrough_router(
-    *, upstream: PdmUpstreamSettings, http_client: httpx.AsyncClient
+    *, app: FastAPI, upstream: PdmUpstreamSettings, http_client: httpx.AsyncClient
 ) -> APIRouter:
     router = APIRouter()
     spec = _load_openapi(upstream.openapi_path)
+    _install_upstream_components(app, spec)
 
     for path, path_item in spec.get("paths", {}).items():
         for method in _METHODS:
@@ -135,6 +174,13 @@ def build_passthrough_router(
             if operation is None:
                 continue
             extra = {k: v for k, v in operation.items() if k.startswith("x-")}
+            path_and_query_params = [
+                param
+                for param in operation.get("parameters", [])
+                if param.get("in") in ("path", "query")
+            ]
+            if path_and_query_params:
+                extra["parameters"] = path_and_query_params
             router.add_api_route(
                 path,
                 _make_handler(

@@ -1,4 +1,4 @@
-import { defineConfig } from "vite";
+import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 
 // 51-operator-console.md §2: "base baked at build" [50 §6.1]. VITE_BASE_URL
@@ -10,6 +10,11 @@ import react from "@vitejs/plugin-react";
 export default defineConfig({
   plugins: [react()],
   base: process.env.VITE_BASE_URL ?? "/",
+  test: {
+    environment: "jsdom",
+    setupFiles: ["./src/test/setup.ts"],
+    globals: true,
+  },
   server: {
     proxy: {
       // Dev-only: apps/web talks to the gateway same-origin in every real

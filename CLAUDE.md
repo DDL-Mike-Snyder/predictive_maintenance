@@ -1346,6 +1346,48 @@ lint gate is not wired yet); no Dockerfile/Helm chart for serving this
 as a static asset (per `02-domino-platform-assessment.md` §5, this
 belongs on the Sustainment Plane's own ingress, not Domino).
 
+## 2026-08-06 later still — the proxy.py path-parameter gap, fixed for real, plus Vitest coverage
+
+Continuing right after the time-boxed `apps/web` pass, per explicit
+instruction to keep going. Two things:
+
+**1. `proxy.py`'s path-parameter gap (named at the end of the previous
+pass) is fixed, not just documented.** Each upstream operation's own
+`path`/`query` `parameters` are now copied into the generated route's
+`openapi_extra["parameters"]` — `header` parameters are deliberately
+excluded (`Idempotency-Key`/`X-Fathom-Principal` are handled generically
+by the handler itself, and `X-Fathom-Principal` specifically is a header
+the GATEWAY substitutes, never one a caller supplies, so declaring it as
+caller-facing would be actively misleading). **A second real bug surfaced
+immediately while fixing the first, caught only by actually regenerating
+TypeScript types against it, not by FastAPI itself (which never validates
+this at startup):** `POST /api/v1/pdm/expected-consequence`'s
+`risk_posture` query parameter has a `schema.$ref` pointing at
+`#/components/schemas/RiskPosture` — a component that only exists in
+PdM's own openapi.json, not the gateway's, so copying `parameters` alone
+produced a dangling ref that broke `openapi-typescript` outright
+(`Can't resolve $ref`). Fixed by merging the upstream's own
+`components.schemas` into the gateway's generated schema too
+(`proxy.py::_install_upstream_components`, wrapping `app.openapi()`
+so the merge applies to the same cached schema dict `--emit-openapi` and
+`assert_operation_annotations` both see). `build_passthrough_router` now
+takes `app` as a parameter — `main.py` updated. All 4 gateway tests still
+pass; `platform/gateway/openapi.json` regenerated and re-committed.
+`apps/web/src/features/pdm/PredictionLookup.tsx` now uses the real typed
+`client.GET(...)` call instead of the plain-`fetch()` workaround from the
+previous pass — re-verified end to end against a real local gateway
+(fresh migrated Postgres) exactly as before.
+
+**2. Vitest coverage added** (none existed before this pass, a named gap
+in the prior entry): `csrf.test.ts` (real `document.cookie` parsing, not
+mocked), `correlation.test.ts`, and `IdentityBlock.test.tsx` (mocks only
+the wire boundary — `client.GET`/`client.POST` — and exercises the real
+react-query + component state machine for the three §4.7 shell states
+this pass implements: loading, `404`→sign-in, and a successful session).
+7/7 passing, `pnpm build` clean. ESLint/Prettier and a Dockerfile/Helm
+chart for serving the built app are still open, unchanged from the
+previous entry.
+
 ## Where to find more context
 
 - `git log --oneline` — every commit this session (and the many before it)

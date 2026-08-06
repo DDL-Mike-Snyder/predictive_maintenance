@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
+import { client } from "../../api/client";
 
 // [SCOPE, this pass] Not 51-operator-console.md §4.4's `IdentifierLookup`
 // (that widget looks up a NIIN/installed-item/hull against a `registry`
@@ -14,22 +15,20 @@ export function PredictionLookup() {
   const [predictionId, setPredictionId] = useState("");
   const lookup = useMutation({
     mutationFn: async (id: string) => {
-      // NOT client.GET(): proxy.py's own pass-through route generator
-      // (platform/gateway/src/fathom_gateway/proxy.py, [SCOPE] note in its
-      // module docstring) doesn't declare `{prediction_id}` as an OpenAPI
-      // Parameter, so the generated type has no path-param slot to fill --
-      // a real, named gap in the proxy, not something to fake client-side.
-      // A plain fetch against the real, literal URL is the honest
-      // workaround until that's fixed.
-      const response = await fetch(
-        `/api/v1/pdm/predictions/${encodeURIComponent(id)}`,
-        { credentials: "same-origin" },
+      // `proxy.py`'s route generator now copies each upstream operation's
+      // own `path`/`query` `parameters` (and their referenced `$ref`
+      // components) into the gateway's own generated openapi.json -- fixed
+      // after this exact call site first hit the gap with a plain fetch()
+      // workaround; the typed client works for real now.
+      const { data, error, response } = await client.GET(
+        "/api/v1/pdm/predictions/{prediction_id}",
+        { params: { path: { prediction_id: id } } },
       );
-      const body = await response.json();
-      if (!response.ok) {
-        throw new Error(body.title ?? `request failed (${response.status})`);
+      if (error) {
+        const problem = error as { title?: string };
+        throw new Error(problem.title ?? `request failed (${response.status})`);
       }
-      return body;
+      return data;
     },
   });
 

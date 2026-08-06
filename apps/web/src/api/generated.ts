@@ -213,6 +213,295 @@ export interface components {
             /** Context */
             ctx?: Record<string, never>;
         };
+        /**
+         * Basis
+         * @enum {string}
+         */
+        Basis: "item_conditional" | "class_rate_converted";
+        /**
+         * BulkPredictionIngestRequest
+         * @description 22-pdm.md §2.5: 'The bulk ingest schema does NOT contain
+         *     `serving_class` -- a caller cannot set it, cannot override it.'
+         */
+        BulkPredictionIngestRequest: {
+            /** Predictions */
+            predictions: components["schemas"]["FailurePrediction"][];
+        };
+        /** BulkPredictionIngestResult */
+        BulkPredictionIngestResult: {
+            /**
+             * Scoring Run Id
+             * Format: uuid
+             */
+            scoring_run_id: string;
+            /** Predictions Written */
+            predictions_written: number;
+            /** Predictions Rejected */
+            predictions_rejected: number;
+            /**
+             * Rejection Summary
+             * @default []
+             */
+            rejection_summary: string[];
+        };
+        /**
+         * ContributingFactor
+         * @description Renamed from `drivers` [D23]. A causal statement must cite an
+         *     adjudicated Failure Intelligence hypothesis -- this is never one.
+         */
+        ContributingFactor: {
+            /** Factor */
+            factor: string;
+            /** Contribution */
+            contribution: number;
+            /** Attribution Method */
+            attribution_method: string;
+            /**
+             * Stability
+             * @description Rank stability across runs or bootstrap.
+             */
+            stability: number;
+            /**
+             * Observation Ref
+             * @description Points at a feature observation, NOT at itself.
+             */
+            observation_ref: string;
+        };
+        /** CreateModelBindingRequest */
+        CreateModelBindingRequest: {
+            /** Tier */
+            tier: number;
+            /** Equipment Family */
+            equipment_family: string;
+            /** Taxonomy Version */
+            taxonomy_version: string;
+            /** Registry Model Version */
+            registry_model_version: string;
+            /** Registry Model Uri */
+            registry_model_uri: string;
+            /** Approval Ref */
+            approval_ref: string;
+            /**
+             * Label Set Id
+             * Format: uuid
+             */
+            label_set_id: string;
+        };
+        /** CreateScoringRunRequest */
+        CreateScoringRunRequest: {
+            /**
+             * Stratum
+             * @enum {string}
+             */
+            stratum: "operational" | "holdout_research";
+            /** Scope */
+            scope: {
+                [key: string]: unknown;
+            };
+        };
+        /** ExpectedConsequence */
+        ExpectedConsequence: {
+            /**
+             * P Event Horizon
+             * @description Probability of the event within the horizon, on a COMMON basis.
+             */
+            p_event_horizon: number;
+            /**
+             * P Event Lower
+             * @description Epistemic interval, widened by fallback_level and cell size.
+             */
+            p_event_lower: number;
+            /** P Event Upper */
+            p_event_upper: number;
+            basis: components["schemas"]["Basis"];
+            /** Consequence Value */
+            consequence_value: number;
+            /**
+             * Expected Consequence
+             * @description THE only rankable quantity.
+             */
+            expected_consequence: number;
+            timing_basis: components["schemas"]["TimingBasis"];
+            /**
+             * Timing P10
+             * @description None unless timing_basis is rul_quantiles.
+             */
+            timing_p10?: number | null;
+            /** Timing P50 */
+            timing_p50?: number | null;
+            /** Conversion Version */
+            conversion_version: string;
+            /** Inputs Digest */
+            inputs_digest: string;
+        };
+        /** FailurePrediction */
+        FailurePrediction: {
+            /**
+             * Asset Id
+             * Format: uuid
+             */
+            asset_id: string;
+            /**
+             * Installed Item Id
+             * Format: uuid
+             */
+            installed_item_id: string;
+            /**
+             * Position Id
+             * Format: uuid
+             */
+            position_id: string;
+            /** Niin */
+            niin: string;
+            /** Equipment Family */
+            equipment_family: string;
+            /**
+             * Baseline Id
+             * Format: uuid
+             */
+            baseline_id: string;
+            /** Baseline Epoch */
+            baseline_epoch: number;
+            /** Horizon Days */
+            horizon_days: number;
+            /**
+             * P Failure
+             * @description NULL when calibration_population < 50. A predicted probability that cannot be calibrated must not be emitted merely because the field exists; omission is the honest signal.
+             */
+            p_failure?: number | null;
+            reference_class: components["schemas"]["ReferenceClass"];
+            /**
+             * Sharpness
+             * @description Dispersion relative to the reference-class base rate.
+             */
+            sharpness: number;
+            /** Calibration Population */
+            calibration_population?: number | null;
+            /** @description Omitted where not item-conditional. */
+            rul?: components["schemas"]["Rul"] | null;
+            /**
+             * Population Hazard Rate
+             * @description Emitted INSTEAD OF `rul` for non-item reference classes.
+             */
+            population_hazard_rate?: number | null;
+            /**
+             * Confidence
+             * @description Sharpness-and-fit confidence only.
+             */
+            confidence: number;
+            /**
+             * Fallback Level
+             * @description Cold-start depth, NOT folded into confidence.
+             */
+            fallback_level: number;
+            /**
+             * Tier
+             * @description Transparency only. Never branch on this -- FTH006.
+             */
+            tier: number;
+            /**
+             * Contributing Factors
+             * @default []
+             */
+            contributing_factors: components["schemas"]["ContributingFactor"][];
+            /** Model Version */
+            model_version: string;
+            /**
+             * Scoring Run Id
+             * Format: uuid
+             */
+            scoring_run_id: string;
+            /**
+             * Computed At
+             * Format: date-time
+             */
+            computed_at: string;
+        };
+        /** ModelBindingResponse */
+        ModelBindingResponse: {
+            /**
+             * Binding Id
+             * Format: uuid
+             */
+            binding_id: string;
+            /** Tier */
+            tier: number;
+            /** Equipment Family */
+            equipment_family: string;
+            /** Taxonomy Version */
+            taxonomy_version: string;
+            /** Registry Model Version */
+            registry_model_version: string;
+            /** Registry Model Uri */
+            registry_model_uri: string;
+            /** Approval Ref */
+            approval_ref: string;
+            /**
+             * Label Set Id
+             * Format: uuid
+             */
+            label_set_id: string;
+            /** Censoring Correction */
+            censoring_correction: string;
+            /** Activated At */
+            activated_at: string | null;
+            /** Deactivated At */
+            deactivated_at: string | null;
+        };
+        /**
+         * ReferenceClass
+         * @enum {string}
+         */
+        ReferenceClass: "item" | "niin_fleet" | "equipment_family" | "class_estimate";
+        /**
+         * RiskPosture
+         * @description [PLACEHOLDER P-17] Program decision, not an analytic one -- 22-pdm.md
+         *     §7.4: "it encodes how much the Navy is willing to spend to avoid an
+         *     unlikely severe failure." Default AVERSE for the highest consequence
+         *     band, NEUTRAL otherwise.
+         * @enum {string}
+         */
+        RiskPosture: "NEUTRAL" | "AVERSE";
+        /** Rul */
+        Rul: {
+            /** P10 */
+            p10: number;
+            /** P50 */
+            p50: number;
+            /** P90 */
+            p90: number;
+            unit: components["schemas"]["RulUnit"];
+        };
+        /**
+         * RulUnit
+         * @enum {string}
+         */
+        RulUnit: "days" | "steaming_hours" | "eoh" | "cycles" | "sorties" | "dives";
+        /** ScoringRunResponse */
+        ScoringRunResponse: {
+            /**
+             * Scoring Run Id
+             * Format: uuid
+             */
+            scoring_run_id: string;
+            /** Stratum */
+            stratum: string;
+            /** Trigger */
+            trigger: string;
+            /** Scope */
+            scope: {
+                [key: string]: unknown;
+            };
+            /** Status */
+            status: string;
+            /** Feature Definition Time */
+            feature_definition_time: string;
+        };
+        /**
+         * TimingBasis
+         * @enum {string}
+         */
+        TimingBasis: "rul_quantiles" | "mean_residual_life_from_rate" | "none";
     };
     responses: never;
     parameters: never;
@@ -367,7 +656,9 @@ export interface operations {
             header?: {
                 "Idempotency-Key"?: string | null;
             };
-            path?: never;
+            path: {
+                scoring_run_id: string;
+            };
             cookie?: {
                 fathom_session?: string | null;
             };
@@ -400,7 +691,9 @@ export interface operations {
             header?: {
                 "Idempotency-Key"?: string | null;
             };
-            path?: never;
+            path: {
+                prediction_id: string;
+            };
             cookie?: {
                 fathom_session?: string | null;
             };
@@ -462,7 +755,9 @@ export interface operations {
     };
     pdm_get_criticality: {
         parameters: {
-            query?: never;
+            query: {
+                niin: string;
+            };
             header?: {
                 "Idempotency-Key"?: string | null;
             };
@@ -495,7 +790,12 @@ export interface operations {
     };
     pdm_compute_expected_consequence: {
         parameters: {
-            query?: never;
+            query: {
+                consequence_value: number;
+                consequence_band: string;
+                risk_posture?: components["schemas"]["RiskPosture"];
+                operating_fraction?: number;
+            };
             header?: {
                 "Idempotency-Key"?: string | null;
             };
@@ -565,7 +865,9 @@ export interface operations {
             header?: {
                 "Idempotency-Key"?: string | null;
             };
-            path?: never;
+            path: {
+                binding_id: string;
+            };
             cookie?: {
                 fathom_session?: string | null;
             };

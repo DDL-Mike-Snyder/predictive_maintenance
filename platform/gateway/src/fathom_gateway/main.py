@@ -98,7 +98,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # DECISION G-3 (30-gateway.md §8.2): generated from PdM's own committed
     # openapi.json, not a catch-all -- see proxy.py's own module docstring.
     app.include_router(
-        build_passthrough_router(upstream=settings.pdm, http_client=app.state.http_client)
+        build_passthrough_router(app=app, upstream=settings.pdm, http_client=app.state.http_client)
     )
     install_health_routes(app, checks=register_checks(engine))
 
