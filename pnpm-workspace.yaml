@@ -3,3 +3,5 @@ packages:
   - "packages/ts-common"
   - "packages/ui"
   - "packages/canonical-schemas/ts"
+allowBuilds:
+  esbuild: true

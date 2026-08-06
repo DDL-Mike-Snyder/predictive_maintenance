@@ -1291,6 +1291,61 @@ assumption, not sourced from a build doc that names it. Next real step
 unchanged from before this pass: `apps/web`, now buildable against a
 gateway with both a working BFF and a real deployable chart.
 
+## 2026-08-06 later still — apps/web started (time-boxed to ~40 min)
+
+The operator console (`docs/build/51-operator-console.md`) describes a huge
+surface — a Persona Hub plus eleven wireframe sheets (Fleet Overview, AOR
+map, Asset Browser, Fleet-Risk Triage, etc.), almost all of them backed by
+a gateway `views` composed-view endpoint and services (`registry`,
+`telemetry`, `pma`, …) that don't exist anywhere in this repo yet. Given
+the time box, this pass deliberately builds only the smallest REAL,
+end-to-end-verified slice: the App Shell's `IdentityBlock` (§4.3 — session
+lookup, sign-in/out) and one honestly-scoped analog of `IdentifierLookup`
+(§4.4's real widget needs a `registry` service that doesn't exist; this
+one hits the one PdM operation the gateway's proxy actually exposes,
+`GET /api/v1/pdm/predictions/{id}`). Sheets 01–11, the Persona Hub,
+ClassificationBanner/Footer, NavBadge/proposals, and RateLimitNotice are
+all named, not silently dropped — see `apps/web/src/shell/AppShell.tsx`'s
+own docstring for the full list and why each is out of scope.
+
+**Stack, per 09 §4.4's own mandate, not improvised**: pnpm workspaces (a
+`pnpm-workspace.yaml` already existed at repo root from an earlier pass,
+with a literal placeholder value, `esbuild: set this to true or false`,
+that had never actually been resolved — fixed to `true`, the first thing
+that broke `pnpm install`), Vite, React, TypeScript, `@tanstack/react-query`,
+`openapi-fetch` + `openapi-typescript` generating real wire types from a
+newly-generated, now-committed `platform/gateway/openapi.json` (gateway's
+`main.py` already had `--emit-openapi` support from the earlier gateway
+build pass).
+
+**One real gap in the gateway's own proxy, found only by generating real
+types against it**: `proxy.py`'s pass-through routes don't declare
+`{prediction_id}`-style path parameters as OpenAPI `Parameter` objects
+(its own module docstring already named this as a known scope
+limitation) — so `openapi-typescript` correctly generates `path?: never`
+for every such operation, and `openapi-fetch`'s typed client has no slot
+to fill. Worked around in `PredictionLookup.tsx` with a plain `fetch()`
+against the literal interpolated URL, commented with exactly why —
+worth fixing in `proxy.py` for real before this app grows past one
+lookup widget, since every pass-through route with a path param has the
+same gap.
+
+**Verified for real, not just built**: `pnpm build` (real `tsc -b` +
+`vite build`) succeeds; a real gateway instance was started locally
+(fresh Postgres database, migrated for real) and `vite dev`'s own proxy
+correctly forwarded `GET /api/v1/gateway/session` and
+`GET /api/v1/pdm/predictions/{id}` to it — both correctly returned the
+gateway's real `404 urn:fathom:problem:gateway:no-session` before ever
+reaching PdM, proving `current_gateway_session`'s gate runs first through
+the real proxy chain, from a real browser-shaped request. **Not done in
+this pass, named rather than assumed**: no browser/Playwright-level
+click-through of the actual login redirect (would need a running
+Keycloak instance too, out of time budget); no Vitest tests written; no
+ESLint/Prettier config (09 §7.4's `pnpm eslint`/`pnpm prettier --check`
+lint gate is not wired yet); no Dockerfile/Helm chart for serving this
+as a static asset (per `02-domino-platform-assessment.md` §5, this
+belongs on the Sustainment Plane's own ingress, not Domino).
+
 ## Where to find more context
 
 - `git log --oneline` — every commit this session (and the many before it)
