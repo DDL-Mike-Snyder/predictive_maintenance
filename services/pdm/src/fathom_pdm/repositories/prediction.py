@@ -60,6 +60,40 @@ class PredictionRepository:
         )
         return (await session.execute(stmt)).scalar_one_or_none()
 
+    async def list_active(
+        self,
+        session: AsyncSession,
+        *,
+        asset_id: uuid.UUID | None = None,
+        installed_item_id: uuid.UUID | None = None,
+        niin: str | None = None,
+        equipment_family: str | None = None,
+        reference_class: str | None = None,
+        limit: int = 50,
+    ) -> list[Prediction]:
+        """22-pdm.md §10's `GET /predictions` -- [SCOPE, this demo pass]
+        supports the filters actually needed for the triage table; no
+        `changed_since`/opaque cursor yet (a plain `limit`, not full
+        cursor pagination -- 09's `Page[T]`/`CursorParams` convention is
+        not wired here, a named simplification, not an oversight).
+        Deliberately has NO `min_probability` parameter at all -- 51
+        -operator-console.md §11.2's own rule, `ui-never-sends-min-
+        probability`, is honored at the one place that can enforce it:
+        this method never accepts the argument to begin with."""
+        stmt = select(Prediction).where(Prediction.status == "active")
+        if asset_id is not None:
+            stmt = stmt.where(Prediction.asset_id == asset_id)
+        if installed_item_id is not None:
+            stmt = stmt.where(Prediction.installed_item_id == installed_item_id)
+        if niin is not None:
+            stmt = stmt.where(Prediction.niin == niin)
+        if equipment_family is not None:
+            stmt = stmt.where(Prediction.equipment_family == equipment_family)
+        if reference_class is not None:
+            stmt = stmt.where(Prediction.reference_class == reference_class)
+        stmt = stmt.order_by(Prediction.computed_at.desc()).limit(limit)
+        return list((await session.execute(stmt)).scalars().all())
+
     async def get_all_active_for_item(
         self, session: AsyncSession, *, installed_item_id: uuid.UUID
     ) -> list[Prediction]:

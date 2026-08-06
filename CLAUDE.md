@@ -1388,6 +1388,64 @@ this pass implements: loading, `404`→sign-in, and a successful session).
 chart for serving the built app are still open, unchanged from the
 previous entry.
 
+## 2026-08-06 later still — the Fleet-Risk Triage demo screen (budget-constrained pass)
+
+Explicit ask: get to a demo-able state for 51-operator-console.md §11's
+"predictive maintenance screen" (Sheet 04, Fleet-Risk Triage) under a hard
+remaining-spend constraint. Assessed first, then built — the wireframe's
+literal "ranked by expected consequence" framing is already flagged in
+§11.2 as unbuildable by design (no sort param, no consequence-weight
+source), with the spec's own resolution being a client-side sort; that
+resolution is what's built. Real, checked gap: PdM had **no `GET
+/predictions` list endpoint at all** — only get-by-id and bulk-ingest.
+The DB model already carried every field the table/deep-dive needs
+(`horizon_days`, `rul`, `contributing_factors`, `population_hazard_rate`,
+etc.) — they just weren't exposed on the wire. Two real, small backend
+changes closed that:
+
+1. `PredictionRepository.list_active()` (`services/pdm/src/fathom_pdm
+   /repositories/prediction.py`) — filtered active-prediction query.
+   [SCOPE] plain `limit`, no opaque cursor/`changed_since` yet — named in
+   its own docstring, not silently omitted. Deliberately has no
+   `min_probability` parameter AT ALL, enforcing 51 §11.2's
+   `ui-never-sends-min-probability` rule at the one place that can.
+2. `GET /predictions` (list) and an extended `GET /predictions/{id}`
+   response (`_serialize_prediction()`, shared by both) in `api/v1
+   /predictions.py` — now returns `horizon_days`, `rul`,
+   `population_hazard_rate`, `contributing_factors`, `model_version`,
+   `computed_at`, `sharpness`, matching 51 §11.3/§11.5's real column and
+   deep-dive needs. `serving_class` filtered server-side (never returned),
+   same defense-in-depth `get_prediction` already had.
+
+`services/pdm/scripts/seed_demo_predictions.py` (new, committed, reusable)
+seeds 5 realistic predictions through the REAL bulk-ingest API — one of
+each `reference_class`, including a below-calibration-floor
+`class_estimate` row (the `UncalibratedCell` case) — against any real PdM
+instance via `PDM_BASE_URL=... python scripts/seed_demo_predictions.py`.
+**Run this against whatever PdM instance the actual demo uses** — it
+isn't pre-loaded anywhere persistent, this pass only proved it end to end
+against a local Postgres test container, then cleaned that data back out.
+
+`apps/web/src/features/pdm/FleetRiskTriage.tsx` (new) — the real 3-box
+layout at route `/pdm`: triage table (client-sorted per §11.2's
+resolution, `UncalibratedCell` per §11.4), item deep-dive (RUL table,
+contributing factors), what-if as an honest placeholder (`POST /pdm
+/what-if` doesn't exist in PdM at all — no invented form). **Named
+simplifications, not hidden**: no `GET /predictions/{id}/provenance` or
+`GET /pdm/attribution-policy` (contributing factors render directly, not
+gated on a stability-floor fetch); no `/pdm/installed-items/:id`
+sub-route (deep-dive is same-page selection). `pnpm build`/`pnpm test`
+both clean (7/7 passing, unchanged). **Verified for real, the same
+discipline as every other entry in this file**: local PdM seeded via the
+real script, a local gateway with a manually-seeded session row, and
+Vite's dev proxy all wired together — `curl` against the exact path a
+browser hits (`http://localhost:5173/api/v1/pdm/predictions` with a real
+`fathom_session` cookie) returned all 5 real seeded predictions with the
+correct `reference_class` values, proving the full chain the component
+depends on. Not done: no headless-browser render of the component itself
+(Playwright wasn't installed, judged not worth the added spend given the
+data contract was already proven live).
+
 ## Where to find more context
 
 - `git log --oneline` — every commit this session (and the many before it)

@@ -27,7 +27,8 @@ export function AppShell() {
       </header>
       <div className="nav-shell">
         <nav aria-label="Sub-applications">
-          <Link to="/pdm/predictions">Predictive Maintenance</Link>
+          <Link to="/pdm">Predictive Maintenance</Link>{" "}
+          <Link to="/pdm/predictions">(single-prediction lookup)</Link>
         </nav>
         <main id="main">
           <Outlet />

@@ -106,6 +106,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/pdm/predictions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Predictions */
+        get: operations["pdm_list_predictions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/pdm/scoring-runs": {
         parameters: {
             query?: never;
@@ -694,6 +711,46 @@ export interface operations {
             path: {
                 prediction_id: string;
             };
+            cookie?: {
+                fathom_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    pdm_list_predictions: {
+        parameters: {
+            query?: {
+                asset_id?: string | null;
+                installed_item_id?: string | null;
+                niin?: string | null;
+                equipment_family?: string | null;
+                reference_class?: string | null;
+                limit?: number;
+            };
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path?: never;
             cookie?: {
                 fathom_session?: string | null;
             };
