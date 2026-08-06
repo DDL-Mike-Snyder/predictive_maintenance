@@ -63,6 +63,6 @@ describe("IdentityBlock", () => {
 
     renderWithQueryClient();
 
-    expect(await screen.findByRole("alert")).toHaveTextContent(/couldn't load identity/i);
+    expect(await screen.findByRole("alert")).toHaveTextContent(/identity unavailable/i);
   });
 });

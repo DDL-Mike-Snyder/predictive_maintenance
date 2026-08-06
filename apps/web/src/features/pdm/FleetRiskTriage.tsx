@@ -3,6 +3,9 @@ import { useQuery } from "@tanstack/react-query";
 import { client } from "../../api/client";
 
 // 51-operator-console.md §11 -- Sheet 04, Fleet-Risk Triage. Route `/pdm`.
+// Markup/classes match docs/design/operator-console-wireframes.html's own
+// Sheet 04 (`.sheet` > `.titleblock` + `.sheet-body` > `.box`/`.row.wrap
+// -mobile` > `.col.box`), not a generic layout.
 //
 // [SCOPE, this pass] Built against real backend additions made THIS pass
 // (services/pdm's own GET /predictions list endpoint didn't exist before
@@ -75,88 +78,101 @@ function sortRows(rows: PredictionRow[], key: SortKey): PredictionRow[] {
 // reference_class==="class_estimate" -- never a client-side n<50 check.
 function UncalibratedCell({ row }: { row: PredictionRow }) {
   if (row.p_failure !== null) {
-    return (
-      <span>
-        {row.p_failure.toFixed(2)} <small>({row.reference_class})</small>
-      </span>
-    );
+    return <span className="num">{row.p_failure.toFixed(2)}</span>;
   }
   if (row.reference_class === "class_estimate" && row.population_hazard_rate !== null) {
     return (
-      <span className="chip chip--neutral">
+      <span className="chip neutral" style={{ whiteSpace: "normal" }}>
         uncalibrated
         <br />
         pop. hazard {row.population_hazard_rate.toFixed(4)}, n={row.calibration_population}
       </span>
     );
   }
-  return <span className="chip chip--neutral">no rate available</span>;
+  return <span className="chip neutral">no rate available</span>;
+}
+
+function referenceClassChipTone(row: PredictionRow): string {
+  return row.fallback_level > 0 ? "warning" : "neutral";
 }
 
 function DeepDive({ row }: { row: PredictionRow }) {
   return (
     <div className="col box">
-      <h3>Item deep-dive — {row.installed_item_id.slice(0, 8)}</h3>
-      {row.rul ? (
-        <table>
-          <caption>RUL distribution ({row.rul.unit})</caption>
-          <tbody>
-            <tr>
-              <th>p10</th>
-              <td>{row.rul.p10}</td>
-            </tr>
-            <tr>
-              <th>p50</th>
-              <td>{row.rul.p50}</td>
-            </tr>
-            <tr>
-              <th>p90</th>
-              <td>{row.rul.p90}</td>
-            </tr>
-          </tbody>
-        </table>
-      ) : (
-        <p>no residual-life distribution at reference class {row.reference_class}</p>
-      )}
-
-      {row.contributing_factors.length > 0 ? (
-        <table>
-          <caption>Contributing factor (association, not cause)</caption>
-          <thead>
-            <tr>
-              <th>Factor</th>
-              <th>Attribution method</th>
-              <th>Stability</th>
-            </tr>
-          </thead>
-          <tbody>
-            {row.contributing_factors.map((f) => (
-              <tr key={f.factor}>
-                <td>{f.factor}</td>
-                <td>{f.attribution_method}</td>
-                <td>{f.stability.toFixed(2)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      ) : (
-        <p>—</p>
-      )}
-
-      <section className="col box">
-        <h3>What-if scenario</h3>
-        <span className="chip chip--neutral">interactive · no latency guarantee</span>
-        {row.reference_class === "item" ? (
-          <p>
-            <em>
-              POST /api/v1/pdm/what-if is not built in this vertical slice (22-pdm.md §10 names the
-              operation; no request-body schema exists yet). This box intentionally has no form.
-            </em>
-          </p>
+      <span className="box-label">Item deep-dive — {row.installed_item_id.slice(0, 8)}</span>
+      <div className="box-content">
+        {row.rul ? (
+          <div className="table-scroll">
+            <table className="wf">
+              <caption>RUL distribution ({row.rul.unit})</caption>
+              <tbody>
+                <tr>
+                  <th>p10</th>
+                  <td className="num">{row.rul.p10}</td>
+                </tr>
+                <tr>
+                  <th>p50</th>
+                  <td className="num">{row.rul.p50}</td>
+                </tr>
+                <tr>
+                  <th>p90</th>
+                  <td className="num">{row.rul.p90}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         ) : (
-          <p>What-if is unavailable — this row is not item-conditional (reference class {row.reference_class}).</p>
+          <p className="placeholder-fig">
+            no residual-life distribution at reference class {row.reference_class}
+          </p>
         )}
-      </section>
+      </div>
+
+      <div className="box-content" style={{ marginTop: 8 }}>
+        {row.contributing_factors.length > 0 ? (
+          <div className="table-scroll">
+            <table className="wf">
+              <caption>Contributing factor (association, not cause)</caption>
+              <thead>
+                <tr>
+                  <th>Factor</th>
+                  <th>Attribution method</th>
+                  <th className="num">Stability</th>
+                </tr>
+              </thead>
+              <tbody>
+                {row.contributing_factors.map((f) => (
+                  <tr key={f.factor}>
+                    <td>{f.factor}</td>
+                    <td>{f.attribution_method}</td>
+                    <td className="num">{f.stability.toFixed(2)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="sheet-note">—</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function WhatIf({ row }: { row: PredictionRow }) {
+  return (
+    <div className="col box">
+      <span className="box-label">
+        What-if scenario
+        <span className="chip accent" style={{ marginLeft: 6 }}>
+          interactive · no latency guarantee
+        </span>
+      </span>
+      <div className="box-content placeholder-fig">
+        {row.reference_class === "item"
+          ? "POST /api/v1/pdm/what-if is not built in this vertical slice (22-pdm.md §10 names the operation; no request-body schema exists yet)."
+          : `What-if is unavailable — this row is not item-conditional (reference class ${row.reference_class}).`}
+      </div>
     </div>
   );
 }
@@ -177,65 +193,109 @@ export function FleetRiskTriage() {
   const sorted = useMemo(() => sortRows(query.data ?? [], sortKey), [query.data, sortKey]);
   const selected = sorted.find((r) => r.prediction_id === selectedId) ?? null;
 
-  if (query.isLoading) return <p aria-busy="true">Loading…</p>;
-  if (query.isError) return <p role="alert">Couldn't load predictions</p>;
-
   return (
-    <section>
-      <div className="box">
-        <h2>Triage — active predictions</h2>
-        <p className="sheet-note">
-          A null p_failure (calibration population &lt; 50) renders as "uncalibrated," never as zero
-          risk — doc 03 §7.1.
-        </p>
-        <label htmlFor="sort-key">Sort by</label>
-        <select
-          id="sort-key"
-          value={sortKey}
-          onChange={(e) => setSortKey(e.target.value as SortKey)}
-        >
-          <option value="horizon_days">Horizon (soonest first)</option>
-          <option value="p_failure">P(failure), within reference class</option>
-          <option value="computed_at">Most recently computed</option>
-        </select>
-        <caption>Showing {sorted.length} predictions on this page — not a fleet ranking.</caption>
-
-        <table>
-          <thead>
-            <tr>
-              <th>NIIN</th>
-              <th>Installed item</th>
-              <th>Tier</th>
-              <th>Reference class</th>
-              <th>P(failure) / rate</th>
-              <th>Horizon</th>
-              <th>Top factor</th>
-            </tr>
-          </thead>
-          <tbody>
-            {sorted.map((row) => (
-              <tr
-                key={row.prediction_id}
-                onClick={() => setSelectedId(row.prediction_id)}
-                aria-selected={row.prediction_id === selectedId}
-                style={{ cursor: "pointer" }}
-              >
-                <td>{row.niin}</td>
-                <td>{row.installed_item_id.slice(0, 8)}</td>
-                <td>{row.tier}</td>
-                <td className="chip chip--neutral">{row.reference_class}</td>
-                <td>
-                  <UncalibratedCell row={row} />
-                </td>
-                <td>{row.horizon_days}d</td>
-                <td>{row.contributing_factors[0]?.factor ?? "—"}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+    <section className="sheet">
+      <div className="titleblock">
+        <div className="tb-left">
+          <span className="sheet-no">SHEET 04 / PREDICTIVE MAINTENANCE</span>
+          <h2>Fleet-Risk Triage</h2>
+          <span className="persona">Maintainer, Planner — ranked prediction review</span>
+        </div>
+        <div className="tb-right">
+          Doc 03 §7.1
+          <br />
+          Doc 06 §3
+        </div>
       </div>
 
-      {selected && <DeepDive row={selected} />}
+      <div className="sheet-body">
+        {query.isLoading && <p aria-busy="true">Loading…</p>}
+        {query.isError && <p role="alert">Couldn't load predictions</p>}
+
+        {query.data && (
+          <>
+            <div className="box">
+              <span className="box-label">Triage — active predictions</span>
+              <div className="box-content">
+                <div className="row" style={{ alignItems: "center", marginBottom: 8 }}>
+                  <div>
+                    <label htmlFor="sort-key">Sort by</label>
+                    <select
+                      id="sort-key"
+                      value={sortKey}
+                      onChange={(e) => setSortKey(e.target.value as SortKey)}
+                    >
+                      <option value="horizon_days">Horizon (soonest first)</option>
+                      <option value="p_failure">P(failure), within reference class</option>
+                      <option value="computed_at">Most recently computed</option>
+                    </select>
+                  </div>
+                  <p style={{ fontSize: "var(--fs-200)", color: "var(--ink-soft)", margin: 0 }}>
+                    Showing {sorted.length} predictions on this page — not a fleet ranking.
+                  </p>
+                </div>
+
+                <div className="table-scroll">
+                  <table className="wf">
+                    <thead>
+                      <tr>
+                        <th>NIIN</th>
+                        <th>Installed item</th>
+                        <th>Tier</th>
+                        <th>Reference class</th>
+                        <th>P(failure) / rate</th>
+                        <th className="num">Horizon</th>
+                        <th>Top factor</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sorted.map((row) => (
+                        <tr
+                          key={row.prediction_id}
+                          onClick={() => setSelectedId(row.prediction_id)}
+                          aria-selected={row.prediction_id === selectedId}
+                          style={{
+                            cursor: "pointer",
+                            background:
+                              row.prediction_id === selectedId ? "var(--paper-2)" : undefined,
+                          }}
+                        >
+                          <td>{row.niin}</td>
+                          <td>{row.installed_item_id.slice(0, 8)}</td>
+                          <td>{row.tier}</td>
+                          <td>
+                            <span className={`chip ${referenceClassChipTone(row)}`}>
+                              {row.reference_class}
+                            </span>
+                          </td>
+                          <td>
+                            <UncalibratedCell row={row} />
+                          </td>
+                          <td className="num">{row.horizon_days}d</td>
+                          <td>{row.contributing_factors[0]?.factor ?? "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              <p className="sheet-note" style={{ marginTop: 8 }}>
+                A null <code>p_failure</code> (calibration population &lt; 50) renders as
+                "uncalibrated," never as zero risk — doc 03 §7.1.
+              </p>
+            </div>
+
+            {selected ? (
+              <div className="row wrap-mobile">
+                <DeepDive row={selected} />
+                <WhatIf row={selected} />
+              </div>
+            ) : (
+              <p className="sheet-note">Select a row above to open its deep-dive.</p>
+            )}
+          </>
+        )}
+      </div>
     </section>
   );
 }

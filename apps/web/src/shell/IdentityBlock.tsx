@@ -40,27 +40,34 @@ export function IdentityBlock() {
   }
 
   if (session.isLoading) {
-    return <div className="identity-block" aria-busy="true">Loading…</div>;
+    return <span className="id" aria-busy="true">Loading…</span>;
   }
 
   const status = (session.error as { status?: number } | undefined)?.status;
   if (status === 404 || status === 401) {
     return (
-      <a className="identity-block__login" href="/api/v1/gateway/session/login">
+      <a className="btn primary" href="/api/v1/gateway/session/login">
         Sign in
       </a>
     );
   }
   if (session.error) {
-    return <div className="identity-block__error" role="alert">Couldn't load identity</div>;
+    return (
+      <span className="id" role="alert">
+        <span className="chip critical">identity unavailable</span>
+      </span>
+    );
   }
 
   return (
-    <div className="identity-block">
-      <span title={session.data?.session_id}>Session {session.data?.session_id?.slice(0, 8)}</span>
-      <button type="button" onClick={signOut}>
+    <span className="id">
+      Session <span title={session.data?.session_id}>{session.data?.session_id?.slice(0, 8)}</span>
+      <span className="chip neutral" style={{ marginLeft: 8 }}>
+        demo session
+      </span>
+      <button type="button" className="btn ghost" style={{ marginLeft: 8 }} onClick={signOut}>
         Sign out
       </button>
-    </div>
+    </span>
   );
 }
