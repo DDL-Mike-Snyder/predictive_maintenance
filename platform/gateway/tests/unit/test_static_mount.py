@@ -13,7 +13,6 @@ import pytest
 from fathom_gateway.config import (
     AppSettings,
     DatabaseSettings,
-    DesignAdvisoryUpstreamSettings,
     OidcSettings,
     PdmUpstreamSettings,
     SessionSettings,
@@ -23,10 +22,6 @@ from fathom_gateway.main import create_app
 from httpx import ASGITransport, AsyncClient
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
-# [DEMO -- docs/demo/redesign-case-builder-demo-plan.md §1.1] Empty-paths
-# stub: services/design-advisory doesn't exist yet, and this suite has
-# nothing to do with it -- just needs Settings() to construct.
-_EMPTY_OPENAPI = Path(__file__).resolve().parent.parent / "fixtures" / "empty_openapi.json"
 
 
 def _settings(*, static_dir: str | None) -> Settings:
@@ -43,10 +38,6 @@ def _settings(*, static_dir: str | None) -> Settings:
         pdm=PdmUpstreamSettings(
             base_url="http://test-pdm",
             openapi_path=str(_REPO_ROOT / "services" / "pdm" / "openapi.json"),
-        ),
-        design_advisory=DesignAdvisoryUpstreamSettings(
-            base_url="http://test-design-advisory",
-            openapi_path=str(_EMPTY_OPENAPI),
         ),
     )
 
