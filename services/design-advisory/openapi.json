@@ -1,0 +1,965 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "FATHOM -- Design Advisory (Redesign Case Builder demo)",
+    "version": "0.1"
+  },
+  "paths": {
+    "/healthz": {
+      "get": {
+        "summary": "Healthz",
+        "operationId": "healthz_healthz_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object",
+                  "title": "Response Healthz Healthz Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/design-advisory/redesign-candidates": {
+      "get": {
+        "tags": [
+          "design-advisory:reads"
+        ],
+        "summary": "List Candidates",
+        "operationId": "list_candidates_api_v1_design_advisory_redesign_candidates_get",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response List Candidates Api V1 Design Advisory Redesign Candidates Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/design-advisory/redesign-candidates/{candidate_id}": {
+      "get": {
+        "tags": [
+          "design-advisory:reads"
+        ],
+        "summary": "Get Candidate",
+        "operationId": "get_candidate_api_v1_design_advisory_redesign_candidates__candidate_id__get",
+        "parameters": [
+          {
+            "name": "candidate_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Candidate Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Candidate Api V1 Design Advisory Redesign Candidates  Candidate Id  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/design-advisory/dossiers/{dossier_id}": {
+      "get": {
+        "tags": [
+          "design-advisory:reads"
+        ],
+        "summary": "Get Dossier",
+        "operationId": "get_dossier_api_v1_design_advisory_dossiers__dossier_id__get",
+        "parameters": [
+          {
+            "name": "dossier_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Dossier Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Dossier Api V1 Design Advisory Dossiers  Dossier Id  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/design-advisory/impact-snapshots": {
+      "get": {
+        "tags": [
+          "design-advisory:reads"
+        ],
+        "summary": "List Impact Snapshots",
+        "operationId": "list_impact_snapshots_api_v1_design_advisory_impact_snapshots_get",
+        "parameters": [
+          {
+            "name": "candidate_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Candidate Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response List Impact Snapshots Api V1 Design Advisory Impact Snapshots Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/design-advisory/impact-snapshots/{impact_snapshot_id}": {
+      "get": {
+        "tags": [
+          "design-advisory:reads"
+        ],
+        "summary": "Get Impact Snapshot",
+        "operationId": "get_impact_snapshot_api_v1_design_advisory_impact_snapshots__impact_snapshot_id__get",
+        "parameters": [
+          {
+            "name": "impact_snapshot_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Impact Snapshot Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Impact Snapshot Api V1 Design Advisory Impact Snapshots  Impact Snapshot Id  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/design-advisory/cost-estimates/{estimate_id}": {
+      "get": {
+        "tags": [
+          "design-advisory:reads"
+        ],
+        "summary": "Get Cost Estimate",
+        "operationId": "get_cost_estimate_api_v1_design_advisory_cost_estimates__estimate_id__get",
+        "parameters": [
+          {
+            "name": "estimate_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Estimate Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Cost Estimate Api V1 Design Advisory Cost Estimates  Estimate Id  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/design-advisory/redesign-cases": {
+      "get": {
+        "tags": [
+          "design-advisory:reads"
+        ],
+        "summary": "List Cases",
+        "operationId": "list_cases_api_v1_design_advisory_redesign_cases_get",
+        "parameters": [
+          {
+            "name": "candidate_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Candidate Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response List Cases Api V1 Design Advisory Redesign Cases Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "design-advisory:actions"
+        ],
+        "summary": "Create Case",
+        "operationId": "create_case_api_v1_design_advisory_redesign_cases_post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateCaseRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Create Case Api V1 Design Advisory Redesign Cases Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/design-advisory/redesign-cases/{case_id}": {
+      "get": {
+        "tags": [
+          "design-advisory:reads"
+        ],
+        "summary": "Get Case",
+        "operationId": "get_case_api_v1_design_advisory_redesign_cases__case_id__get",
+        "parameters": [
+          {
+            "name": "case_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Case Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Case Api V1 Design Advisory Redesign Cases  Case Id  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/design-advisory/redesign-candidates/{candidate_id}/parametric-estimate": {
+      "post": {
+        "tags": [
+          "design-advisory:actions"
+        ],
+        "summary": "Parametric Estimate",
+        "operationId": "parametric_estimate_api_v1_design_advisory_redesign_candidates__candidate_id__parametric_estimate_post",
+        "parameters": [
+          {
+            "name": "candidate_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Candidate Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Parametric Estimate Api V1 Design Advisory Redesign Candidates  Candidate Id  Parametric Estimate Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/design-advisory/redesign-candidates/{candidate_id}/evaluate-gate": {
+      "post": {
+        "tags": [
+          "design-advisory:actions"
+        ],
+        "summary": "Evaluate Gate",
+        "operationId": "evaluate_gate_api_v1_design_advisory_redesign_candidates__candidate_id__evaluate_gate_post",
+        "parameters": [
+          {
+            "name": "candidate_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Candidate Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Evaluate Gate Api V1 Design Advisory Redesign Candidates  Candidate Id  Evaluate Gate Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/design-advisory/redesign-cases/{case_id}/assemble": {
+      "post": {
+        "tags": [
+          "design-advisory:actions"
+        ],
+        "summary": "Assemble Case",
+        "operationId": "assemble_case_api_v1_design_advisory_redesign_cases__case_id__assemble_post",
+        "parameters": [
+          {
+            "name": "case_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Case Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssembleCaseRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Assemble Case Api V1 Design Advisory Redesign Cases  Case Id  Assemble Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/design-advisory/redesign-cases/{case_id}/propose": {
+      "post": {
+        "tags": [
+          "design-advisory:actions"
+        ],
+        "summary": "Propose Case",
+        "operationId": "propose_case_api_v1_design_advisory_redesign_cases__case_id__propose_post",
+        "parameters": [
+          {
+            "name": "case_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Case Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Propose Case Api V1 Design Advisory Redesign Cases  Case Id  Propose Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/design-advisory/agent/candidates/{candidate_id}/qualify": {
+      "post": {
+        "tags": [
+          "agent"
+        ],
+        "summary": "Qualify",
+        "description": "42 \u00a74.1 steps 1-3, 6-8, simplified: fetch candidate + dossier +\nimpact snapshot, run Marc's parametric-estimate then evaluate-gate,\nderive evidence gaps. Steps 4-5 (taxonomy resolution, Failure\nIntelligence preflight) and the retrieval step are skipped per \u00a70.1 --\nall of that data is pre-seeded by Paul rather than fetched live.",
+        "operationId": "qualify_api_v1_design_advisory_agent_candidates__candidate_id__qualify_post",
+        "parameters": [
+          {
+            "name": "candidate_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Candidate Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QualificationReport"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/design-advisory/agent/cases/{case_id}/draft": {
+      "post": {
+        "tags": [
+          "agent"
+        ],
+        "summary": "Draft",
+        "description": "42 \u00a74.1 steps 10-12, simplified: load the draft case (creating it\nvia Marc's `POST /redesign-cases` first if `case_id` doesn't resolve\nand a `candidate_id` was supplied), pull the dossier/snapshot/cost\nestimate/gate decision it needs, derive limitations + evidence gaps,\ncompose the narrative, then call Marc's own\n`POST /redesign-cases/{id}/assemble` to persist the result -- this\nfile never writes to the DB directly, persistence happens exactly\nonce, in Marc's endpoint.",
+        "operationId": "draft_api_v1_design_advisory_agent_cases__case_id__draft_post",
+        "parameters": [
+          {
+            "name": "case_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Case Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/DraftRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Draft Api V1 Design Advisory Agent Cases  Case Id  Draft Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AssembleCaseRequest": {
+        "properties": {
+          "recommendation_stance": {
+            "type": "string",
+            "title": "Recommendation Stance"
+          },
+          "recommendation_limitations": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Recommendation Limitations"
+          },
+          "recommendation_evidence_gaps": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Recommendation Evidence Gaps"
+          },
+          "narrative_sections": {
+            "items": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Narrative Sections"
+          }
+        },
+        "type": "object",
+        "required": [
+          "recommendation_stance",
+          "recommendation_limitations",
+          "recommendation_evidence_gaps",
+          "narrative_sections"
+        ],
+        "title": "AssembleCaseRequest"
+      },
+      "CreateCaseRequest": {
+        "properties": {
+          "candidate_id": {
+            "type": "string",
+            "title": "Candidate Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "candidate_id"
+        ],
+        "title": "CreateCaseRequest"
+      },
+      "DraftRequest": {
+        "properties": {
+          "candidate_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidate Id"
+          }
+        },
+        "type": "object",
+        "title": "DraftRequest",
+        "description": "Optional -- only needed when `case_id` doesn't exist yet and the\ncaller wants this endpoint to create the draft case itself via Marc's\n`POST /redesign-cases` (see the `draft` handler's docstring)."
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "QualificationReport": {
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "title": "Run Id"
+          },
+          "candidate_id": {
+            "type": "string",
+            "title": "Candidate Id"
+          },
+          "niin": {
+            "type": "string",
+            "title": "Niin"
+          },
+          "dossier_id": {
+            "type": "string",
+            "title": "Dossier Id"
+          },
+          "impact_snapshot_id": {
+            "type": "string",
+            "title": "Impact Snapshot Id"
+          },
+          "dependency_completeness": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Dependency Completeness"
+          },
+          "parametric_estimate": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Parametric Estimate"
+          },
+          "gate_decision_id": {
+            "type": "string",
+            "title": "Gate Decision Id"
+          },
+          "gate_decision": {
+            "type": "string",
+            "title": "Gate Decision"
+          },
+          "condition_results": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Condition Results"
+          },
+          "failed_conditions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Failed Conditions"
+          },
+          "causal_citation_refs": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Causal Citation Refs"
+          },
+          "derived_evidence_gaps": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Derived Evidence Gaps"
+          },
+          "outcome": {
+            "type": "string",
+            "title": "Outcome"
+          }
+        },
+        "type": "object",
+        "required": [
+          "run_id",
+          "candidate_id",
+          "niin",
+          "dossier_id",
+          "impact_snapshot_id",
+          "dependency_completeness",
+          "parametric_estimate",
+          "gate_decision_id",
+          "gate_decision",
+          "condition_results",
+          "failed_conditions",
+          "causal_citation_refs",
+          "derived_evidence_gaps",
+          "outcome"
+        ],
+        "title": "QualificationReport",
+        "description": "Trimmed to what this demo slice actually has -- 42 \u00a73.2.1's real\nshape includes several fields (taxonomy resolution, Failure\nIntelligence preflight, retrieval hits) this demo never computes,\nper \u00a70.1."
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  }
+}
