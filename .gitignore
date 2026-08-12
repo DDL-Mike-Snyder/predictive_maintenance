@@ -23,6 +23,7 @@ node_modules/
 dist/
 .vite/
 *.tsbuildinfo
+.pnpm-store/
 
 # app.sh's own runtime data (deploy/domino-demo) -- recreated fresh every start
 .demo-data/
