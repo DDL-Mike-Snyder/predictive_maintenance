@@ -76,6 +76,16 @@ class PdmUpstreamSettings(BaseModel):
     openapi_path: str
 
 
+class DesignAdvisoryUpstreamSettings(BaseModel):
+    """[DEMO -- docs/demo/redesign-case-builder-demo-plan.md §1.1] Second
+    pass-through upstream, same shape as `PdmUpstreamSettings` above --
+    proxies `services/design-advisory`, the demo-only Redesign Case
+    Builder slice."""
+
+    base_url: str
+    openapi_path: str
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="FATHOM_", env_nested_delimiter="__", extra="forbid"
@@ -87,3 +97,4 @@ class Settings(BaseSettings):
     session: SessionSettings
     otel: OtelSettings = OtelSettings()
     pdm: PdmUpstreamSettings
+    design_advisory: DesignAdvisoryUpstreamSettings

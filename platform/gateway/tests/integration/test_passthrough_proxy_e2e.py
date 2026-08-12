@@ -34,6 +34,7 @@ import pytest
 import pytest_asyncio
 from fathom_gateway.config import (
     DatabaseSettings,
+    DesignAdvisoryUpstreamSettings,
     OidcSettings,
     PdmUpstreamSettings,
     SessionSettings,
@@ -48,6 +49,10 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 _REPO_ROOT = Path(__file__).resolve().parents[4]
 _PDM_VENV_PYTHON = _REPO_ROOT / "services" / "pdm" / ".venv" / "bin" / "python"
 _PDM_OPENAPI_PATH = _REPO_ROOT / "services" / "pdm" / "openapi.json"
+# [DEMO -- docs/demo/redesign-case-builder-demo-plan.md §1.1] Empty-paths
+# stub: services/design-advisory doesn't exist yet, and this test proves
+# the PdM proxy chain specifically -- just needs Settings() to construct.
+_EMPTY_OPENAPI = Path(__file__).resolve().parent.parent / "fixtures" / "empty_openapi.json"
 
 
 def _free_port() -> int:
@@ -180,6 +185,10 @@ def _gateway_settings(*, pdm_base_url: str) -> Settings:
         ),
         session=SessionSettings(cookie_signing_key="test-signing-key"),
         pdm=PdmUpstreamSettings(base_url=pdm_base_url, openapi_path=str(_PDM_OPENAPI_PATH)),
+        design_advisory=DesignAdvisoryUpstreamSettings(
+            base_url="http://test-design-advisory",
+            openapi_path=str(_EMPTY_OPENAPI),
+        ),
     )
 
 
