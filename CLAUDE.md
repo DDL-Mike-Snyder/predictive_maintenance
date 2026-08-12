@@ -1,3 +1,143 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+> The material below (from "Quick orientation" through "Common commands") is the
+> stable, factual map of the repo. Everything from "FATHOM — project instructions"
+> onward is a **standing policy + running handoff log** — read it for current state
+> and decisions in flight, but always cross-check its "what's built" / commit-state
+> paragraphs against `git log --oneline` and `git status`, since it drifts.
+
+## Quick orientation
+
+FATHOM is a **polyglot monorepo** for a Navy fleet-sustainment platform: 9 domain
+services + 8 platform services + operator/practitioner UIs, all specified up front in
+`docs/build/` and being implemented one vertical slice at a time. **Only a fraction is
+built** — as of now: `services/pdm` (Predictive Maintenance), `platform/gateway`,
+`apps/web`, four shared `packages/`, and one Domino Job entrypoint under `models/`.
+Every other directory named in the specs is still empty. The specs are the source of
+truth for what code *should* do; the code is the source of truth for what exists.
+
+The specs are numbered and binding. Read these before touching the corresponding code:
+- `docs/build/09-monorepo-and-conventions.md` — **master spec**: layout, tech-stack
+  pins, per-service scaffold, API conventions, CI gates, Definition of Done, the
+  DO-NOT list. Read first before any new service.
+- `docs/build/22-pdm.md` — what `services/pdm` is built against.
+- `docs/build/30-gateway.md` / `31-auth.md` — what `platform/gateway` is built against.
+- `docs/build/10-shared-packages.md`, `11-outbox-sync-library.md` — the `packages/`.
+- `docs/build/51-operator-console.md` — what `apps/web` is built against.
+
+## Architecture (the parts that span files)
+
+**Layout.** `packages/` (shared Python libs) · `services/<slug>/` (domain services) ·
+`platform/<slug>/` (platform services) · `apps/web` (operator SPA) · `models/` (Domino
+Job entrypoints) · `deploy/helm` (shared charts) · `tools/` (CI reconciliation scripts) ·
+`docs/architecture` + `docs/build` (specs).
+
+**Each Python service** (`services/pdm`, `platform/gateway`) is an independent uv project
+(`pyproject.toml` + committed `uv.lock`, `src/fathom_<slug>/` layout) with the same
+internal layering: `api/v1/` (FastAPI routers) → `services/` (business logic) →
+`repositories/` (data access) → `models/` (SQLAlchemy declarative, RLS-bearing where
+specified). Plus `schemas/` (Pydantic wire types), `events/` (catalog + consumers),
+`observability/`, `migrations/` (Alembic, one history per service). `main.py::create_app()`
+is the assembly point and supports `--emit-openapi`; the committed `openapi.json` is a CI-
+checked artifact, not decoration.
+
+**Shared packages, dependency order** `canonical-schemas → py-sync → contracts →
+py-common`:
+- `canonical-schemas` (`fathom_schemas`) — `FathomModel`, JCS hashing, event envelope,
+  the canonical domain payload models. The single source both OpenAPI and the TS type
+  generator read.
+- `py-sync` (`fathom_sync`) — transactional outbox/inbox, `MonotonicSequencer`, epoch
+  fencing, the relay + consumer loop. This is where cross-service event delivery lives.
+- `contracts` (`fathom_contracts`) — the `@operation` decorator (`x-side-effects`,
+  `x-substitution`, idempotency flags), enforced at import time.
+- `py-common` (`fathom_py_common`) — RFC 9457 problem details, correlation-ID +
+  classification middleware, idempotency guard, ETag/If-Match, health/readyz/metrics,
+  cursor pagination, the shared httpx factory. **Cross-cutting request behavior lives
+  here, not per-service.**
+
+**Data + isolation.** PostgreSQL, database-per-service (CloudNativePG in prod), async
+SQLAlchemy 2.x + asyncpg. PdM enforces holdout isolation with **Postgres RLS**; the
+restricted `fathom_pdm_serving` role has narrow, per-table grants and invalidates rows
+only through a `SECURITY DEFINER` function — see `22-pdm.md` §4.5 and the RLS integration
+tests. When adding tables/roles, budget for the exact grant sweep documented in the
+handoff log's "real bugs" list (schema USAGE, sequence USAGE, per-table grants).
+
+**Events.** Kafka-API (Redpanda), JSON-Schema registry. Each service declares
+`CONSUMES`/`PUBLISHES` in `events/catalog.py`; `tools/check_event_catalog.py` reconciles
+these against the spec catalog tables repo-wide.
+
+**Gateway = BFF.** `platform/gateway` owns session cookies + CSRF + OIDC (Keycloak), and
+generates a **pass-through proxy** to downstream services from their committed
+`openapi.json` (no catch-all). It decodes the OIDC `sub` and forwards it as
+`X-Fathom-Principal` — which is the only auth PdM's placeholder `current_principal`
+actually reads today.
+
+**Frontend.** `apps/web` (pnpm workspace, Vite + React 18 + TS + react-query) generates
+wire types from `platform/gateway/openapi.json` via `openapi-typescript`. It is served
+from the program's own Sustainment-Plane ingress, **not** Domino (see
+`02-domino-platform-assessment.md` §5). Vite `BASE_URL`/`VITE_BASE_URL` must be set for
+path-prefixed hosting — hardcoded root paths break under Domino's `/apps-internal/<id>/`.
+
+## Common commands
+
+The `Makefile` is the single entrypoint (CI calls only these targets). `SLUG` selects a
+service (e.g. `pdm`); repo-wide targets take no `SLUG`. All Python runs through `uv run`.
+
+```bash
+make lint                    # ruff check . && ruff format --check .   (repo-wide)
+make typecheck SLUG=pdm      # mypy --strict on services/<slug>/src + packages
+make test SLUG=pdm           # pytest tests/unit tests/integration --cov
+make contract SLUG=pdm       # regenerate openapi.json, diff vs committed, validate
+make conformance SLUG=pdm    # pytest tests/conformance (schemathesis)
+make check-event-catalog     # repo-wide event-catalog reconciliation (tools/)
+make schema-check            # canonical-schemas JSON Schema compatibility
+make charts SLUG=pdm         # helm lint + template|kubeconform + helm unittest + hadolint
+make image SLUG=pdm          # docker build -t fathom-pdm:local
+make scaffold SLUG=<new>     # generate the 09 §4.2 per-service skeleton
+```
+
+Direct invocation (when a service's venv is set up — see the handoff log's "How to run
+tests" for the full pip-based bootstrap, since `uv` may not be present):
+
+```bash
+cd services/pdm && uv run pytest tests/ -q                          # all PdM tests
+cd services/pdm && uv run pytest tests/integration/test_rls_holdout_isolation.py -q   # one file
+cd services/pdm && uv run pytest tests/unit/test_x.py::test_name    # single test
+uv run python -m fathom_pdm.main --emit-openapi > openapi.json      # regenerate the API contract
+uv run alembic -c alembic.ini upgrade head                          # apply migrations
+```
+
+Integration tests spin up **real** Postgres/Redpanda via testcontainers — a working
+Docker/Podman socket is required, and RLS/grant behavior is only exercised against real
+Postgres (SQLite is a test-only convenience with documented dialect gaps).
+
+Frontend (`apps/web`):
+```bash
+pnpm install                 # from repo root (pnpm workspace)
+cd apps/web && pnpm dev       # Vite dev server (proxies /api to a local gateway)
+cd apps/web && pnpm build     # tsc -b && vite build
+cd apps/web && pnpm test      # vitest run
+cd apps/web && pnpm generate:types   # regenerate src/api/generated.ts from gateway openapi.json
+```
+
+## Conventions that bite
+
+- **Timestamps are always `TIMESTAMPTZ` / RFC 3339 with offset.** Naive datetimes are a
+  lint failure (ruff `DTZ`). No `print()` — `structlog` only (ruff `T20`).
+- **Idempotency, correlation IDs, problem details, pagination are shared middleware in
+  `py-common`**, wired via app/router `dependencies=[...]` (route_class does NOT cascade
+  through nested routers — see the idempotency module docstring).
+- **`openapi.json` is committed and CI-diffed.** Regenerate it (`--emit-openapi`) whenever
+  you change a route, or `make contract` fails.
+- **ruff config carries load-bearing per-file-ignores and disabled rules** (TC001-3,
+  TRY003) with inline reasoning in `pyproject.toml` — read it before re-enabling anything.
+- Nullable JSON columns need `none_as_null=True`; seeding FK-linked rows in one session
+  needs an explicit `flush()` between them (both are documented real-bug fixes).
+
+---
+
 # FATHOM — project instructions for Claude Code, plus handoff / continuation notes
 
 This file is loaded automatically by Claude Code at the start of every
