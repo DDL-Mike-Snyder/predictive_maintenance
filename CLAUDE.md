@@ -53,6 +53,90 @@ this file said it wasn't; that was true when written and is stale now.
 map, but always verify against those two before trusting a paragraph like
 this one that describes commit state.
 
+## RESUME HERE — 2026-08-07, session paused for a computer update
+
+**This supersedes "RUN THE DEMO" below for demo purposes** — that section
+is the manual local-services runbook from the night before this pass; it
+still works as a fallback, but there is now a real, registered, already-
+deployed Domino App that's far simpler to just re-open or restart.
+
+**The real, live artifact**: a Domino App named `fathom-pdm-demo`
+(`appId=6a74924c664e0f706e462d33`) in the `predictive_maintenance` project,
+reachable at `https://mikesn136713.cs.domino.tech/apps-internal/6a74924c664e0f706e462d33/`
+(gated by Domino's own login — a 302 there is normal for an unauthenticated
+`curl`, not a bug). As of commit `f76f324` (pushed, HEAD, `origin/main`
+matches), it runs PdM + the gateway (which also serves `apps/web`'s built
+UI) as two processes in one container, SQLite, `demo_auto_login` instead
+of real Keycloak/OIDC — see `app.sh`'s own header comment for the full
+design, and `deploy/domino-demo/README.md` for the static-build caveat
+(the committed `web-dist/` snapshot is baked with `VITE_BASE_URL` set to
+this App's own literal ID — regenerate it if the App is ever deleted and
+recreated under a new ID).
+
+**Real bugs found and fixed getting here, each one only caught by actually
+registering and running a real App, not by review**: the official
+`dominodatalab` Python SDK's own `app_publish()` references an undefined
+variable (a real bug in the SDK itself); the plugin's own docs named the
+wrong REST request shape entirely (the real, working one is the legacy
+`/v4/modelProducts` surface, found by reading the SDK's actual source, not
+`/api/apps/beta/apps`'s documented-but-wrong body); a Domino App gets its
+own fresh `git clone` in its own container, completely separate from any
+interactive workspace's filesystem — `app.sh` had to become fully self-
+sufficient (builds both services' venvs from scratch every start) because
+of this; port 8888 being "occupied" was a false alarm from testing inside
+an *interactive workspace* (Jupyter's own tooling sits there), not the
+App's own dedicated container, where 8888 is Domino's real ingress
+convention; and two blank-page/broken-fetch bugs from the exact same root
+cause — Vite's default absolute asset paths and this app's own
+`api/client.ts` `baseUrl` both silently assumed the app is served from the
+domain root, which breaks the instant it's hosted under a real path
+prefix like Domino's `/apps-internal/<appId>/`. Both are now fixed by
+deriving from `import.meta.env.BASE_URL` (set via `VITE_BASE_URL` at
+build time), not hardcoded.
+
+**Not explicitly reconfirmed by the user before this pause**: after the
+last fix (commit `f76f324`, "Couldn't load predictions"), the user was
+asked to reload and confirm predictions actually render — that
+confirmation never came back explicitly in-session. The conversation
+moved on to a naming/pitch-copy exercise instead (see below), which
+weakly suggests the demo went fine, but **verify this for real before
+trusting it** — don't assume "Couldn't load predictions" is actually
+fixed without checking.
+
+**To restart the App from scratch** (e.g. after a further code change, or
+if it's stopped): needs a live `dom connect` SSH tunnel (the user runs this
+themselves; see `[[reference_domino_workspace_access]]` for the exact
+command and the `known_hosts` gotcha), then from inside the workspace:
+```python
+from domino import Domino
+client = Domino(project="mike_snyder/predictive_maintenance",
+                 api_key=os.environ["DOMINO_USER_API_KEY"],
+                 host=os.environ["DOMINO_API_HOST"])
+r = client.request_manager.post(
+    client._routes.app_start("6a74924c664e0f706e462d33"),
+    json={"hardwareTierId": "small-k8s", "environmentId": "6a63a0e1a5caf27cfe5c5510"},
+)
+```
+Poll `client.request_manager.get(client._routes.app_get(app_id)).json()["status"]`
+for `"Running"`/`"Failed"`. For logs, use the newer `/api/apps/beta/apps/{appId}
+/versions/{versionId}/instances/{instanceId}/logs` REST endpoint (same
+underlying data as the legacy SDK calls above — `GET .../versions` lists
+version/instance IDs).
+
+**Also pending, decided in conversation but NOT yet applied to any code or
+doc**: the user wants to rename the product from "FATHOM" to something
+reflecting the full, cross-branch (not Navy-specific) holistic lifecycle
+vision — leading candidate is **LOOP**, backronym *Lifecycle Operations &
+Optimization Platform*, chosen for matching the actual differentiator (a
+closed loop from design through deployment and sustainment back to
+design, via the not-yet-built Design Advisory feedback path). This has
+NOT been applied anywhere — "FATHOM" is still the name throughout the
+entire repo, every doc, and this file. If the user wants to proceed with
+the rename, that is a new, unstarted, and likely large mechanical sweep
+(repo name, package names, every doc in `docs/build`/`docs/architecture`,
+this file, memory) — scope it explicitly before starting, don't assume
+"pick a name" meant "rename everything now."
+
 ## RUN THE DEMO — start here tomorrow morning
 
 Stopped for the night on 2026-08-05 with the demo built but not running
