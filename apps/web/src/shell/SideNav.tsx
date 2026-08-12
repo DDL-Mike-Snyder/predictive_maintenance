@@ -33,7 +33,7 @@ const GROUPS: { label: string | null; items: NavEntry[] }[] = [
     items: [
       { kind: "route", label: "Post-Mission Review", to: "/pma" },
       { kind: "external", label: "Failure Intelligence" },
-      { kind: "external", label: "Design Advisory" },
+      { kind: "route", label: "Design Advisory", to: "/design-advisory" },
     ],
   },
   {

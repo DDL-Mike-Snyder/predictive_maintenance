@@ -2,6 +2,7 @@ import type { RouteObject } from "react-router-dom";
 import { AppShell } from "./shell/AppShell";
 import { NotBuilt } from "./shell/NotBuilt";
 import { FleetRiskTriage } from "./features/pdm/FleetRiskTriage";
+import { RedesignCaseBuilder } from "./features/design-advisory/RedesignCaseBuilder";
 
 // 51-operator-console.md §3.1/§4.2's route tree. Every nav item in
 // SideNav.tsx has a real route here -- most render `NotBuilt` (see that
@@ -21,6 +22,7 @@ export const routes: RouteObject[] = [
       { path: "pma", element: <NotBuilt label="Post-Mission Review" /> },
       { path: "adjudication", element: <NotBuilt label="Adjudication Queue" /> },
       { path: "audit/remediations", element: <NotBuilt label="Remediation Queue" /> },
+      { path: "design-advisory", element: <RedesignCaseBuilder /> },
     ],
   },
 ];
