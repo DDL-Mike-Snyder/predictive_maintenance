@@ -24,8 +24,3 @@ os.environ.setdefault(
 os.environ.setdefault("FATHOM_SESSION__COOKIE_SIGNING_KEY", "test-signing-key")
 os.environ.setdefault("FATHOM_PDM__BASE_URL", "http://test-pdm")
 os.environ.setdefault("FATHOM_PDM__OPENAPI_PATH", "../../services/pdm/openapi.json")
-# [DEMO -- docs/demo/redesign-case-builder-demo-plan.md §1.1] Second
-# upstream, added alongside `pdm` above for the same reason -- see
-# tests/fixtures/empty_openapi.json's own comment for why an empty stub.
-os.environ.setdefault("FATHOM_DESIGN_ADVISORY__BASE_URL", "http://test-design-advisory")
-os.environ.setdefault("FATHOM_DESIGN_ADVISORY__OPENAPI_PATH", "tests/fixtures/empty_openapi.json")
