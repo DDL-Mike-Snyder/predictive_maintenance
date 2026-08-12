@@ -1,15 +1,8 @@
 [project]
 name = "fathom-design-advisory"
 version = "0.1.0"
-description = "FATHOM Design Advisory — Redesign Case Builder demo slice (docs/build/28-design-advisory.md, docs/demo/redesign-case-builder-demo-plan.md)"
+description = "FATHOM Design Advisory -- Redesign Case Builder demo (docs/demo/redesign-case-builder-demo-plan.md)"
 requires-python = ">=3.12"
-# [DEMO SCOPE — plan §0.1/§Paul task 1] Deliberately does NOT depend on the
-# shared fathom-* packages (canonical-schemas, contracts, py-common). This
-# 2.5-hour demo slice uses plain FastAPI HTTPException and plain Pydantic/
-# SQLAlchemy models rather than the stricter problem-detail middleware and
-# operation_extra annotations those packages enforce. aiosqlite is a main
-# dependency (not dev-only) because this demo runs SQLite always — there is
-# no Postgres branch.
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
@@ -17,6 +10,7 @@ dependencies = [
     "pydantic-settings>=2.5",
     "sqlalchemy[asyncio]>=2.0",
     "aiosqlite>=0.20",
+    "httpx>=0.27",
 ]
 
 [build-system]

@@ -1,11 +1,8 @@
-"""The single assembly point (plan §Paul task 5). Deliberately minimal:
-this demo slice takes no dependency on the shared fathom-* middleware
-(problem details, correlation, idempotency, classification) — plain
-FastAPI, open CORS, one health route, and the read router.
-
-`app = create_app()` is exposed at module level so
-`uvicorn fathom_design_advisory.main:app --port 8002` works directly.
-"""
+"""Assembly point for the Redesign Case Builder demo service.
+docs/demo/redesign-case-builder-demo-plan.md, Paul's task 5 -- plain
+FastAPI, no `fathom-py-common` middleware stack (this demo's own §0.1
+scope cut). CORS is wide open (`allow_origins=["*"]`) -- this is a demo,
+not a security review."""
 
 from __future__ import annotations
 
@@ -15,36 +12,24 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from fathom_design_advisory.api.reads import router as reads_router
+from fathom_design_advisory.api import build_router
 from fathom_design_advisory.config import Settings
-from fathom_design_advisory.db import build_engine, build_sessionmaker, create_all
-
-SLUG = "design-advisory"
-API_MAJOR = 1
+from fathom_design_advisory.db import create_all, make_engine, make_session_maker
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings()
-    engine = build_engine(settings)
 
     @asynccontextmanager
     async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
-        # No Alembic for this demo — create the schema on startup.
-        await create_all(engine)
+        await create_all(app.state.engine)
         yield
-        await engine.dispose()
 
     app = FastAPI(
-        title="FATHOM — Design Advisory (Redesign Case Builder demo)",
-        version=f"{API_MAJOR}.0",
-        openapi_version="3.1.0",
+        title="FATHOM -- Design Advisory (Redesign Case Builder demo)",
+        version="0.1",
         lifespan=_lifespan,
     )
-    app.state.settings = settings
-    app.state.engine = engine
-    app.state.session_maker = build_sessionmaker(engine)
-
-    # Open CORS — this is a demo, not a security review (plan §Paul task 5).
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -52,15 +37,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_headers=["*"],
     )
 
+    engine = make_engine(settings.database_url)
+    app.state.settings = settings
+    app.state.engine = engine
+    app.state.session_maker = make_session_maker(engine)
+
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:
         return {"status": "ok"}
 
-    app.include_router(reads_router)
-    # NOTE: api/actions.py (Marc) and api/agent.py (Michael) are wired at
-    # integration by Amanda via api/__init__.py::build_router — deliberately
-    # NOT included here, so this branch never touches those files.
+    app.include_router(build_router())
+
     return app
 
 
 app = create_app()
+
+if __name__ == "__main__":
+    import json
+    import sys
+
+    if "--emit-openapi" in sys.argv:
+        print(json.dumps(app.openapi(), indent=2))  # noqa: T201
+    else:
+        print("usage: python -m fathom_design_advisory.main --emit-openapi", file=sys.stderr)  # noqa: T201
+        sys.exit(1)
