@@ -14,7 +14,6 @@ from pathlib import Path
 import httpx
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
 from fathom_py_common import (
     assert_operation_annotations,
     configure_logging,
@@ -126,14 +125,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # proxy in front of it) makes gateway + UI one same-origin Domino App
     # -- no CORS, no cross-origin cookie story to solve.
     if settings.app.static_dir:
-        static_dir = Path(settings.app.static_dir)
+        static_dir = Path(settings.app.static_dir).resolve()
         index_html = static_dir / "index.html"
-        assets_dir = static_dir / "assets"
-        if assets_dir.is_dir():
-            app.mount("/assets", StaticFiles(directory=assets_dir), name="web-assets")
 
         @app.get("/{full_path:path}", include_in_schema=False)
-        async def _serve_web_spa(full_path: str) -> Response:  # noqa: ARG001 -- SPA fallback, path unused
+        async def _serve_web_spa(full_path: str) -> Response:
+            # Serve any real build artifact by its path (JS/CSS/etc, under
+            # whatever `assetsDir` name Vite emitted -- see apps/web's
+            # vite.config.ts note on Domino's reserved `/assets/` segment),
+            # with the extension-derived MIME type FileResponse infers. Fall
+            # back to index.html for SPA client routes. The is_file() +
+            # containment check keeps this from serving anything outside the
+            # build dir (no path traversal).
+            if full_path:
+                candidate = (static_dir / full_path).resolve()
+                if candidate.is_file() and candidate.is_relative_to(static_dir):
+                    return FileResponse(candidate)
             return FileResponse(index_html)
 
     return app

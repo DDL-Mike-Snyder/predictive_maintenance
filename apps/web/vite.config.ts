@@ -10,6 +10,15 @@ import react from "@vitejs/plugin-react";
 export default defineConfig({
   plugins: [react()],
   base: process.env.VITE_BASE_URL ?? "/",
+  // Vite emits hashed JS/CSS under `<assetsDir>/` (default "assets"). Behind
+  // Domino's *workspace* proxy the edge reserves the `/assets/` path segment
+  // for its own frontend and never forwards `.../proxy/<port>/assets/...` to
+  // the app -- so those requests come back as Domino's own HTML/404, not our
+  // bundle. Overriding VITE_ASSETS_DIR to a non-colliding name (the workspace
+  // entrypoint sets it) dodges that. Default stays "assets" so the Domino
+  // *App* deploy (/apps-internal/<appId>/, which does not reserve it) is
+  // unchanged.
+  build: { assetsDir: process.env.VITE_ASSETS_DIR ?? "assets" },
   test: {
     environment: "jsdom",
     setupFiles: ["./src/test/setup.ts"],

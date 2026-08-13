@@ -21,7 +21,13 @@ import {
 // case_id, so runDraft first resolves (or creates) the candidate's
 // redesign_case, then drafts it.
 
-const BASE = "/api/v1/design-advisory";
+// Prefix from the build-time base path, exactly as src/api/client.ts does:
+// a hardcoded domain-absolute "/api/v1/..." 404s the moment this app is
+// hosted under a real path prefix (Domino's `/apps-internal/<appId>/`, or a
+// workspace proxy `/.../proxy/<port>/`). `import.meta.env.BASE_URL` is the
+// same value baked via VITE_BASE_URL; trimming the trailing slash yields ""
+// for local dev (BASE_URL="/") and the real prefix once deployed.
+const BASE = `${import.meta.env.BASE_URL.replace(/\/$/, "")}/api/v1/design-advisory`;
 
 function idempotencyKey(): string {
   return crypto.randomUUID();
