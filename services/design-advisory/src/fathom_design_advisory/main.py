@@ -48,7 +48,44 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.include_router(build_router())
 
+    _install_operation_annotations(app)
+
     return app
+
+
+def _install_operation_annotations(app: FastAPI) -> None:
+    """B-4 integration fix. Every operation in the gateway-merged OpenAPI
+    document must declare `x-substitution`/`x-side-effects` (03 §4.1); the
+    gateway's pass-through generator copies these verbatim and its startup
+    guard (`assert_operation_annotations`) refuses to boot without them.
+
+    The real services use `fathom_contracts.operation_extra` per route, but
+    this standalone demo service deliberately has no dependency on that
+    package. Instead we inject the two keys by HTTP method, which is exact
+    for this service: every `GET` here is a pure read (`side-effects: none`)
+    and every `POST` persists a row (`side-effects: state-changing`). All
+    operations are `substitution: required` (a substituting implementation
+    must provide them). Wraps `app.openapi()` so the injection lands in the
+    same cached schema `--emit-openapi` prints and the gateway proxies."""
+    exempt = {"/healthz", "/readyz", "/metrics"}
+    base_openapi = app.openapi
+
+    def _openapi() -> dict:
+        schema = base_openapi()
+        for path, path_item in schema.get("paths", {}).items():
+            if path in exempt:
+                continue
+            for method, operation in path_item.items():
+                if method not in ("get", "post", "put", "patch", "delete"):
+                    continue
+                operation.setdefault("x-substitution", "required")
+                operation.setdefault(
+                    "x-side-effects",
+                    "none" if method == "get" else "state-changing",
+                )
+        return schema
+
+    app.openapi = _openapi  # type: ignore[method-assign]
 
 
 app = create_app()

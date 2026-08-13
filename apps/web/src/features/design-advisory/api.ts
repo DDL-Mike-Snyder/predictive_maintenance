@@ -1,69 +1,94 @@
 import {
-  CANDIDATES,
-  QUALIFICATION_REPORTS,
-  DRAFT_PACKAGES,
   type RedesignCandidate,
   type QualificationReport,
   type CaseDraftPackage,
 } from "./fixtures";
 
-// [SCOPE, this pass] Every function below resolves from the hand-written
-// fixtures in fixtures.ts, after a fixed delay so the UI's loading states
-// are real and visible, not instant -- per the demo plan's own
-// instruction (Bella's section, task 2). Each function's signature is
-// deliberately stable so that swapping the body for a real call at
-// integration is a five-line diff, not a rewrite; the real paths are
-// exactly `/api/v1/design-advisory/...`, documented call-by-call below,
-// per Paul's/Marc's/Michael's sections of
-// docs/demo/redesign-case-builder-demo-plan.md.
+// [B-3 integration fix] These call the real design-advisory backend
+// through the gateway (same-origin `/api/v1/design-advisory/...`, proxied
+// to the gateway by Vite in dev -- see vite.config.ts). The fixtures in
+// fixtures.ts are retained only as the source of the TypeScript types
+// above; no fixture DATA is served anymore.
 //
-// [NOTE] `runDraft` takes a `candidateId`, not a `caseId` -- the UI never
-// has a case_id in hand before drafting for the first time (no case
-// exists yet at that point; Michael's agent `draft` endpoint creates one
-// via Marc's `POST /redesign-cases` itself if none exists). Only after a
-// draft resolves does the UI have the `case_id` that `submitProposal`
-// needs.
+// Every state-changing (`POST`) call carries an `Idempotency-Key` header:
+// the gateway annotates these operations `x-side-effects: state-changing`
+// and its middleware refuses them (HTTP 400) without the header (09 §8.1).
+// `credentials: "include"` sends the gateway session cookie (demo_auto_login
+// establishes one transparently in the demo).
+//
+// [NOTE] `runDraft` takes a `candidateId`, not a `caseId` -- the UI has no
+// case_id before drafting. The real agent `draft` endpoint operates on a
+// case_id, so runDraft first resolves (or creates) the candidate's
+// redesign_case, then drafts it.
 
-const DEMO_DELAY_MS = 800;
+const BASE = "/api/v1/design-advisory";
 
-function resolveAfterDelay<T>(value: T): Promise<T> {
-  return new Promise((resolve) => {
-    setTimeout(() => resolve(value), DEMO_DELAY_MS);
+function idempotencyKey(): string {
+  return crypto.randomUUID();
+}
+
+async function getJson<T>(path: string): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, { credentials: "include" });
+  if (!res.ok) {
+    throw new Error(`GET ${path} failed: ${res.status} ${await res.text()}`);
+  }
+  return (await res.json()) as T;
+}
+
+async function postJson<T>(path: string, body: unknown = {}): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: "POST",
+    credentials: "include",
+    headers: {
+      "content-type": "application/json",
+      "Idempotency-Key": idempotencyKey(),
+    },
+    body: JSON.stringify(body),
   });
+  if (!res.ok) {
+    throw new Error(`POST ${path} failed: ${res.status} ${await res.text()}`);
+  }
+  return (await res.json()) as T;
 }
 
 export async function fetchCandidates(): Promise<RedesignCandidate[]> {
-  return resolveAfterDelay(CANDIDATES);
-  // Real: GET /api/v1/design-advisory/redesign-candidates
+  return getJson<RedesignCandidate[]>("/redesign-candidates");
 }
 
 export async function runQualify(candidateId: string): Promise<QualificationReport> {
-  const report = QUALIFICATION_REPORTS[candidateId];
-  if (!report) {
-    throw new Error(`No qualification fixture for candidate ${candidateId}`);
-  }
-  return resolveAfterDelay(report);
-  // Real: POST /api/v1/design-advisory/agent/candidates/{candidateId}/qualify
+  return postJson<QualificationReport>(`/agent/candidates/${candidateId}/qualify`);
 }
 
 export async function runDraft(candidateId: string): Promise<CaseDraftPackage> {
-  const draft = DRAFT_PACKAGES[candidateId];
-  if (!draft) {
-    throw new Error(`No draft fixture for candidate ${candidateId} -- did its gate pass?`);
+  // Resolve the candidate's case, then draft it. On the freshly-seeded demo
+  // DB no case exists, so this always creates then drafts. The extra
+  // branches keep a re-click from failing: the agent `draft` endpoint only
+  // accepts a case in `draft` status (409 otherwise), so an
+  // already-assembled/proposed case is returned as-is instead of redrafted.
+  const existing = await getJson<{ case_id: string; case_status: string }[]>(
+    `/redesign-cases?candidate_id=${candidateId}`,
+  );
+  const alreadyDrafted = existing.find(
+    (c) => c.case_status === "assembled" || c.case_status === "proposed",
+  );
+  if (alreadyDrafted) {
+    return getJson<CaseDraftPackage>(`/redesign-cases/${alreadyDrafted.case_id}`);
   }
-  return resolveAfterDelay(draft);
-  // Real: POST /api/v1/design-advisory/agent/cases/{case_id}/draft
-  // (case_id resolved server-side from candidateId if no draft case exists yet)
+  const draftCase = existing.find((c) => c.case_status === "draft");
+  const caseId = draftCase
+    ? draftCase.case_id
+    : (await postJson<{ case_id: string }>("/redesign-cases", { candidate_id: candidateId }))
+        .case_id;
+  return postJson<CaseDraftPackage>(`/agent/cases/${caseId}/draft`, {});
 }
 
 export async function submitProposal(
   caseId: string,
 ): Promise<{ case_id: string; case_status: "proposed"; proposal_id: string }> {
-  const result = {
-    case_id: caseId,
-    case_status: "proposed" as const,
-    proposal_id: `demo-proposal-${caseId}`,
-  };
-  return resolveAfterDelay(result);
-  // Real: POST /api/v1/design-advisory/redesign-cases/{caseId}/propose
+  const proposed = await postJson<{
+    case_id: string;
+    case_status: "proposed";
+    proposal_id: string;
+  }>(`/redesign-cases/${caseId}/propose`);
+  return proposed;
 }

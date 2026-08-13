@@ -13,6 +13,7 @@ from fathom_design_advisory.db import get_session_dependency
 from fathom_design_advisory.models import (
     CostEstimate,
     FailureDossier,
+    GateDecision,
     ImpactSnapshot,
     RedesignCandidate,
     RedesignCase,
@@ -81,6 +82,24 @@ async def get_impact_snapshot(
     return _row_to_dict(row)
 
 
+@router.get("/cost-estimates")
+async def list_cost_estimates(
+    candidate_id: str | None = None,
+    method: str | None = None,
+    session: AsyncSession = Depends(get_session_dependency),
+) -> list[dict]:
+    # B-2 integration fix: the agent `draft` path fetches the parametric
+    # cost estimate via `GET /cost-estimates?candidate_id=&method=parametric`
+    # (api/agent.py). Filter on both, mirroring `/impact-snapshots`.
+    stmt = select(CostEstimate)
+    if candidate_id is not None:
+        stmt = stmt.where(CostEstimate.candidate_id == candidate_id)
+    if method is not None:
+        stmt = stmt.where(CostEstimate.method == method)
+    rows = (await session.execute(stmt)).scalars().all()
+    return [_row_to_dict(r) for r in rows]
+
+
 @router.get("/cost-estimates/{estimate_id}")
 async def get_cost_estimate(
     estimate_id: str, session: AsyncSession = Depends(get_session_dependency)
@@ -89,6 +108,21 @@ async def get_cost_estimate(
     if row is None:
         raise HTTPException(status_code=404, detail=f"no cost_estimate {estimate_id}")
     return _row_to_dict(row)
+
+
+@router.get("/gate-decisions")
+async def list_gate_decisions(
+    candidate_id: str | None = None,
+    session: AsyncSession = Depends(get_session_dependency),
+) -> list[dict]:
+    # B-2 integration fix: the agent `draft`/`qualify` paths fetch gate
+    # decisions via `GET /gate-decisions?candidate_id=` and take the most
+    # recent (api/agent.py::_latest_gate_decision).
+    stmt = select(GateDecision)
+    if candidate_id is not None:
+        stmt = stmt.where(GateDecision.candidate_id == candidate_id)
+    rows = (await session.execute(stmt)).scalars().all()
+    return [_row_to_dict(r) for r in rows]
 
 
 @router.get("/redesign-cases")

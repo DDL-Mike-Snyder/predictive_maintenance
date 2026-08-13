@@ -103,6 +103,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(
         build_passthrough_router(app=app, upstream=settings.pdm, http_client=app.state.http_client)
     )
+    # Second upstream: the Redesign Case Builder backend (design-advisory).
+    # Optional -- only mounted when FATHOM_DESIGN_ADVISORY__* is configured,
+    # so the existing PdM-only demo is unaffected (B-4 integration fix).
+    if settings.design_advisory is not None:
+        app.include_router(
+            build_passthrough_router(
+                app=app,
+                upstream=settings.design_advisory,
+                http_client=app.state.http_client,
+            )
+        )
     install_health_routes(app, checks=register_checks(engine))
 
     assert_operation_annotations(app)  # 5. fail fast, in-process, not only in CI

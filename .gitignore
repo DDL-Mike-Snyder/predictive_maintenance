@@ -27,6 +27,7 @@ dist/
 
 # app.sh's own runtime data (deploy/domino-demo) -- recreated fresh every start
 .demo-data/
+.rcb-demo-data/
 
 # Editors / OS
 .DS_Store

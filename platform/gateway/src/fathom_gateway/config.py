@@ -76,6 +76,18 @@ class PdmUpstreamSettings(BaseModel):
     openapi_path: str
 
 
+class DesignAdvisoryUpstreamSettings(BaseModel):
+    """Second pass-through upstream: the Redesign Case Builder backend
+    (`services/design-advisory`, docs/build/28-design-advisory.md). Same
+    shape as PdmUpstreamSettings -- base_url plus its committed
+    openapi.json path. Optional so the existing PdM-only demo keeps
+    working without FATHOM_DESIGN_ADVISORY__* env vars set (B-4
+    integration fix)."""
+
+    base_url: str
+    openapi_path: str
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="FATHOM_", env_nested_delimiter="__", extra="forbid"
@@ -87,3 +99,4 @@ class Settings(BaseSettings):
     session: SessionSettings
     otel: OtelSettings = OtelSettings()
     pdm: PdmUpstreamSettings
+    design_advisory: DesignAdvisoryUpstreamSettings | None = None
