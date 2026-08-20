@@ -193,6 +193,108 @@ this file said it wasn't; that was true when written and is stale now.
 map, but always verify against those two before trusting a paragraph like
 this one that describes commit state.
 
+## RESUME HERE — 2026-08-20, session paused for a Mac update
+
+**This supersedes the 2026-08-07 "RESUME HERE" and "RUN THE DEMO" sections
+below for resume purposes** — both are now history, not the current state.
+`git status` is clean and `git log` confirms everything described here is
+already pushed to `origin/main` (last commit `b5f9548`) — there is nothing
+uncommitted to lose from this pause.
+
+**What's new since the 2026-08-07 entry:** a second real screen — the
+Redesign Case Builder (Design Advisory) — was built via a time-boxed,
+5-person-plus-adversarial-review demo plan
+(`docs/demo/redesign-case-builder-demo-plan.md`, see also
+`docs/demo/lessons-from-pdm-demo.md` for the trade-off philosophy behind
+it). Their work landed on `main` via several merged branches
+(`paulj_branch`, `bchang_branch`, `mdoan_branch`, `michael`), reviewed
+directly (not via subagents) by reading the actual merged code rather
+than trusting commit messages — this surfaced real, still-open gaps,
+listed below.
+
+**Frontend (`apps/web`) — genuinely additive alongside PdM, real and
+merged:** `routes.tsx` now has both `/pdm` and `/design-advisory` in the
+same route tree, same `AppShell`, same nav (`SideNav.tsx`'s "Design
+Advisory" item is now a real route, not the old inert `external` stub).
+`apps/web/src/features/design-advisory/` (Bella's screen) is complete and
+runs entirely on hardcoded fixtures (`fixtures.ts`) — **no backend calls
+yet, by design at this stage**, so it renders standalone with nothing
+else running.
+
+**Backend (`services/design-advisory`) — real, but NOT merged into the
+running app the way you might expect:**
+- It's a brand-new, independent FastAPI service (SQLite, no
+  `fathom-py-common`, per the demo plan's own §0.1 scope cuts) —
+  Paul's models/reads, Marc's action endpoints (gate evaluation, costing,
+  case assemble), and Michael's agent orchestration
+  (`api/agent.py` — qualify/draft) all exist as real, individually-tested
+  code.
+- **`deploy/domino-demo/app_rcb.sh` is a SEPARATE Domino App entrypoint**
+  from the existing `app.sh` — its own header comment says so explicitly:
+  it starts only `services/design-advisory`, on its own port, so it never
+  touches the already-deployed `fathom-pdm-demo` App. `app.sh` and
+  `services/pdm` have **zero commits** since this work started — the live
+  App's actual backend is completely unaffected.
+- **Three concrete integration gaps found by reading the code, not the
+  commit messages — still open:**
+  1. A PR that wired `services/design-advisory` as a second gateway
+     upstream (mirroring the PdM pass-through pattern) was merged, then
+     **reverted** (`3424b82`, revert of PR #4/`demo/rcb-amanda`), with no
+     explanation recorded in the revert commit. The gateway currently
+     proxies PdM only.
+  2. Michael's agent router (`api/agent.py` — the actual qualify/draft
+     endpoints) is **not mounted** — `api/__init__.py`'s `build_router()`
+     only includes `reads_router` + `actions_router`. Its own module
+     docstring says this was built before `agent.py` existed and never
+     got updated.
+  3. Even mounted, `api/agent.py` would 404 against Paul's real
+     `reads.py` — its own module docstring self-documents this: it
+     assumes `GET /cost-estimates?candidate_id=&method=` and
+     `GET /gate-decisions?candidate_id=` exist as list-by-candidate
+     filters, and neither does (`reads.py` only has get-by-id for
+     cost-estimates, and no gate-decisions read route at all).
+
+**What was done this session to make the new screen visible in the
+already-registered `fathom-pdm-demo` Domino App** (small, deliberately
+scoped step — see `docs/demo/redesign-case-builder-demo-plan.md`'s
+conversation for the "how much work" estimate that preceded it):
+the committed `deploy/domino-demo/web-dist/` snapshot was **six days
+stale** (last built 2026-08-06, before the design-advisory route
+existed — confirmed via `git log`, and confirmed the old bundle had zero
+references to "design-advisory" anywhere). Rebuilt it for real
+(`VITE_BASE_URL="/apps-internal/6a74924c664e0f706e462d33/" pnpm build`,
+verified the new bundle really does contain the screen before copying),
+committed and pushed as `b5f9548`. **The user was in the middle of
+stopping the App to restart it and pick up this change when this pause
+happened — not yet confirmed whether the screen actually renders live.**
+Check that first if resuming: restart the App per the snippet in the
+2026-08-07 section below, open
+`https://mikesn136713.cs.domino.tech/apps-internal/6a74924c664e0f706e462d33/design-advisory`,
+and confirm before assuming this worked.
+
+**Separately scoped and NOT started: a "Fleet Overview" screen** (Sheet
+01 in `docs/design/operator-console-wireframes.html`, spec'd in
+`docs/build/51-operator-console.md` §6 — the confirmed default-landing
+screen for the Executive/Commander persona: 2 KPI rows, an interactive
+SVG fleet map with clickable/selectable markers, a risk-flags table, a
+TYCOM/class rollup table). The user first asked about a "Fleet Summary"
+view they recalled — checked memory and the **full git history** (a
+content search across every commit ever made, not just current files)
+and confirmed no such thing was ever built or even referenced under that
+name. "Fleet Overview" is the real, closest match, and it's a `NotBuilt`
+placeholder in `routes.tsx` right now, same as it's always been — not a
+regression. **Estimated, not started**: ~2 hours for Fleet Overview alone
+(frontend-only, fixture data, same constraints as the redesign-case-
+builder demo), ~2.5–2.75 hours including Sheet 01B (Vehicle Detail
+drill-down). One relevant finding from scoping this: `apps/web`'s
+`global.css` already has the base wireframe design-system classes ported
+(`.sheet`/`.box`/`.chip`/`.wf` tables), and the wireframe's own KPI/map/
+marker CSS (~35 lines) already references the same design tokens
+everything else uses — so the map component, the one genuinely new piece
+of UI here, is closer to a copy-paste-and-wire-up job than new design
+work. **Waiting on the user's go-ahead to start this** — not yet
+authorized as of this pause.
+
 ## RESUME HERE — 2026-08-07, session paused for a computer update
 
 **This supersedes "RUN THE DEMO" below for demo purposes** — that section
